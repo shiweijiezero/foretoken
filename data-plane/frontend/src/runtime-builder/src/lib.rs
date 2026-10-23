@@ -19,7 +19,7 @@ use foretoken_router::{
 };
 use foretoken_server::{
     KvIndexDiagnostics, ModelRuntime, RuntimeBundle, RuntimeControl, RuntimeGeneration,
-    RuntimeState,
+    RuntimeState, VideoServiceReference,
 };
 use foretoken_text::{SnapshotRuntime, load_snapshot_runtime};
 use thiserror::Error;
@@ -55,6 +55,39 @@ pub struct RuntimeBuilder {
     router_pipeline: Arc<Mutex<Option<Arc<RouterPipelines>>>>,
     kv_credential: KvIndexCredential,
     routing_load: foretoken_router::RoutingLoadState,
+}
+
+pub struct PreparedRuntime {
+    version: u64,
+    state: Arc<RuntimeState>,
+    control: Arc<dyn RuntimeControl>,
+    admission: PreparedAdmissions,
+}
+
+#[derive(Debug, Error)]
+pub enum RuntimeBuildError {
+    #[error("invalid routing configuration: {0}")]
+    Router(#[from] RouterPipelineConfigError),
+    #[error("could not parse serving snapshot: {0}")]
+    Parse(#[from] serde_json::Error),
+    #[error("could not validate serving snapshot: {0}")]
+    InvalidSnapshot(String),
+    #[error("model-server backend is not ready")]
+    BackendUnavailable,
+    #[error("could not prepare model runtime: {0}")]
+    ModelRuntime(String),
+    #[error("candidate model-server backend became unready during runtime preparation")]
+    BackendBecameUnavailable,
+}
+
+struct RegistryRuntimeControl {
+    request_length_targets: BTreeSet<RouteTargetId>,
+    logging: Arc<foretoken_tracing::LogControl>,
+    log_level: tracing::level_filters::LevelFilter,
+    pipeline: Arc<RouterPipelines>,
+    published_pipeline: Arc<Mutex<Option<Arc<RouterPipelines>>>>,
+    backends: Arc<CachedBackends>,
+    published_backends: Arc<Mutex<Option<Arc<CachedBackends>>>>,
 }
 
 impl RuntimeBuilder {
@@ -136,7 +169,25 @@ impl RuntimeBuilder {
         let preparation_targets = snapshot
             .admission_target_sets()
             .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
+        // Task targets belong to this publication even when backend clients can be reused.
+        // Preserve unnamed legacy entries so partial metadata never appears unambiguous.
+        let mut video_services = BTreeMap::<String, Vec<Option<VideoServiceReference>>>::new();
+        for model in &snapshot.models {
+            if identities[&model.model].capabilities.contains("video") {
+                video_services.entry(model.model.clone()).or_default().push(
+                    model
+                        .service_name
+                        .as_ref()
+                        .filter(|name| !name.is_empty())
+                        .map(|name| VideoServiceReference {
+                            name: name.clone(),
+                            uid: model.service_uid.clone(),
+                        }),
+                );
+            }
+        }
         let backends = self.prepare_backends(snapshot, identities).await?;
+        video_services.retain(|model, _| backends.video_models.contains(model));
         let registry = backends.registry.clone();
         let kv_indexer = backends.kv_indexer.clone();
         let control = Arc::new(RegistryRuntimeControl {
@@ -178,11 +229,7 @@ impl RuntimeBuilder {
         let resolver: Arc<dyn LlmFacadeResolver> = registry;
         let mut state = RuntimeState::new(models, router, resolver, request_timeout, stream_idle);
         if let Some(client) = &backends.video_client {
-            state = state.with_video_backend(
-                backends.video_models.clone(),
-                video_inventory,
-                client.clone(),
-            );
+            state = state.with_video_backend(video_services, video_inventory, client.clone());
         }
         for (model, candidates) in preparation_targets {
             state = state.with_preparation_targets(model, candidates);
@@ -307,13 +354,6 @@ impl RuntimeBuilder {
     }
 }
 
-pub struct PreparedRuntime {
-    version: u64,
-    state: Arc<RuntimeState>,
-    control: Arc<dyn RuntimeControl>,
-    admission: PreparedAdmissions,
-}
-
 impl PreparedRuntime {
     /// Atomically hands this prepared candidate to the long-lived serving generation.
     ///
@@ -322,32 +362,6 @@ impl PreparedRuntime {
     pub fn publish(self, generation: &RuntimeGeneration) -> bool {
         generation.replace_state(self.version, self.state, self.control, self.admission)
     }
-}
-
-#[derive(Debug, Error)]
-pub enum RuntimeBuildError {
-    #[error("invalid routing configuration: {0}")]
-    Router(#[from] RouterPipelineConfigError),
-    #[error("could not parse serving snapshot: {0}")]
-    Parse(#[from] serde_json::Error),
-    #[error("could not validate serving snapshot: {0}")]
-    InvalidSnapshot(String),
-    #[error("model-server backend is not ready")]
-    BackendUnavailable,
-    #[error("could not prepare model runtime: {0}")]
-    ModelRuntime(String),
-    #[error("candidate model-server backend became unready during runtime preparation")]
-    BackendBecameUnavailable,
-}
-
-struct RegistryRuntimeControl {
-    request_length_targets: BTreeSet<RouteTargetId>,
-    logging: Arc<foretoken_tracing::LogControl>,
-    log_level: tracing::level_filters::LevelFilter,
-    pipeline: Arc<RouterPipelines>,
-    published_pipeline: Arc<Mutex<Option<Arc<RouterPipelines>>>>,
-    backends: Arc<CachedBackends>,
-    published_backends: Arc<Mutex<Option<Arc<CachedBackends>>>>,
 }
 
 #[async_trait]

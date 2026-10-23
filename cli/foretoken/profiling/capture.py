@@ -6,27 +6,33 @@
 from __future__ import annotations
 
 import json
-import sys
 import time
+import uuid
 from typing import Any, Literal
 
+from loguru import logger
+
 from foretoken.arguments import ProfileCommand
+from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.deployment.manifest import ForetokenDeployment, load_deployment
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
+from foretoken.processes.execution import CommandExecution, cleanup_commands
 
 
 class ProfileRun:
     """CLI client for one retained capture; the controller owns native execution and storage."""
 
     def __init__(
-        self, command: ProfileCommand, *, deployment: ForetokenDeployment | None = None
+        self, command: ProfileCommand, *, deployment: ForetokenDeployment | None = None,
+        kubectl: Kubectl | None = None,
     ) -> None:
+        """Resolve one capture target before deployment changes; start creates its ProfileRun."""
         self.command = command
         self.wait_seconds = timeout_seconds(command.timeout)
         if self.wait_seconds <= 0:
             raise DeploymentError("capture wait timeout must be positive")
-        self.kubectl = Kubectl()
+        self.kubectl = kubectl or Kubectl()
         if deployment is None:
             deployment = load_deployment(command.kustomize_path, self.kubectl)
         selected = [
@@ -41,6 +47,7 @@ class ProfileRun:
         self.service_name = selected[0]
         self.name = ""
         self.uid = ""
+        self._deployment_uid = ""
         self.status: dict[str, Any] = {}
         self._previous: tuple[str, str] | None = None
 
@@ -51,10 +58,17 @@ class ProfileRun:
 
     def start(self) -> None:
         """Create one capture and retain its identity for observation and cancellation."""
+        service = self.kubectl.get("modelservice", self.service_name, self.namespace)
+        self._deployment_uid = service["metadata"]["labels"][DEPLOYMENT_UID_LABEL]
+        name = "profile-" + uuid.uuid4().hex
         resource = {
             "apiVersion": "inference.foretoken.io/v1alpha1",
             "kind": "ProfileRun",
-            "metadata": {"generateName": "profile-", "namespace": self.namespace},
+            "metadata": {
+                "name": name,
+                "namespace": self.namespace,
+                "labels": {DEPLOYMENT_UID_LABEL: self._deployment_uid},
+            },
             "spec": {
                 "modelServiceRef": {"name": self.service_name},
                 "engine": self.command.profile_engine,
@@ -62,16 +76,27 @@ class ProfileRun:
                 "action": "Capture",
             },
         }
-        created = json.loads(self.kubectl.run(
-            ["create", "-f", "-", "-o", "json", "--request-timeout=20s"],
-            input_text=json.dumps(resource),
-        ).stdout)
-        self.name, self.uid = created["metadata"]["name"], created["metadata"]["uid"]
-        print(f"ProfileRun {self.namespace}/{self.name}", flush=True)
-        print("View captures: foretoken profile view", flush=True)
+        if execution := CommandExecution.current():
+            execution.check()
+        self.name = name
+        try:
+            # Accepted creation keeps its response lifetime through parent cancellation.
+            with CommandExecution(20, report_failure=False):
+                created = json.loads(self.kubectl.run(
+                    ["create", "-f", "-", "-o", "json", "--request-timeout=20s"],
+                    input_text=json.dumps(resource),
+                ).stdout)
+            self.uid = created["metadata"]["uid"]
+        except BaseException as error:
+            # The preselected name permits UID recovery after an interrupted or lost reply.
+            with cleanup_commands(error, timeout=20):
+                self._recover_creation()
+            raise
+        logger.info("ProfileRun {}/{}", self.namespace, self.name)
+        logger.info("View captures: foretoken profile view")
 
     def observe(self) -> dict[str, Any]:
-        """Read this capture's status and print progress changes."""
+        """Read this capture's status and report progress changes."""
         run = json.loads(self.kubectl.run([
             "get", "profilerun", self.name, "-n", self.namespace,
             "-o", "json", "--request-timeout=20s",
@@ -81,12 +106,14 @@ class ProfileRun:
         self.status = run.get("status", {})
         progress = (self.status.get("phase", "Pending"), self.status.get("message", ""))
         if progress != self._previous:
-            print(f"{progress[0]}: {progress[1]}".rstrip(": "), flush=True)
+            logger.info("{}", f"{progress[0]}: {progress[1]}".rstrip(": "))
             self._previous = progress
         return self.status
 
     def request(self, action: Literal["Finish", "Cancel"]) -> None:
         """Stop only this capture; Finish cannot override another caller's cancellation."""
+        if self.name and not self.uid:
+            self._recover_creation()
         if not self.uid or self.terminal:
             return
         patch = [{"op": "test", "path": "/metadata/uid", "value": self.uid}]
@@ -97,16 +124,15 @@ class ProfileRun:
             "patch", "profilerun", self.name, "-n", self.namespace,
             "--type=json", "-p", json.dumps(patch), "--request-timeout=20s",
         ])
-        print(f"{action} requested for ProfileRun {self.namespace}/{self.name}.", flush=True)
+        logger.info("{} requested for ProfileRun {}/{}.", action, self.namespace, self.name)
 
     def cancel(self) -> None:
         """Request cancellation during caller cleanup without hiding the original failure."""
         try:
             self.request("Cancel")
         except DeploymentError as error:
-            print(
-                f"Could not submit cancellation: {error}. Runtime deadlines remain active.",
-                file=sys.stderr,
+            logger.warning(
+                "Could not submit cancellation: {}. Runtime deadlines remain active.", error,
             )
 
     def wait(self, *, require_success: bool = True) -> None:
@@ -125,3 +151,18 @@ class ProfileRun:
             f"stopped waiting after {self.command.timeout}; ProfileRun {self.namespace}/{self.name} "
             "continues independently. Inspect its status with the command above."
         )
+
+    def _recover_creation(self) -> None:
+        """Recover a lost creation receipt without adopting another deployment's capture."""
+        run = self.kubectl.get_if_exists("profilerun", self.name, self.namespace, timeout=20)
+        if run is None:
+            self.name = ""
+            return
+        if (
+            run["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL) != self._deployment_uid
+            or run["spec"]["modelServiceRef"]["name"] != self.service_name
+            or run["spec"]["engine"] != self.command.profile_engine
+            or run["spec"]["duration"] != self.command.profile_duration
+        ):
+            raise DeploymentError("ProfileRun creation identity does not match this capture")
+        self.uid = run["metadata"]["uid"]

@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.metadata
 import importlib.util
 import json
+import logging
 import os
 import py_compile
 import shutil
@@ -20,6 +21,8 @@ from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import Version
+
+logger = logging.getLogger(__name__)
 
 
 def engine_patches(directory: Path, version: str, patches: Path) -> list[Path]:
@@ -88,6 +91,35 @@ def apply_patches(directory: Path, patches: list[Path]) -> set[Path]:
     return patch_files(patches)
 
 
+def runtime_constraints(source_packages: set[str]) -> dict[str, str]:
+    """Retain the selected engine, accelerator ABI, and coupled telemetry stack during installation."""
+    protected = {
+        "vllm",
+        "torch",
+        "torchvision",
+        "torchaudio",
+        "torchcodec",
+        "triton",
+        "mcoplib",
+        "maca-python",
+        "vllm-metax",
+    }
+    constraints = {}
+    for distribution in importlib.metadata.distributions():
+        name = canonicalize_name(distribution.metadata["Name"])
+        if name in source_packages:
+            continue
+        local = distribution.version.partition("+")[2].lower()
+        if (
+            name in protected
+            or name.startswith(("nvidia-", "opentelemetry-"))
+            or "metax" in local
+            or "maca" in local
+        ):
+            constraints[name] = distribution.version
+    return constraints
+
+
 def repair_installed_dependencies() -> None:
     """Repair unused OTel remnants before vLLM 0.31 image dependency installation."""
     if Version(importlib.metadata.version("vllm")).release[:2] != (0, 31):
@@ -148,8 +180,8 @@ def repair_installed_dependencies() -> None:
     )
 
 
-def install_mooncake_dependencies() -> None:
-    """Prepare the CUDA transfer runtime during model-server image construction."""
+def install_mooncake_dependencies(wheels: Path) -> None:
+    """Install the source-built CUDA transfer wheel while preserving the engine's accelerator SDK."""
     import ctypes
 
     import torch
@@ -181,7 +213,17 @@ def install_mooncake_dependencies() -> None:
     package, other = "mooncake-transfer-engine", "mooncake-transfer-engine-cuda13"
     if int(torch.version.cuda.split(".", 1)[0]) >= 13:
         package, other = other, package
-    command = ["uv", "pip", "install", "--no-cache", "--python", sys.executable]
+    command = [
+        "uv",
+        "pip",
+        "install",
+        "--no-cache",
+        "--no-deps",
+        "--python",
+        sys.executable,
+        "--reinstall-package",
+        package,
+    ]
     try:
         importlib.metadata.distribution(other)
     except importlib.metadata.PackageNotFoundError:
@@ -193,9 +235,9 @@ def install_mooncake_dependencies() -> None:
             ["uv", "pip", "uninstall", "--python", sys.executable, other],
             check=True,
         )
-        command.extend(["--reinstall-package", package])
     version = Path(__file__).with_name("mooncake.version").read_text().strip()
-    subprocess.run(command + [f"{package}=={version}"], check=True)
+    (wheel,) = wheels.glob(f"{package.replace('-', '_')}-{version}-*.whl")
+    subprocess.run(command + [str(wheel)], check=True)
 
 
 def check_installed_dependencies() -> None:
@@ -253,6 +295,9 @@ def check_installed_dependencies() -> None:
 
 def main() -> None:
     """Prepare the installed-engine stack privately, then publish only patched package files."""
+    logging.basicConfig(
+        level=logging.INFO, format="%(message)s", stream=sys.stderr, force=True
+    )
     distribution = importlib.metadata.distribution("vllm")
     directory = Path(distribution.locate_file(""))
     patches = engine_patches(directory, distribution.version, Path(__file__).parent)
@@ -322,7 +367,7 @@ def main() -> None:
         if completed:
             shutil.rmtree(staging)
         else:
-            print(f"vLLM patch preparation retained at {staging}", file=sys.stderr)
+            logger.warning("vLLM patch preparation retained at %s", staging)
 
 
 if __name__ == "__main__":

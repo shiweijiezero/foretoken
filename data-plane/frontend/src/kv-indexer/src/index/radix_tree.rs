@@ -214,6 +214,8 @@ impl RadixTreeIndex {
         path
     }
 
+    /// Returns placement-local prefixes for query consumers using only matching runtime partitions.
+    /// All-group queries require every group at that placement and use their shortest prefix.
     fn matching(
         source_tree: &SourceTree,
         query: &KvPrefixQuery<'_>,
@@ -278,6 +280,7 @@ impl RadixTreeIndex {
                 matches.push(KvPrefixMatch {
                     placement: *placement,
                     matched_tokens,
+                    kv_source: None,
                 });
             }
         }

@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: ModelService
+metadata:
+  name: qwen-nixl
+spec:
+  model: Qwen/Qwen2.5-0.5B-Instruct
+  source: hf
+  backend: vllm
+  kvTransfer:
+    connector: nixl
+  timeouts:
+    startup: 5m
+    drain: 2m
+  engineArgs:
+    max-model-len: 32768
+    tensor-parallel-size: 1
+  modelPools:
+    - name: prefill
+      role: prefill
+      replicas: 1
+      resources:
+        requests:
+          cpu: "4"
+          memory: 48Gi
+          gpu:
+            count: 1
+        limits:
+          cpu: "8"
+          memory: 64Gi
+    - name: decode
+      role: decode
+      replicas: 1
+      resources:
+        requests:
+          cpu: "4"
+          memory: 48Gi
+          gpu:
+            count: 1
+        limits:
+          cpu: "8"
+          memory: 64Gi

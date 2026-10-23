@@ -64,12 +64,21 @@ spec:
                 description: InputsReady is set after task-local input files are durable
                   on the shared PVC.
                 type: boolean
+              model:
+                description: Model retains public-model intent; name-only submissions
+                  leave it unset.
+                minLength: 1
+                type: string
               modelServiceRef:
                 description: VideoTaskServiceReference selects one existing ModelService
                   in the task namespace.
                 properties:
                   name:
                     minLength: 1
+                    type: string
+                  uid:
+                    description: UID binds model-based submissions to the service
+                      selected by the frontend catalog.
                     type: string
                 required:
                 - name
@@ -154,7 +163,7 @@ spec:
                   controller-created Job.
                 properties:
                   endpoint:
-                    description: Endpoint is the internal video model-server endpoint
+                    description: Endpoint is the admitting frontend's internal URL
                       used by the worker.
                     minLength: 1
                     type: string
@@ -188,6 +197,9 @@ spec:
               rule: self.frontendUID == oldSelf.frontendUID && self.modelServiceRef
                 == oldSelf.modelServiceRef && self.request == oldSelf.request && self.worker
                 == oldSelf.worker
+            - message: video task model is immutable
+              rule: has(self.model) == has(oldSelf.model) && (!has(self.model) ||
+                self.model == oldSelf.model)
             - message: ready task inputs cannot become unready
               rule: '!has(oldSelf.inputsReady) || !oldSelf.inputsReady || (has(self.inputsReady)
                 && self.inputsReady)'

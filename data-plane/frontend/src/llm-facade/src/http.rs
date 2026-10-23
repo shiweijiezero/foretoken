@@ -4,25 +4,34 @@
 //! HTTP model-server transport, NDJSON decoding, and endpoint helpers.
 
 use std::collections::BTreeMap;
+use std::error::Error as _;
+use std::io;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use foretoken_model_protocol::{
-    AbortInput, GenerateInput, TokenErrorCode, TokenEvent, TokenOutput,
+    AbortInput, GenerateInput, KvReuseSource, TokenErrorCode, TokenEvent, TokenOutput,
 };
 use foretoken_request_ledger::ReservationRef;
 use futures::StreamExt;
 use serde::Deserialize;
+use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
+use tokio_util::io::StreamReader;
 use vllm_llm::{FinishReason, GenerateOutput, GeneratePromptInfo, GenerateRequest};
 
 use crate::{LlmFacade, LlmFacadeError, TokenStream};
 
 pub(crate) const MODEL_SERVER_REQUEST_START_TIMEOUT: Duration = Duration::from_secs(10);
 
+// Every workflow stage uses the same transport settings and shares its connection pool.
+pub(crate) static MODEL_SERVER_CLIENT: LazyLock<reqwest::Client> =
+    LazyLock::new(reqwest::Client::new);
+
 #[derive(Clone)]
 pub struct HttpFacade {
     endpoint: String,
     client: reqwest::Client,
-    request_start_timeout: Duration,
+    kv_reuse: Option<KvReuseSource>,
 }
 impl HttpFacade {
     /// Creates the transport resolved by the backend registry for one model-server endpoint.
@@ -30,18 +39,20 @@ impl HttpFacade {
     /// Returns a validated facade that lives with its registry entry, or a configuration error
     /// before that endpoint can enter a serving generation.
     pub fn new(endpoint: String) -> Result<Self, LlmFacadeError> {
-        Self::with_request_start_timeout(endpoint, MODEL_SERVER_REQUEST_START_TIMEOUT)
-    }
-    fn with_request_start_timeout(
-        endpoint: String,
-        request_start_timeout: Duration,
-    ) -> Result<Self, LlmFacadeError> {
         Ok(Self {
             endpoint: validate_endpoint(endpoint)?,
-            client: reqwest::Client::new(),
-            request_start_timeout,
+            client: MODEL_SERVER_CLIENT.clone(),
+            kv_reuse: None,
         })
     }
+
+    /// Attaches the selected Decode source to this request's Prefill transport.
+    /// The receiving model server owns acquisition and native transfer cleanup.
+    pub fn with_kv_reuse(mut self, source: KvReuseSource) -> Self {
+        self.kv_reuse = Some(source);
+        self
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{path}", self.endpoint)
     }
@@ -50,6 +61,7 @@ impl HttpFacade {
     ///
     /// The `LlmFacade` adapter calls this for an admitted workflow stage. The returned stream owns
     /// incremental decoding until terminal output or cancellation; response-start failures return first.
+    #[tracing::instrument(name = "model_server_request", level = "error", skip_all, fields(generation_id = %request.request_id))]
     pub(crate) async fn generate(
         &self,
         mut request: GenerateRequest,
@@ -64,9 +76,14 @@ impl HttpFacade {
         }
         let mut input = GenerateInput::from(request);
         input.reservation = reservation;
-        let body = rmp_serde::to_vec_named(&input).map_err(|_| LlmFacadeError::RequestFailed)?;
+        input.kv_reuse = self.kv_reuse.clone();
+        let request_id = input.request_id.clone();
+        let body = rmp_serde::to_vec_named(&input).map_err(|error| {
+            tracing::error!(generation_id = %request_id, %error, "could not encode model-server request");
+            LlmFacadeError::RequestFailed
+        })?;
         let response = tokio::time::timeout(
-            self.request_start_timeout,
+            MODEL_SERVER_REQUEST_START_TIMEOUT,
             self.client
                 .post(self.url("/v1/internal/generate"))
                 .header(reqwest::header::CONTENT_TYPE, "application/msgpack")
@@ -74,8 +91,22 @@ impl HttpFacade {
                 .send(),
         )
         .await
-        .map_err(|_| LlmFacadeError::Unavailable)?
-        .map_err(classify_reqwest)?;
+        .map_err(|_| {
+            tracing::warn!(generation_id = %request_id, "model-server response-start deadline elapsed");
+            LlmFacadeError::Unavailable
+        })?
+        .map_err(|error| {
+            let failure = classify_reqwest(&error);
+            tracing::warn!(
+                timeout = error.is_timeout(),
+                connect = error.is_connect(),
+                io_error_kind = ?io_error_kind(&error),
+                error = %error.without_url(),
+                generation_id = %request_id,
+                "model-server generation request failed"
+            );
+            failure
+        })?;
         if !response.status().is_success() {
             let status = response.status();
             if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
@@ -93,30 +124,40 @@ impl HttpFacade {
                     return Err(LlmFacadeError::Busy);
                 }
             }
+            if matches!(
+                status,
+                reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::SERVICE_UNAVAILABLE
+            ) {
+                tracing::debug!(generation_id = %request_id, status = status.as_u16(), "model-server rejected generation");
+            } else {
+                tracing::warn!(generation_id = %request_id, status = status.as_u16(), "model-server rejected generation");
+            }
             return Err(classify_status(status));
         }
         if !is_ndjson(response.headers().get(reqwest::header::CONTENT_TYPE)) {
+            tracing::warn!(generation_id = %request_id, "model-server generation response is not NDJSON");
             return Err(LlmFacadeError::Protocol);
         }
         Ok(Box::pin(async_stream::stream! {
-            let mut body = Box::pin(response.bytes_stream()); let mut pending = Vec::new();
-            while let Some(chunk) = body.next().await {
-                match chunk { Ok(chunk) => pending.extend_from_slice(&chunk), Err(error) => { yield Err(classify_reqwest(error)); return; } }
-                while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
-                    let line: Vec<_> = pending.drain(..=newline).collect();
-                    match decode_event(&line[..line.len() - 1]) { Ok(output) => yield Ok(output), Err(error) => { yield Err(error); return; } }
-                }
+            let body = response.bytes_stream().map(|chunk| chunk.map_err(io::Error::other));
+            let mut lines = FramedRead::new(StreamReader::new(body), LinesCodec::new());
+            while let Some(line) = lines.next().await {
+                let output = line.map_err(|error| classify_line_error(&request_id, error))
+                    .and_then(|line| decode_event(&request_id, line.as_bytes()));
+                let failed = output.is_err();
+                yield output;
+                if failed { return; }
             }
-            if !pending.is_empty() { yield decode_event(&pending); }
         }))
     }
     /// Asks this model server to cancel admitted work after its consumer ends early.
     ///
     /// Stream cleanup guards call this best-effort operation. A successful result ends the HTTP
     /// abort exchange; the backend retains responsibility for final request termination.
+    #[tracing::instrument(name = "model_server_abort", level = "error", skip_all, fields(request_count = request_ids.len()))]
     pub(crate) async fn abort(&self, request_ids: &[String]) -> Result<(), LlmFacadeError> {
         let response = tokio::time::timeout(
-            self.request_start_timeout,
+            MODEL_SERVER_REQUEST_START_TIMEOUT,
             self.client
                 .post(self.url("/v1/internal/abort"))
                 .json(&AbortInput {
@@ -125,11 +166,29 @@ impl HttpFacade {
                 .send(),
         )
         .await
-        .map_err(|_| LlmFacadeError::Unavailable)?
-        .map_err(classify_reqwest)?;
+        .map_err(|_| {
+            tracing::warn!(?request_ids, "model-server abort deadline elapsed");
+            LlmFacadeError::Unavailable
+        })?
+        .map_err(|error| {
+            let failure = classify_reqwest(&error);
+            tracing::warn!(
+                timeout = error.is_timeout(),
+                connect = error.is_connect(),
+                io_error_kind = ?io_error_kind(&error),
+                error = %error.without_url(),
+                ?request_ids,
+                "model-server abort request failed"
+            );
+            failure
+        })?;
         if response.status().is_success() {
             Ok(())
         } else {
+            tracing::debug!(
+                status = response.status().as_u16(),
+                "model-server rejected abort"
+            );
             Err(classify_status(response.status()))
         }
     }
@@ -163,7 +222,56 @@ pub(crate) fn validate_endpoint(endpoint: String) -> Result<String, LlmFacadeErr
     }
     Ok(endpoint)
 }
-fn classify_reqwest(error: reqwest::Error) -> LlmFacadeError {
+/// Retains transport failure categories through the codec; malformed frames remain protocol errors.
+fn classify_line_error(request_id: &str, error: LinesCodecError) -> LlmFacadeError {
+    match error {
+        LinesCodecError::Io(error) => {
+            let error = error
+                .into_inner()
+                .and_then(|error| error.downcast::<reqwest::Error>().ok());
+            match error {
+                Some(error) => {
+                    let failure = classify_reqwest(&error);
+                    tracing::warn!(
+                        generation_id = request_id,
+                        io_error_kind = ?io_error_kind(&error),
+                        error = %error.without_url(),
+                        "model-server output transport failed"
+                    );
+                    failure
+                }
+                None => {
+                    tracing::warn!(
+                        generation_id = request_id,
+                        "could not decode model-server output frame"
+                    );
+                    LlmFacadeError::Protocol
+                }
+            }
+        }
+        LinesCodecError::MaxLineLengthExceeded => {
+            tracing::warn!(
+                generation_id = request_id,
+                "model-server output exceeded its frame limit"
+            );
+            LlmFacadeError::Protocol
+        }
+    }
+}
+
+/// Retains the operating-system failure category without logging an endpoint or request data.
+fn io_error_kind(error: &reqwest::Error) -> Option<io::ErrorKind> {
+    let mut source = error.source();
+    while let Some(error) = source {
+        if let Some(error) = error.downcast_ref::<io::Error>() {
+            return Some(error.kind());
+        }
+        source = error.source();
+    }
+    None
+}
+
+fn classify_reqwest(error: &reqwest::Error) -> LlmFacadeError {
     if error.is_timeout() || error.is_connect() {
         LlmFacadeError::Unavailable
     } else {
@@ -206,7 +314,7 @@ pub async fn bootstrap_engine_id(
         ))
         .send()
         .await
-        .map_err(classify_reqwest)?;
+        .map_err(|error| classify_reqwest(&error))?;
     if !response.status().is_success() {
         return Err(classify_status(response.status()));
     }
@@ -221,8 +329,17 @@ pub async fn bootstrap_engine_id(
         .ok_or(LlmFacadeError::Protocol)
 }
 
-fn decode_event(line: &[u8]) -> Result<GenerateOutput, LlmFacadeError> {
-    match serde_json::from_slice(line).map_err(|_| LlmFacadeError::Protocol)? {
+fn decode_event(request_id: &str, line: &[u8]) -> Result<GenerateOutput, LlmFacadeError> {
+    match serde_json::from_slice(line).map_err(|error| {
+        tracing::warn!(
+            generation_id = request_id,
+            category = ?error.classify(),
+            line = error.line(),
+            column = error.column(),
+            "model-server output event is invalid"
+        );
+        LlmFacadeError::Protocol
+    })? {
         TokenEvent::Token(output) if output.finish_reason == Some(FinishReason::Error) => {
             Err(LlmFacadeError::RequestFailed)
         }

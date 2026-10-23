@@ -11,7 +11,6 @@ k3d runs the lightweight k3s Kubernetes distribution in Docker containers. It is
 
 The host needs:
 
-- Python 3.11 or later;
 - Linux;
 - an NVIDIA driver;
 - NVIDIA Container Toolkit;
@@ -62,12 +61,14 @@ helm version --short
 
 ## 2. Enter the repository and select GPUs
 
-Get the repository and run the remaining commands from its root:
+Get the repository and prepare the CLI. Run the remaining commands from this directory with the environment active:
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-pip install -e .
+uv venv --python 3.12 --seed  # With pip: python3 -m venv .venv (Python 3.11+)
+source .venv/bin/activate
+uv pip install -e .  # Or: pip install -e .
 ```
 
 List GPUs:
@@ -90,7 +91,7 @@ foretoken cluster create k3d --name "$CLUSTER" --gpus "$GPU_INDICES"
 kubectl get nodes
 ```
 
-The command mounts the NVIDIA runtime and the repository `data/` directory, installs the NVIDIA device plugin, and selects the created kubeconfig context.
+The command makes the selected GPUs and repository `data/` directory available to the cluster, installs the NVIDIA device plugin, and selects the new kubeconfig context. Cluster creation and platform installation also detect the host's RDMA capabilities and prepare supported devices and networks for model communication.
 
 ## 4. Install and access Foretoken
 
@@ -105,45 +106,23 @@ foretoken install -e .
 To use published packages and images instead, get the examples from the chosen [release](https://github.com/shiweijiezero/foretoken/releases) and install:
 
 ```bash
-pip install foretoken
+uv pip install foretoken  # Or: pip install foretoken
 foretoken install
 ```
 
-### 4.2 Local mode
+### 4.2 Deploy the Quick Start
 
-Deploy the Quick Start and resolve the address assigned by k3s ServiceLB:
+Deploy the model and resolve its shared Gateway URL and request Host. With `--name` omitted, the instance takes `qwen3-0-6b` from the `FrontendService`'s `metadata.name` in [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml):
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 ```
 
-### 4.3 Gateway mode
+To choose another instance name, add `--name candidate-a` to `deploy` and use `candidate-a` with `endpoint`.
 
-First, set the public hostname in `examples/quickstart/qwen3-0.6b/frontend.yaml`:
-
-```yaml
-spec:
-  hostname: foretoken.example.com
-```
-
-Enable Gateway mode and deploy the Quick Start:
-
-```bash
-foretoken install -e . --frontend-mode gateway
-# For a release installation: foretoken install --frontend-mode gateway
-foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
-```
-
-Resolve the configured Gateway endpoint:
-
-```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
-```
-
-### 4.4 Send an OpenAI API-compatible request
+### 4.3 Send an OpenAI API-compatible request
 
 ```bash
 curl "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -152,7 +131,6 @@ curl "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
   -d '{
     "model": "Qwen/Qwen3-0.6B",
     "messages": [{"role": "user", "content": "Reply with: Foretoken is ready"}],
-    "max_tokens": 32,
     "temperature": 0
   }'
 printf '\n'

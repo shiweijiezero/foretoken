@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use foretoken_model_protocol::ModelServerRole;
 use prometheus_client::encoding::EncodeLabelSet;
-use prometheus_client::encoding::text::encode;
+use prometheus_client::encoding::text::encode_registry;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::{Family, MetricConstructor};
 use prometheus_client::metrics::histogram::{Histogram, exponential_buckets};
@@ -84,6 +84,21 @@ pub(crate) struct RouterMetrics {
     references: Mutex<LabelReferences>,
 }
 
+/// Retains the fixed metric label space derived from one immutable routing generation.
+pub(crate) struct RouterMetricsScope {
+    stage_labels: Vec<StageLabels>,
+    outcome_labels: Vec<OutcomeLabels>,
+    candidate_labels: Vec<CandidateLabels>,
+    target_labels: Vec<TargetLabels>,
+}
+
+pub(crate) static METRICS: LazyLock<RouterMetrics> = LazyLock::new(RouterMetrics::new);
+
+/// Appends routing metrics without EOF so the frontend can combine independently owned registries.
+pub fn encode_metrics(output: &mut impl fmt::Write) -> Result<(), fmt::Error> {
+    encode_registry(output, &METRICS.registry)
+}
+
 fn latency_histogram() -> Histogram {
     Histogram::new(exponential_buckets(0.00001, 4.0, 10))
 }
@@ -138,14 +153,6 @@ impl RouterMetrics {
             references: Mutex::new(LabelReferences::default()),
         }
     }
-}
-
-/// Retains the fixed metric label space derived from one immutable routing generation.
-pub(crate) struct RouterMetricsScope {
-    stage_labels: Vec<StageLabels>,
-    outcome_labels: Vec<OutcomeLabels>,
-    candidate_labels: Vec<CandidateLabels>,
-    target_labels: Vec<TargetLabels>,
 }
 
 impl RouterMetricsScope {
@@ -411,13 +418,4 @@ fn role_name(role: ModelServerRole) -> &'static str {
         ModelServerRole::Prefill => "prefill",
         ModelServerRole::Decode => "decode",
     }
-}
-
-pub(crate) static METRICS: LazyLock<RouterMetrics> = LazyLock::new(RouterMetrics::new);
-
-/// Renders Router observations for the Frontend scrape handler, including the OpenMetrics EOF marker.
-pub fn render_metrics() -> Result<String, fmt::Error> {
-    let mut output = String::new();
-    encode(&mut output, &METRICS.registry)?;
-    Ok(output)
 }

@@ -15,7 +15,7 @@ This example uses a source installation and four NVIDIA GPUs. From the repositor
 docker build -f examples/feature/encoder-prefill-decode/runtime.Dockerfile -t foretoken-vllm:epd .
 ```
 
-The cluster needs a StorageClass that supports `ReadWriteMany`. Set `storageClassName` in `encoder-cache.yaml` if the default StorageClass does not provide shared storage. RDMA transport also needs allocated RDMA devices with GPUDirect RDMA enabled; choose TCP below if these are unavailable.
+The cluster needs a StorageClass that supports `ReadWriteMany`. Set `storageClassName` in `encoder-cache.yaml` if the default StorageClass does not provide shared storage.
 
 Save the runtime choice and shared encoder cache settings as `deploy/platform-values.yaml`:
 
@@ -27,17 +27,6 @@ runtime:
       sharedStorageClaim: encoder-cache
 ```
 
-RDMA is the default P/D transport. To use Mooncake TCP instead, add this section under the same `runtime.vllm` mapping:
-
-```yaml
-runtime:
-  vllm:
-    pd:
-      protocol: tcp
-```
-
-TCP does not require RDMA devices; GPU KV data is staged through host memory.
-
 Install from this checkout:
 
 ```bash
@@ -48,11 +37,14 @@ For a remote cluster, also pass `--registry REGISTRY` with a container registry 
 
 ## Deploy
 
+Prefill and Decode use Mooncake. Foretoken selects RDMA when both stages have compatible devices and networking, or TCP otherwise. The example needs no transport settings.
+
 From the repository root:
 
 ```bash
 foretoken deploy examples/feature/encoder-prefill-decode --timeout 20m
 export FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/feature/encoder-prefill-decode)"
+export FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/feature/encoder-prefill-decode --host)"
 ```
 
 ## Ask about an image
@@ -79,7 +71,10 @@ body = {
 request = Request(
     os.environ["FORETOKEN_FRONTEND_URL"] + "/v1/chat/completions",
     data=json.dumps(body).encode(),
-    headers={"Content-Type": "application/json"},
+    headers={
+        "Content-Type": "application/json",
+        "Host": os.environ["FORETOKEN_REQUEST_HOST"],
+    },
 )
 with urlopen(request, timeout=300) as response:
     print(json.load(response)["choices"][0]["message"]["content"])
@@ -90,7 +85,7 @@ PY
 
 Each stage has one Pool; its `replicas`, resource requests and `engineArgs` can be adjusted independently. A Pool-level `engineArgs` replaces the service-level dictionary; the YAML anchor preserves shared settings in the example. Match GPU requests to the chosen parallelism as described in [Inference parameters](../../../docs/features/inference-parameters.md).
 
-Reapply the directory with `foretoken deploy` after editing it. Use `foretoken status examples/feature/encoder-prefill-decode` to inspect readiness. Encoder output travels through the shared volume, while Prefill transfers KV cache to Decode over the platform-selected Mooncake transport; clients do not supply transfer addresses or intermediate results.
+Reapply the directory with `foretoken deploy` after editing it. Use `foretoken status examples/feature/encoder-prefill-decode` to inspect readiness. Encoder output travels through the shared volume, while Prefill transfers KV cache to Decode over the model's Mooncake transport; clients do not supply transfer addresses or intermediate results.
 
 ## Clean up
 
@@ -98,4 +93,4 @@ Reapply the directory with `foretoken deploy` after editing it. Use `foretoken s
 foretoken delete examples/feature/encoder-prefill-decode
 ```
 
-This deletes the example namespace and cache claim. Encoder files are shared cache entries rather than per-request temporary files; the volume's reclaim policy determines whether their storage is retained. The shared Foretoken platform remains installed.
+This deletes the instance's services and encoder-cache claim, leaving the namespace in place. Encoder files are shared cache entries rather than per-request temporary files; the volume's reclaim policy determines whether their storage is retained. The shared Foretoken platform remains installed.

@@ -28,7 +28,13 @@ Design the complete configuration, execution, observation, decision, and cleanup
 - Do not copy a complete lifecycle into multiple runners, controllers, or adapters. Share the common execution path and keep each caller responsible only for its distinct policy or input.
 - Shared protocol values, defaults, state transitions, and derived calculations must have one authoritative definition. Consumers should use a typed contract or shared helper instead of copying strings, numbers, or algorithms.
 
-Foretoken integrates with mature inference engines and Kubernetes projects. Reuse their public interfaces and owning paths where they fit. Keep version-sensitive or backend-specific behavior in a thin adapter; platform APIs and common control flow should use inference-engine-neutral domain types.
+## Community libraries and frameworks
+
+Before adding or substantially revising a general-purpose responsibility, actively look for maintained community libraries, SDKs, tools, and frameworks, beyond the standard library and dependencies already in the repository. This includes parsing and validation, protocol clients, concurrency, persistence, scheduling, and observability, as well as inference engines and Kubernetes integrations.
+
+Evaluate candidates through their actual public APIs, documentation, and relevant source. Check maintenance, licensing, supported versions, dependency and deployment costs, and the required behavior under concurrency, cancellation, deadlines, failure, and recovery. Prefer the option that reduces total implementation and maintenance work while preserving the component's responsibilities and supported capabilities.
+
+Reuse the upstream component's complete owning path rather than wrapping its types around another handwritten implementation. Keep only necessary domain adaptation, migrate producers and consumers together, and delete superseded code, state, configuration, and tests. Common APIs remain engine-neutral; backend- or version-specific details stay in thin adapters. When domain code must remain, explain the concrete requirement the available upstream interfaces do not cover in the relevant design or review, rather than relying on a generic claim that custom code is simpler.
 
 Do not build compatibility probes, fallback implementations, or plugin frameworks for versions and backends the repository does not currently support.
 
@@ -74,15 +80,23 @@ Names should describe domain responsibility and ownership without relying on the
 
 Keep values at the narrowest scope that owns them. A value used by one function belongs inside that function; use a module-level constant only when multiple functions share it or it represents a module-wide external contract. Do not move configuration into file globals merely for convenience.
 
+Group module-level imports, shared constants, and type declarations near the top in dependency order rather than interleaving them with function implementations. Keep core functions clear and concise, and place the main entry points after these declarations so readers encounter the primary flow before supporting details; use the same ordering within classes.
+
 Keep related stages readable as one flow. Extract a function when it owns a meaningful stage or lifecycle, not merely to shorten another function. Avoid fragmenting sequential logic into thin helpers that force readers to jump between files.
 
 When a component owns the same resources, clients, configuration, or invariants across multiple lifecycle stages, use a state-owning type: a class in Python or a struct with methods in Go and Rust. Keep stateless transformations and single-stage operations as functions. Do not introduce a type only for namespacing, shorter parameter lists, or hypothetical reuse.
 
 A module centered on a state-owning class should contain that lifecycle and its closely related types. Put behavior shared by current implementations on their base class, and keep adapter-specific recognition, capacity, and policy as methods on the specialized class so the adapter remains readable in one place. Move only reusable stateless parsing, matching, and formatting to clearly named helper modules. Do not enforce one class per file mechanically; keep multiple classes together when they participate in the same lifecycle and share one responsibility.
 
-File length alone is not a refactoring rule. Split a module when it accumulates independent lifecycles, protocols, backends, or ownership boundaries; when an entry point starts making domain policy decisions; or when one state is threaded through many unrelated helpers. Create a domain package or directory when multiple current modules share one stable responsibility, and keep the entry point focused on composition and dispatch. Do not create empty hierarchies, generic `utils` layers, registries, or directories for hypothetical future implementations. A long file with one cohesive responsibility may remain intact.
+Keep directory hierarchies understandable without opening every file. When a directory accumulates files for several responsibilities, group them by their existing domains or lifecycles so readers can find the entry point and related implementation together. Group engine, hardware, and provider implementations under the domain they implement rather than making each one a peer of unrelated core subsystems. Each level must explain a responsibility; do not create empty hierarchies, generic `utils` layers, registries, or directories for hypothetical implementations.
+
+Review every first-party source file exceeding 300 effective code lines and every function exceeding 150. Count lines containing code, excluding blank lines, comment-only lines, and documentation strings; a line containing both code and a comment counts. Examine responsibility boundaries, abstraction levels, state ownership, and readability, and decide whether to retain, reorganize, or refactor each definition. These are review thresholds, not mandatory splitting limits: cohesive declarations, mappings, and algorithms may remain together.
+
+Split a module when it accumulates independent lifecycles, protocols, backends, or ownership boundaries. Keep primary functions focused on meaningful stages of the complete operation; move domain policy, protocol handling, and resource construction into the stages that own them. Preserve a readable execution order and shared cleanup rather than shortening the entry point through chains of forwarding helpers.
 
 After substantial feature growth, review the final responsibility map rather than accepting code growth as inevitable. Remove replaced paths, duplicate state, repeated stages, and forwarding layers with no independent ownership; move domain policy out of entry points; and verify that a split reduces the total concepts and implementation that maintainers must understand.
+
+Each first-party source file with an independent responsibility should explain that purpose in a concise file or module comment after the license notice. File-level purpose, type responsibilities, and the contracts of complete stages are distinct; a class or function comment does not replace the file overview. Empty package markers, generated or upstream files, and self-explanatory small partial files do not need mechanical boilerplate.
 
 Comments explain information the code cannot express clearly:
 
@@ -91,7 +105,7 @@ Comments explain information the code cannot express clearly:
 - which external contract constrains the implementation;
 - what remains true after failure or cleanup.
 
-Every first-party public production function must have a concise doc comment stating what it does, who calls or consumes it, what it returns or publishes, and any ownership or lifecycle responsibility that matters. Private functions that own a complete stage or are not self-explanatory need the same context. Generated code and third-party sources follow their owning project.
+Every first-party public production function must have a concise doc comment stating what it does, who calls or consumes it, what it returns or publishes, and any ownership or lifecycle responsibility that matters. Private functions that own a complete stage or are not self-explanatory need the same context. This includes program entry points and functions owning startup, request execution, reconciliation, publication, or shutdown. Generated code and third-party sources follow their owning project.
 
 Large code blocks, multi-stage flows, non-obvious algorithms, and critical boundaries must have a small number of structural comments that let maintainers understand the execution before reading details.
 
@@ -99,9 +113,13 @@ Do not comment getters, field forwarding, constant mappings, obvious loops, or e
 
 ## Language and repository tools
 
+Prefer English for source-code comments, documentation comments, docstrings, and comments in scripts and configuration files. Use English where practical for identifiers, CLI help, error messages, commit messages, and PR or issue titles and descriptions. Apply the same preference to Foretoken additions in upstream patches.
+
 Follow the surrounding code and the executable checks for each subtree.
 
-- Rust data plane: run `make verify-data-plane`. It checks formatting, compilation, tests, and Clippy for first-party workspace packages.
+CLI and benchmark modules use `from loguru import logger` for diagnostics. Application entry points configure sinks and bridge third-party `logging` records; inference-engine adapters retain their native logging, and standalone image scripts use the logging facilities available in their runtime. Send progress and diagnostics to stderr, and keep explicit command results such as endpoint URLs, JSON and status tables on stdout. Preserve exception causes for recorded logs, disable diagnostic local-variable dumps, and report each failure at the boundary that can act on it.
+
+- Rust data plane: run `make verify-data-plane`. It checks formatting and compiles all workspace targets with Clippy.
 - Go control plane: run `make -C control-plane verify`. Generated code and CRDs must be regenerated through the Makefile targets rather than edited independently.
 - Python CLI: keep public argument definitions and parsing separate from command execution, return explicit command types rather than passing `argparse.Namespace` across that boundary, and exercise the affected installed command against Kubernetes.
 - Python benchmarks: follow the package structure and typing style already used under `benchmarks/`; run the relevant benchmark tests and exercise the affected benchmark command or runner path.
@@ -157,7 +175,9 @@ Documentation review is iterative. Read the complete user path as a first-time u
 
 Before finalizing, perform a separate deletion pass for duplicated commands, meta-commentary about the document, misplaced alternatives, implementation details, and headings without an independent responsibility. Formatting and tests do not replace this reading review.
 
-Keep English and Chinese documentation aligned in capability, prerequisites, commands, defaults, and limitations, but write each version independently for its readers. Use natural technical English and natural Chinese rather than translating sentence by sentence. Preserve exact commands, field names, type names, and Kubernetes resource kinds when readers need to recognize or enter them; explain uncommon terms in the surrounding language on first use.
+Maintain separate English and Simplified Chinese files for first-party READMEs and other project documentation. Use `README.md` and `README_zh.md`, or `name.md` and `name_zh.md`, in the same directory, with reciprocal language links near the top. Update both files in the same change rather than combining both languages on one page.
+
+Keep the two versions aligned in capability, prerequisites, commands, defaults, and limitations, but write each independently for its readers. Use natural technical English and natural Chinese rather than translating sentence by sentence. Preserve exact commands, field names, type names, and Kubernetes resource kinds when readers need to recognize or enter them; explain uncommon terms in the surrounding language on first use.
 
 ## Change and PR discipline
 

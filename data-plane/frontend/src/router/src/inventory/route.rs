@@ -21,4 +21,6 @@ pub struct RouteDecision {
     pub revision: String,
     /// Exact data-parallel replica selected for this execution stage; single-rank targets use zero.
     pub data_parallel_rank: u32,
+    /// Decode prefix source for Prefill; the receiving model server owns acquisition.
+    pub kv_source: Option<foretoken_model_protocol::KvReuseSource>,
 }

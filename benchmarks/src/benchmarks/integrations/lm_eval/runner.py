@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 from contextlib import nullcontext
 from functools import partial
@@ -21,12 +20,12 @@ from lm_eval.utils import (
     setup_logging,
     simple_parse_args_string,
 )
+from loguru import logger
 
-from benchmarks.config.evaluation import native_arguments, validate_model_transport
+from benchmarks.integrations.lm_eval.cli import parse_arguments
 from benchmarks.integrations.lm_eval.model import ServiceEvaluation
 from benchmarks.integrations.lm_eval.responses import LmEvalResponses
-
-logger = logging.getLogger(__name__)
+from benchmarks.integrations.quality import validate_model_transport
 
 
 def run_lm_eval(
@@ -35,7 +34,7 @@ def run_lm_eval(
 ) -> None:
     """Resolve native configuration and own the response store for one model-service evaluation."""
     setup_logging()
-    args = native_arguments("lm-eval", arguments)
+    args = parse_arguments(arguments)
     args.output_path = directory
     if args.config:
         configured = EvaluatorConfig.load_yaml_config(args.config).get("model_args") or {}
@@ -110,14 +109,13 @@ def _execute(config, model, manager) -> None:
         if tracker.push_results_to_hub or tracker.push_samples_to_hub:
             tracker.recreate_metadata_card()
         if trackio is not None:
-            # Optional tracking failures do not discard saved native reports.
             try:
                 trackio.post_init(results)
                 trackio.log_eval_result()
                 if config.log_samples:
                     trackio.log_eval_samples(samples)
-            except Exception:
-                logger.warning("Logging to Trackio failed", exc_info=True)
+            except Exception:  # noqa: BLE001 - Optional publication does not invalidate saved native reports.
+                logger.opt(exception=True).warning("Logging to Trackio failed")
     finally:
         if trackio is not None:
             trackio.finish()

@@ -9,14 +9,16 @@ mod api;
 pub use admission::AdmissionOrigin;
 mod http;
 mod runtime;
+mod store;
 mod video;
 mod video_task;
 
 pub use video::VideoRequest;
 
+pub use api::ResponseTasks;
 pub use http::router;
 pub use runtime::{
     Generated, GeneratedChat, Generation, GenerationError, GenerationRequest, KvIndexDiagnostics,
     ModelRuntime, RequestSnapshot, RoutedGenerate, RoutedRequest, RuntimeBundle, RuntimeControl,
-    RuntimeDiagnostics, RuntimeGeneration, RuntimeState, Tokenization,
+    RuntimeDiagnostics, RuntimeGeneration, RuntimeState, Tokenization, VideoServiceReference,
 };

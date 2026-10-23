@@ -2,7 +2,8 @@ Foretoken Mooncake
 Copyright contributors to the Foretoken project
 
 This image contains Mooncake, distributed under the Apache License 2.0, and
-Foretoken's provider-registration extension and client lifecycle fixes.
+Foretoken's provider-registration extension, automatic RDMA port selection,
+and client lifecycle fixes.
 These patches are installed at
 /usr/local/share/foretoken-mooncake/patches.
 

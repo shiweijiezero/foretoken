@@ -25,6 +25,9 @@ local function save(request_id, request)
     else
         redis.call('HSET', key, field, cjson.encode(request))
     end
+    -- Wakeups are advisory and contain no caller or request content. A denied
+    -- publication cannot undo or turn a committed reservation into an error.
+    redis.pcall('PUBLISH', ARGV[4], key .. ':' .. field)
 end
 
 local function finish_slot(request, slot)
@@ -61,6 +64,8 @@ local function retire_frontends(keep)
     end
 end
 
+-- Membership retirement or a newer process epoch proves these accepted executions have ended.
+-- Release only the slots selected by that evidence, retaining work still owned by live backends.
 local function finish_backend_slots(terminated)
     for _, field in ipairs(redis.call('HKEYS', key)) do
         if field:sub(1, 2) == 'r:' then
@@ -116,6 +121,58 @@ if action == 'publish' or action == 'publish_membership' then
     return 'ok'
 end
 
+-- Recovery observes the latest controller membership, not a frontend's local snapshot.
+if action == 'frontend_active' then
+    local encoded_frontends = redis.call('HGET', key, 'frontends')
+    if not encoded_frontends then return 'unavailable' end
+    return cjson.decode(encoded_frontends)[input.frontend] and 'active' or 'retired'
+end
+
+-- Retention follows successful enqueue; an uncertain enqueue never returns a permit.
+-- Every writer, including older applications, removes r: only after all slots terminate.
+-- Keeping c: independent preserves that registration across terminal writes and cache loss.
+if action == 'completed_consumers' then
+    local completed = {}
+    for _, field in ipairs(redis.call('HKEYS', key)) do
+        if field:sub(1, 2) == 'c:' then
+            local consumer = redis.call('HGET', key, field)
+            local active = redis.call('HGET', key, 'r:' .. field:sub(3))
+            if consumer:sub(1, #input.prefix) == input.prefix
+                and (not active or cjson.decode(active).remaining == 0) then
+                completed[#completed + 1] = {field:sub(3), consumer}
+            end
+        end
+    end
+    return completed
+end
+
+local record = redis.call('HGET', key, 'r:' .. id)
+local request = record and cjson.decode(record) or nil
+local completion = redis.call('HGET', key, 'c:' .. id)
+
+-- A retained registration is mandatory: losing the whole ledger never proves termination.
+-- Acknowledgement removes that registration, not an uncertain-enqueue cancellation fence.
+if action == 'finished' or action == 'acknowledge' then
+    if not completion then
+        if action == 'acknowledge' and (not request or request.remaining == 0) then return 'ok' end
+        return request and 'untracked' or 'unknown'
+    end
+    if request and request.remaining ~= 0 then return 'pending' end
+    if action == 'acknowledge' then
+        redis.call('HDEL', key, 'c:' .. id)
+        redis.pcall('PUBLISH', ARGV[4], key .. ':r:' .. id)
+        return 'ok'
+    end
+    return 'completed'
+end
+
+if completion and (not request or request.remaining == 0) then
+    if action == 'status' then return 'completed' end
+    if action == 'drop' or action == 'complete' or action == 'reject_before_submission'
+        or action == 'cancel_entry' then return 'ok' end
+    return 'closed'
+end
+
 local encoded = redis.call('HGET', key, 'config')
 if not encoded then return 'unavailable' end
 local config = cjson.decode(encoded)
@@ -153,8 +210,6 @@ local function rule_for(role, caller)
     return nil
 end
 
-local record = redis.call('HGET', key, 'r:' .. id)
-local request = record and cjson.decode(record) or nil
 if config.closed and (action == 'enqueue' or action == 'dispatch') then return 'closed' end
 
 if action == 'enqueue' then
@@ -200,6 +255,16 @@ end
 if not request then
     if action == 'drop' or action == 'complete' then return 'ok' end
     return 'closed'
+end
+
+-- Consumers retain evidence before the original frontend starts preparation or submission.
+if action == 'retain_completion' then
+    if request.cancelled or request.retired or request.accepted or request.remaining == 0
+        or not frontends[request.frontend] or count('o:' .. request.frontend) ~= request.epoch then
+        return 'closed'
+    end
+    redis.call('HSET', key, 'c:' .. id, input.consumer)
+    return 'ok'
 end
 
 if action == 'dispatch' then

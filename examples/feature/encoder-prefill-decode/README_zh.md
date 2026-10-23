@@ -15,7 +15,7 @@
 docker build -f examples/feature/encoder-prefill-decode/runtime.Dockerfile -t foretoken-vllm:epd .
 ```
 
-集群需要支持 `ReadWriteMany` 的 StorageClass。默认 StorageClass 不支持共享存储时，在 `encoder-cache.yaml` 中填写适用的 `storageClassName`。RDMA 传输还需要启用 GPUDirect RDMA 并分配 RDMA 设备；不具备该条件时，可按下文选择 TCP。
+集群需要支持 `ReadWriteMany` 的 StorageClass。默认 StorageClass 不支持共享存储时，在 `encoder-cache.yaml` 中填写适用的 `storageClassName`。
 
 将镜像选择和共享编码缓存设置保存为 `deploy/platform-values.yaml`：
 
@@ -27,17 +27,6 @@ runtime:
       sharedStorageClaim: encoder-cache
 ```
 
-P/D 默认使用 RDMA。如需选择 Mooncake TCP，将以下设置合并到同一份 `runtime.vllm` 配置中：
-
-```yaml
-runtime:
-  vllm:
-    pd:
-      protocol: tcp
-```
-
-TCP 不需要 RDMA 设备，GPU KV 数据会经过主机内存暂存。
-
 从当前源码安装平台：
 
 ```bash
@@ -48,11 +37,14 @@ foretoken install -e . --values deploy/platform-values.yaml
 
 ## 部署
 
+Prefill 与 Decode 之间使用 Mooncake。两端设备和网络兼容时，Foretoken 自动选择 RDMA，否则使用 TCP；示例无需额外配置传输方式。
+
 从仓库根目录执行：
 
 ```bash
 foretoken deploy examples/feature/encoder-prefill-decode --timeout 20m
 export FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/feature/encoder-prefill-decode)"
+export FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/feature/encoder-prefill-decode --host)"
 ```
 
 ## 发送图片请求
@@ -79,7 +71,10 @@ body = {
 request = Request(
     os.environ["FORETOKEN_FRONTEND_URL"] + "/v1/chat/completions",
     data=json.dumps(body).encode(),
-    headers={"Content-Type": "application/json"},
+    headers={
+        "Content-Type": "application/json",
+        "Host": os.environ["FORETOKEN_REQUEST_HOST"],
+    },
 )
 with urlopen(request, timeout=300) as response:
     print(json.load(response)["choices"][0]["message"]["content"])
@@ -90,7 +85,7 @@ PY
 
 每个阶段各有一个 Pool，其 `replicas`、资源请求和 `engineArgs` 可以独立调整。Pool 的 `engineArgs` 会整体替换服务级字典，示例通过 YAML anchor 复用共同设置。GPU 请求数量与并行参数的对应关系见[推理参数](../../../docs/features/inference-parameters_zh.md)。
 
-修改后重新运行 `foretoken deploy`，通过 `foretoken status examples/feature/encoder-prefill-decode` 查看就绪状态。编码结果经共享卷传递，Prefill 的 KV Cache 通过平台选择的 Mooncake 传输交给 Decode；客户端不需要填写传输地址或传递中间结果。
+修改后重新运行 `foretoken deploy`，通过 `foretoken status examples/feature/encoder-prefill-decode` 查看就绪状态。编码结果经共享卷传递，Prefill 的 KV Cache 通过模型配置的 Mooncake 传输交给 Decode；客户端不需要填写传输地址或传递中间结果。
 
 ## 清理
 
@@ -98,4 +93,4 @@ PY
 foretoken delete examples/feature/encoder-prefill-decode
 ```
 
-命令会删除示例命名空间和缓存卷声明。编码文件是跨请求复用的缓存，不在单次请求结束时删除；底层存储是否保留取决于卷的回收策略。共享 Foretoken 平台继续保留。
+命令会删除该实例的服务和编码缓存卷声明，命名空间保留。编码文件是跨请求复用的缓存，不在单次请求结束时删除；底层存储是否保留取决于卷的回收策略。共享 Foretoken 平台继续保留。

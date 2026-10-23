@@ -6,10 +6,7 @@
 from __future__ import annotations
 
 import json
-import re
-from copy import deepcopy
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import Any
 
 from foretoken.errors import DeploymentError
@@ -21,32 +18,203 @@ _CONFIG_PATH = "/k8s-rdma-shared-dev-plugin"
 
 @dataclass(frozen=True)
 class RDMASelection:
-    """One install-time allocation choice; None leaves explicit Helm values intact."""
+    """An install-time network owner and its advertised shared-allocation alternatives."""
 
-    resource_name: str | None
     action: str
     detail: str
     managed: bool = False
     node_names: tuple[str, ...] = ()
     available: bool = False
+    resource_names: tuple[str, ...] = ()
 
 
-def migrate_stored_rdma_values(values: dict[str, Any]) -> dict[str, Any]:
-    """Move legacy allocation keys in installed Helm values to their platform owner.
+def select_rdma(
+    kubectl: Kubectl,
+    nodes: tuple[dict[str, Any], ...],
+    daemonsets: tuple[dict[str, Any], ...],
+    values: tuple[dict[str, Any], ...],
+    managed_release: tuple[str, str],
+) -> RDMASelection:
+    """Resolve existing shared allocations or select managed device preparation.
 
-    Current values files use the new schema; this only translates a previous release.
-    Existing platform-level values take precedence over legacy P/D values.
+    Kubernetes allocatable values confirm availability; the plugin ConfigMap
+    supplies resource identity. Neither NIC names nor capacity units are inferred.
     """
-    migrated = deepcopy(values)
-    pd = migrated.get("runtime", {}).get("vllm", {}).get("pd", {})
-    for old, new in (
-        ("rdmaResourceName", "resourceName"),
-        ("rdmaResourceCount", "resourceCount"),
-    ):
-        if old in pd:
-            value = pd.pop(old)
-            migrated.setdefault("rdma", {}).setdefault(new, value)
-    return migrated
+    resource: str | None = None
+    managed: bool | None = None
+    bindings: list[dict[str, Any]] | None = None
+    for document in values:
+        rdma = document.get("rdma", {})
+        if not isinstance(rdma, dict):
+            raise DeploymentError("rdma must be a mapping")
+        if "managed" in rdma:
+            managed = rdma["managed"]
+            if not isinstance(managed, bool):
+                raise DeploymentError("rdma.managed must be a boolean")
+        if "resourceName" in rdma:
+            resource = rdma["resourceName"]
+            if not isinstance(resource, str):
+                raise DeploymentError("rdma.resourceName must be a string")
+        if "bindings" in rdma:
+            bindings = rdma["bindings"]
+            if bindings is not None and not isinstance(bindings, list):
+                raise DeploymentError("rdma.bindings must be an array or null")
+            if bindings is not None and "managed" not in rdma:
+                managed = False
+
+    if bindings is not None:
+        if managed:
+            raise DeploymentError("rdma.bindings consume existing allocations and cannot enable rdma.managed")
+        return RDMASelection("Configured" if bindings else "Disabled", "RDMA network bindings")
+    if managed and resource:
+        raise DeploymentError(
+            "rdma.managed and an external rdma.resourceName are mutually exclusive"
+        )
+    if not managed and resource:
+        return RDMASelection("Configured", resource)
+    if not nodes:
+        if managed:
+            raise DeploymentError("managed RDMA requires selected GPU nodes; check GPU resources and the node selector")
+        return RDMASelection("Skip", "no selected GPU nodes")
+
+    available: set[str] = set()
+    external_plugins = []
+    owned_plugin = False
+    for daemonset in daemonsets:
+        try:
+            resources = shared_rdma_resources(kubectl, daemonset)
+        except DeploymentError as exc:
+            if managed:
+                raise
+            return RDMASelection("Not available", str(exc))
+        if resources is None:
+            continue
+        metadata = daemonset["metadata"]
+        annotations = metadata.get("annotations", {})
+        if (
+            annotations.get("meta.helm.sh/release-name"),
+            annotations.get("meta.helm.sh/release-namespace"),
+        ) != managed_release:
+            external_plugins.append(f"{metadata['namespace']}/{metadata['name']}")
+        else:
+            owned_plugin = True
+            if managed is False:
+                continue
+        for name in resources:
+            if nodes_with_rdma_allocation(nodes, name):
+                available.add(name)
+    network_allocators = _external_network_allocators(kubectl, nodes)
+    if managed is None:
+        managed = not external_plugins and not network_allocators
+    if managed:
+        if external_plugins or network_allocators:
+            raise DeploymentError(
+                "reuse the existing network allocator instead of enabling rdma.managed: "
+                + ", ".join((*external_plugins, *network_allocators))
+            )
+        return RDMASelection(
+            "Upgrade" if owned_plugin else "Install",
+            "shared RDMA device plugin",
+            managed=True,
+            node_names=tuple(sorted(node["metadata"]["name"] for node in nodes)),
+            available=bool(available),
+        )
+    if available:
+        names = tuple(sorted(available))
+        return RDMASelection(
+            "Reuse", ", ".join(names),
+            available=True, resource_names=names,
+        )
+    if external_plugins or network_allocators:
+        return RDMASelection(
+            "Not available",
+            "existing network allocators have no reusable shared RDMA allocation on the selected GPU nodes: "
+            + ", ".join((*external_plugins, *network_allocators)),
+        )
+    return RDMASelection(
+        "Unavailable",
+        "no shared RDMA allocation on the selected GPU nodes; "
+        "set rdma.managed=true to provision the device plugin on RDMA-capable nodes",
+    )
+
+
+def _external_network_allocators(
+    kubectl: Kubectl, nodes: tuple[dict[str, Any], ...],
+) -> tuple[str, ...]:
+    """Preserve SR-IOV and DRA ownership before installing a blanket shared-HCA plugin."""
+    owners = set()
+    policies = "sriovnetworknodepolicies.sriovnetwork.openshift.io"
+    if policies in kubectl.api_resource_names("sriovnetwork.openshift.io"):
+        for policy in kubectl.list_all_resources((policies,)):
+            spec = policy["spec"]
+            if spec.get("isRdma") and any(
+                all(node["metadata"].get("labels", {}).get(key) == value for key, value in (spec["nodeSelector"] or {}).items())
+                for node in nodes
+            ):
+                metadata = policy["metadata"]
+                owners.add(f"{metadata['namespace']}/{metadata['name']}")
+    slices = "resourceslices.resource.k8s.io"
+    if slices in kubectl.api_resource_names("resource.k8s.io"):
+        node_names = {node["metadata"]["name"] for node in nodes}
+        for resource_slice in kubectl.list_cluster_resources((slices,)):
+            spec = resource_slice["spec"]
+            if spec.get("nodeName") and spec["nodeName"] not in node_names:
+                continue
+            # Multus standard device attributes and DRANET's explicit RDMA bit
+            # identify network ownership without interpreting arbitrary resource names.
+            if any(
+                "k8s.cni.cncf.io/deviceID" in device.get("attributes", {})
+                or device.get("attributes", {}).get("dra.net/rdma", {}).get("bool") is True
+                for device in spec.get("devices", [])
+            ):
+                owners.add(f"ResourceSlice/{resource_slice['metadata']['name']} ({spec['driver']})")
+    return tuple(sorted(owners))
+
+
+def nodes_with_rdma_allocation(
+    nodes: tuple[dict[str, Any], ...], resource_name: str,
+) -> tuple[dict[str, Any], ...]:
+    """Return nodes that can consume the selected shared allocation for device and network preparation."""
+    from kubernetes.utils.quantity import parse_quantity
+
+    return tuple(
+        node for node in nodes
+        if parse_quantity(node.get("status", {}).get("allocatable", {}).get(resource_name, "0")) > 0
+    )
+
+
+def require_unused_managed_rdma(
+    kubectl: Kubectl, release: tuple[str, str]
+) -> None:
+    """Preserve a managed device allocation while nonterminal Pods still request it."""
+    resources: set[str] = set()
+    for daemonset in kubectl.list_resources(("daemonset.apps",), release[1]):
+        annotations = daemonset["metadata"].get("annotations", {})
+        if (
+            annotations.get("meta.helm.sh/release-name"),
+            annotations.get("meta.helm.sh/release-namespace"),
+        ) == release:
+            resources.update(shared_rdma_resources(kubectl, daemonset) or ())
+    if not resources:
+        return
+    users = []
+    for pod in kubectl.list_all_resources(("pod",)):
+        if pod.get("status", {}).get("phase") in {"Succeeded", "Failed"}:
+            continue
+        spec = pod["spec"]
+        containers = (*spec.get("initContainers", []), *spec.get("containers", []))
+        if any(
+            name in container.get("resources", {}).get("limits", {})
+            for name in resources
+            for container in containers
+        ):
+            metadata = pod["metadata"]
+            users.append(f"{metadata['namespace']}/{metadata['name']}")
+    if users:
+        raise DeploymentError(
+            "cannot remove the managed RDMA device plugin while Pods use its allocation: "
+            + ", ".join(sorted(users))
+        )
 
 
 def shared_rdma_resources(
@@ -106,147 +274,3 @@ def shared_rdma_resources(
                 ) from exc
         return frozenset()
     return None
-
-
-def select_rdma(
-    kubectl: Kubectl,
-    nodes: tuple[dict[str, Any], ...],
-    daemonsets: tuple[dict[str, Any], ...],
-    values: tuple[dict[str, Any], ...],
-    managed_release: tuple[str, str],
-) -> RDMASelection:
-    """Resolve a runtime allocation from explicit values or one advertised shared pool.
-
-    Kubernetes allocatable values confirm availability; the plugin ConfigMap
-    supplies resource identity. Neither NIC names nor capacity units are inferred.
-    """
-    resource: str | None = None
-    managed: bool | None = None
-    for document in values:
-        rdma = document.get("rdma", {})
-        if not isinstance(rdma, dict):
-            raise DeploymentError("rdma must be a mapping")
-        if "managed" in rdma:
-            managed = rdma["managed"]
-            if not isinstance(managed, bool):
-                raise DeploymentError("rdma.managed must be a boolean")
-        if "resourceName" in rdma:
-            resource = rdma["resourceName"]
-            if not isinstance(resource, str):
-                raise DeploymentError("rdma.resourceName must be a string")
-
-    if managed and resource:
-        raise DeploymentError(
-            "rdma.managed and an external rdma.resourceName are mutually exclusive"
-        )
-    if not managed and resource is not None:
-        return RDMASelection(
-            None, "Configured" if resource else "Disabled", resource or "runtime RDMA disabled"
-        )
-    if not nodes:
-        if managed:
-            raise DeploymentError("managed RDMA requires selected GPU nodes; check GPU resources and the node selector")
-        return RDMASelection(None, "Skip", "no selected GPU nodes")
-
-    available: set[str] = set()
-    external_plugins = []
-    owned_plugin = False
-    for daemonset in daemonsets:
-        try:
-            resources = shared_rdma_resources(kubectl, daemonset)
-        except DeploymentError as exc:
-            if managed:
-                raise
-            return RDMASelection(None, "Not available", str(exc))
-        if resources is None:
-            continue
-        metadata = daemonset["metadata"]
-        annotations = metadata.get("annotations", {})
-        if (
-            annotations.get("meta.helm.sh/release-name"),
-            annotations.get("meta.helm.sh/release-namespace"),
-        ) != managed_release:
-            external_plugins.append(f"{metadata['namespace']}/{metadata['name']}")
-        else:
-            owned_plugin = True
-            if managed is False:
-                continue
-        for node in nodes:
-            allocatable = node.get("status", {}).get("allocatable", {})
-            for name in resources:
-                # Kubernetes serializes large allocations as quantities such as
-                # 1k. Their coefficient is sufficient to determine availability.
-                coefficient = re.split(
-                    r"[a-zA-Z]", str(allocatable.get(name, 0)), maxsplit=1
-                )[0]
-                if Decimal(coefficient) > 0:
-                    available.add(name)
-    if managed is None:
-        managed = not external_plugins
-    if managed:
-        if external_plugins:
-            raise DeploymentError(
-                "reuse the existing RDMA device plugin instead of enabling rdma.managed: "
-                + ", ".join(external_plugins)
-            )
-        return RDMASelection(
-            None,
-            "Upgrade" if owned_plugin else "Install",
-            "shared RDMA device plugin",
-            managed=True,
-            node_names=tuple(sorted(node["metadata"]["name"] for node in nodes)),
-            available=bool(available),
-        )
-    if len(available) == 1:
-        name = next(iter(available))
-        return RDMASelection(name, "Reuse", name, available=True)
-    if available:
-        return RDMASelection(
-            None, "Selection needed",
-            "set rdma.resourceName to one of: " + ", ".join(sorted(available)),
-        )
-    if external_plugins:
-        return RDMASelection(
-            None, "Not available",
-            "check the existing RDMA plugin's allocation on the selected GPU nodes: "
-            + ", ".join(external_plugins),
-        )
-    return RDMASelection(
-        None, "Unavailable",
-        "no shared RDMA allocation on the selected GPU nodes; "
-        "set rdma.managed=true to provision the device plugin on RDMA-capable nodes",
-    )
-
-
-def require_unused_managed_rdma(
-    kubectl: Kubectl, release: tuple[str, str]
-) -> None:
-    """Preserve a managed device allocation while nonterminal Pods still request it."""
-    resources: set[str] = set()
-    for daemonset in kubectl.list_resources(("daemonset.apps",), release[1]):
-        annotations = daemonset["metadata"].get("annotations", {})
-        if (
-            annotations.get("meta.helm.sh/release-name"),
-            annotations.get("meta.helm.sh/release-namespace"),
-        ) == release:
-            resources.update(shared_rdma_resources(kubectl, daemonset) or ())
-    if not resources:
-        return
-    users = []
-    for pod in kubectl.list_all_resources(("pod",)):
-        if pod.get("status", {}).get("phase") in {"Succeeded", "Failed"}:
-            continue
-        spec = pod["spec"]
-        containers = (*spec.get("initContainers", []), *spec.get("containers", []))
-        if any(
-            name in container.get("resources", {}).get("limits", {})
-            for name in resources
-            for container in containers
-        ):
-            metadata = pod["metadata"]
-            users.append(f"{metadata['namespace']}/{metadata['name']}")
-    if users:
-        raise DeploymentError(
-            "cannot remove the managed RDMA device plugin while Pods use its allocation: "
-            + ", ".join(sorted(users))
-        )

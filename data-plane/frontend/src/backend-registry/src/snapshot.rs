@@ -3,7 +3,7 @@
 
 //! Defines the controller-projected component/pipeline-scope routing snapshot contract.
 use foretoken_artifacts::ModelSource;
-use foretoken_model_protocol::ModelServerRole;
+use foretoken_model_protocol::{KvConnector, ModelServerRole};
 use foretoken_router::{ModelRoutingStages, RouteTargetId, RouteTargetSet, RouterPipelineConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -51,6 +51,9 @@ pub struct SnapshotParallelism {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotModel {
+    /// Earlier controllers publish discovery without the name needed for durable task submission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_name: Option<String>,
     pub service_uid: String,
     pub model: String,
     pub source: ModelSource,
@@ -122,9 +125,7 @@ pub struct SnapshotPdComponent {
     pub tokenizer_revision: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_cache_isolation: Option<bool>,
-    pub profile_name: String,
-    pub profile_revision: String,
-    pub connector: String,
+    pub connector: KvConnector,
     pub protocol: String,
     #[serde(default)]
     pub capabilities: BTreeSet<String>,
@@ -181,6 +182,46 @@ pub struct ModelIdentity {
     pub prefix_cache_isolation: Option<bool>,
     pub capabilities: BTreeSet<String>,
 }
+#[derive(Debug, Error)]
+pub enum SnapshotError {
+    #[error("model {0} has conflicting routing configurations")]
+    ConflictingRouting(String),
+    #[error("routing snapshot version must be greater than zero")]
+    InvalidVersion,
+    #[error("routing snapshot has an incomplete model or tokenizer identity")]
+    IncompleteModelIdentity,
+    #[error("routing snapshot has an incomplete logical scaling model {0:?}")]
+    IncompleteScalingModel(String),
+    #[error("routing snapshot has no admission target set for scaling target {0:?}")]
+    MissingAdmissionTarget(String),
+    #[error("routing snapshot assigns conflicting admission target sets to scaling target {0:?}")]
+    ConflictingAdmissionTarget(String),
+    #[error("routing snapshot has incomplete group {0:?}")]
+    IncompleteGroup(RouteTargetId),
+    #[error("routing snapshot repeats backend {0:?}")]
+    DuplicateRouteTarget(RouteTargetId),
+    #[error("routing snapshot has incomplete P/D component {0:?}")]
+    IncompletePdComponent(RouteTargetId),
+    #[error("routing snapshot P/D component {0:?} must use rdma or tcp")]
+    UnsupportedPdTransport(RouteTargetId),
+    #[error(
+        "routing configuration P/D linked processing unit {0:?} is incomplete or crosses a ModelService boundary"
+    )]
+    InvalidPdPipelineScope(String),
+    #[error("routing snapshot model {0:?} cannot mix aggregate and P/D routes")]
+    MixedModelRoles(String),
+    #[error(
+        "routing snapshot model {0:?} has conflicting model, tokenizer or prefix-cache settings"
+    )]
+    ConflictingIdentity(String),
+    #[error("routing snapshot endpoint {endpoint:?} is invalid: {message}")]
+    InvalidEndpoint { endpoint: String, message: String },
+    #[error("routing snapshot has incomplete E/P/D component {0:?}")]
+    IncompleteEpdComponent(RouteTargetId),
+    #[error("routing configuration E/P/D compatibility scope {0:?} is incomplete or inconsistent")]
+    InvalidEpdPipelineScope(String),
+}
+
 impl ServingSnapshot {
     /// Compares the backend inventory independently of frontend rules and publication version.
     /// Runtime builders reuse clients and cached observations when this inventory is unchanged.
@@ -355,43 +396,4 @@ impl ServingSnapshot {
         }
         Ok(identities)
     }
-}
-#[derive(Debug, Error)]
-pub enum SnapshotError {
-    #[error("model {0} has conflicting routing configurations")]
-    ConflictingRouting(String),
-    #[error("routing snapshot version must be greater than zero")]
-    InvalidVersion,
-    #[error("routing snapshot has an incomplete model or tokenizer identity")]
-    IncompleteModelIdentity,
-    #[error("routing snapshot has an incomplete logical scaling model {0:?}")]
-    IncompleteScalingModel(String),
-    #[error("routing snapshot has no admission target set for scaling target {0:?}")]
-    MissingAdmissionTarget(String),
-    #[error("routing snapshot assigns conflicting admission target sets to scaling target {0:?}")]
-    ConflictingAdmissionTarget(String),
-    #[error("routing snapshot has incomplete group {0:?}")]
-    IncompleteGroup(RouteTargetId),
-    #[error("routing snapshot repeats backend {0:?}")]
-    DuplicateRouteTarget(RouteTargetId),
-    #[error("routing snapshot has incomplete P/D component {0:?}")]
-    IncompletePdComponent(RouteTargetId),
-    #[error("routing snapshot P/D component {0:?} must use MooncakeConnector over rdma or tcp")]
-    UnsupportedPdTransport(RouteTargetId),
-    #[error(
-        "routing configuration P/D linked processing unit {0:?} is incomplete or crosses a ModelService boundary"
-    )]
-    InvalidPdPipelineScope(String),
-    #[error("routing snapshot model {0:?} cannot mix aggregate and P/D routes")]
-    MixedModelRoles(String),
-    #[error(
-        "routing snapshot model {0:?} has conflicting model, tokenizer or prefix-cache settings"
-    )]
-    ConflictingIdentity(String),
-    #[error("routing snapshot endpoint {endpoint:?} is invalid: {message}")]
-    InvalidEndpoint { endpoint: String, message: String },
-    #[error("routing snapshot has incomplete E/P/D component {0:?}")]
-    IncompleteEpdComponent(RouteTargetId),
-    #[error("routing configuration E/P/D compatibility scope {0:?} is incomplete or inconsistent")]
-    InvalidEpdPipelineScope(String),
 }

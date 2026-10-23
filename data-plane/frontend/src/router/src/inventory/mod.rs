@@ -25,6 +25,15 @@ pub trait RouteInventory: Send + Sync {
         None
     }
 
+    /// Returns observed KV transfer settings for Decode source discovery.
+    /// Missing metadata leaves source discovery disabled.
+    fn kv_transfer(
+        &self,
+        _route_target_id: &RouteTargetId,
+    ) -> Option<foretoken_model_protocol::RuntimeKvTransferMetadata> {
+        None
+    }
+
     /// Returns the capabilities currently trusted for one route target.
     fn effective_capabilities(&self, route_target_id: &RouteTargetId) -> BTreeSet<String> {
         self.model_routes()

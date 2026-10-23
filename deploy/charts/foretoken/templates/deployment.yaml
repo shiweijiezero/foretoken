@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Each deployment owns a controller for its namespace, never the shared APIs.
-{{- if eq .Values.scope "deployment" }}
+{{/* Compile the serving-controller workload for platform-owned deployment instances. */}}
+{{- define "foretoken.deploymentController" }}
 {{- include "foretoken.validateValues" . }}
 {{- $sourceMode := .Values.development.enabled }}
+{{- $ports := include "foretoken.controllerPorts" . | fromJson }}
 {{- $applications := include "foretoken.applications" . | fromJson }}
 {{- $application := index $applications "control-plane" }}
 {{- $frontendApplication := index $applications "frontend" }}
@@ -99,7 +100,7 @@ spec:
             - {{ printf "--source-mode=%t" $sourceMode | quote }}
             - --autoscaling-telemetry-config=/etc/foretoken/controller/autoscaling-telemetry.json
             {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
-            - --metrics-bind-address=:8080
+            - {{ printf "--metrics-bind-address=:%d" (int $ports.metrics) | quote }}
             - {{ printf "--observability-prometheus=%s" .Values.observability.prometheus | quote }}
             - {{ printf "--observability-labels=%s" (include "foretoken.observabilityLabels" . | fromYaml | toJson) | quote }}
             {{- else }}
@@ -109,20 +110,21 @@ spec:
             - {{ printf "--admission-store-url-secret-name=%s" . | quote }}
             - {{ printf "--admission-store-url-secret-key=%s" $.Values.admissionStore.externalURLSecret.key | quote }}
             {{- end }}
-            - --health-probe-bind-address=:8081
+            - {{ printf "--health-probe-bind-address=:%d" (int $ports.health) | quote }}
             - {{ printf "--video-worker-image=%s" (include "foretoken.image" .) | quote }}
             {{- range .Values.workload.imagePullSecrets }}
             - {{ printf "--workload-image-pull-secret=%s" .name | quote }}
+            {{- end }}
+            {{- with .Values.workload.leaderWorkerScheduling }}
+            - {{ printf "--leader-worker-scheduling=%s" (toJson .) | quote }}
             {{- end }}
             {{- with .Values.workload.cache.claimName }}
             - {{ printf "--cache-claim=%s" . | quote }}
             {{- end }}
             - {{ printf "--cache-mount-path=%s" .Values.workload.cache.mountPath | quote }}
-            {{- if .Values.modelDistribution.modelexpress.enabled }}
-            - --model-distribution-modelexpress=true
-            {{- end }}
-            {{- if .Values.modelDistribution.dragonfly.enabled }}
-            - {{ printf "--model-distribution-dragonfly-socket=%s" .Values.modelDistribution.dragonfly.socketPath | quote }}
+            - {{ printf "--cache-directory-bindings=%s" (include "foretoken.cacheDirectoryBindings" .) | quote }}
+            {{- with .Values.modelDistribution.proxyURL }}
+            - {{ printf "--model-distribution-download-proxy=%s" . | quote }}
             {{- end }}
             {{- with .Values.runtime.vllm.modelSource.endpoint }}
             - {{ printf "--model-source-endpoint=%s" . | quote }}
@@ -131,11 +133,17 @@ spec:
             - {{ printf "--model-source-token-secret-name=%s" . | quote }}
             - {{ printf "--model-source-token-secret-key=%s" $.Values.runtime.vllm.modelSource.tokenSecret.key | quote }}
             {{- end }}
+            - {{ printf "--frontend-port=%d" (int .Values.frontend.port) | quote }}
             {{- if .Values.frontend.enabled }}
             - --frontend-enabled=true
             - {{ printf "--frontend-mode=%s" .Values.frontend.mode | quote }}
             - {{ printf "--frontend-image=%s" (include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.frontend.image)) | quote }}
-            - {{ printf "--frontend-port=%d" (int .Values.frontend.port) | quote }}
+            {{- with .Values.responseStore.externalURLSecret.name }}
+            - {{ printf "--response-store-url-secret-name=%s" . | quote }}
+            - {{ printf "--response-store-url-secret-key=%s" $.Values.responseStore.externalURLSecret.key | quote }}
+            {{- end }}
+            - {{ printf "--response-retention=%s" .Values.responseStore.retention | quote }}
+            - {{ printf "--response-replay-retention=%s" .Values.responseStore.replayRetention | quote }}
             {{- if eq .Values.frontend.mode "gateway" }}
             - {{ printf "--frontend-gateway-name=%s" (include "foretoken.frontendGatewayName" .) | quote }}
             - {{ printf "--frontend-gateway-namespace=%s" (include "foretoken.frontendGatewayNamespace" .) | quote }}
@@ -166,17 +174,24 @@ spec:
             - {{ printf "--vllm-ec-shared-storage-claim=%s" $.Values.runtime.vllm.ec.sharedStorageClaim | quote }}
             - {{ printf "--vllm-ec-shared-storage-path=%s" $.Values.runtime.vllm.ec.sharedStoragePath | quote }}
             {{- end }}
-            {{- if or (eq $.Values.runtime.vllm.pd.protocol "tcp") (include "foretoken.rdmaResourceName" $) }}
-            - --vllm-pd-profile-name=mooncake
-            - {{ printf "--vllm-pd-profile-revision=%s" $.Values.runtime.vllm.profileRevision | quote }}
-            - {{ printf "--vllm-pd-protocol=%s" $.Values.runtime.vllm.pd.protocol | quote }}
-            - {{ printf "--vllm-pd-bootstrap-port=%d" (int $.Values.runtime.vllm.pd.bootstrapPort) | quote }}
-            - {{ printf "--vllm-pd-abort-request-timeout-seconds=%d" (int $.Values.runtime.vllm.pd.abortRequestTimeoutSeconds) | quote }}
-            - {{ printf "--vllm-pd-rdma-device-name=%s" $.Values.runtime.vllm.pd.rdmaDeviceName | quote }}
+            {{- $bindings := $.Values.rdma.preparedBindings }}
+            {{- if kindIs "slice" $.Values.rdma.bindings }}
+            {{- $bindings = $.Values.rdma.bindings }}
             {{- end }}
-            {{- if (include "foretoken.rdmaResourceName" $) }}
+            {{- if or $bindings (kindIs "slice" $.Values.rdma.bindings) }}
+            - {{ printf "--rdma-bindings=%s" ($bindings | toJson) | quote }}
+            {{- else if (include "foretoken.rdmaResourceName" $) }}
             - {{ printf "--rdma-resource-name=%s" (include "foretoken.rdmaResourceName" $) | quote }}
             - {{ printf "--rdma-resource-count=%d" (int $.Values.rdma.resourceCount) | quote }}
+            {{- $networks := $.Values.rdma.preparedNetworks }}
+            {{- if kindIs "slice" $.Values.rdma.networks }}
+            {{- $networks = $.Values.rdma.networks }}
+            {{- end }}
+            {{- range $networks }}
+            {{- if or (not (hasKey . "active")) .active }}
+            - {{ printf "--rdma-network=%s/%s" (default $.Release.Namespace .namespace) .name | quote }}
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- if $.Values.runtime.vllm.mooncakeStore.profileName }}
             - {{ printf "--vllm-mooncake-store-profile-name=%s" $.Values.runtime.vllm.mooncakeStore.profileName | quote }}
@@ -191,6 +206,10 @@ spec:
             - name: FORETOKEN_ADMISSION_STORE_URL
               value: {{ include "foretoken.admissionStoreURL" . | quote }}
             {{- end }}
+            {{- if and .Values.frontend.enabled (not .Values.responseStore.externalURLSecret.name) }}
+            - name: FORETOKEN_RESPONSE_STORE_URL
+              value: {{ include "foretoken.responseStoreURL" . | quote }}
+            {{- end }}
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -198,11 +217,11 @@ spec:
           ports:
             {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
             - name: metrics
-              containerPort: 8080
+              containerPort: {{ int $ports.metrics }}
               protocol: TCP
             {{- end }}
             - name: healthz
-              containerPort: 8081
+              containerPort: {{ int $ports.health }}
               protocol: TCP
           livenessProbe:
             httpGet:

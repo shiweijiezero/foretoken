@@ -20,7 +20,7 @@ pub(super) async fn generate(
     request: Request,
 ) -> Response {
     let (parts, incoming) = request.into_parts();
-    let headers = parts.headers.clone();
+    let mut headers = parts.headers.clone();
     // An anonymous file preserves the multipart bytes regardless of field order. Its handles
     // own cleanup on parse failure, cancellation, and completion, without a persistent file name.
     let file = match tokio::task::spawn_blocking(tempfile::tempfile).await {
@@ -92,12 +92,22 @@ pub(super) async fn generate(
         }
         drop(multipart);
         let model = resolve_model(&state, requested)?;
+        let model_service_uid = headers
+            .remove(crate::video::MODEL_SERVICE_UID_HEADER)
+            .map(|value| {
+                value
+                    .to_str()
+                    .map(str::to_owned)
+                    .map_err(|_| GenerationError::InvalidRequest)
+            })
+            .transpose()?;
         file.rewind().await.map_err(|_| GenerationError::Internal)?;
         state
             .generation
             .generate_video(crate::VideoRequest {
                 model,
                 request_id: server_request_id("video"),
+                model_service_uid,
                 headers,
                 body: file,
             })

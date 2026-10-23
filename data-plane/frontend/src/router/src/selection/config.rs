@@ -43,54 +43,6 @@ inventory::collect!(PickerDescriptor);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AlgorithmName(String);
 
-impl AlgorithmName {
-    fn new(value: String) -> Result<Self, RouterPipelineConfigError> {
-        if value.is_empty() {
-            return Err(RouterPipelineConfigError::EmptyName);
-        }
-        Ok(Self(value))
-    }
-
-    /// Returns the configured stable algorithm name.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for AlgorithmName {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
-
-impl FromStr for AlgorithmName {
-    type Err = RouterPipelineConfigError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Self::new(value.to_owned())
-    }
-}
-
-impl Serialize for AlgorithmName {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&self.0)
-    }
-}
-
-impl<'de> Deserialize<'de> for AlgorithmName {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        String::deserialize(deserializer)?
-            .parse()
-            .map_err(serde::de::Error::custom)
-    }
-}
-
 /// Configured Filter selection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -105,6 +57,68 @@ pub struct ScorerAlgorithm(AlgorithmName);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct PickerAlgorithm(AlgorithmName);
+
+/// One Router pipeline stage with an algorithm and its algorithm-owned parameters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlgorithmStage<A> {
+    /// Compiled algorithm selected for this stage.
+    #[serde(default)]
+    pub algorithm: A,
+    /// Parameters consumed by the selected algorithm at pipeline construction.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub parameters: serde_json::Map<String, serde_json::Value>,
+}
+
+pub type FilterStage = AlgorithmStage<FilterAlgorithm>;
+pub type ScorerStage = AlgorithmStage<ScorerAlgorithm>;
+pub type PickerStage = AlgorithmStage<PickerAlgorithm>;
+
+/// Configured algorithms selected for each Router pipeline stage.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouterPipelineConfig {
+    /// Filter used before scoring.
+    #[serde(default)]
+    pub filter: FilterStage,
+    /// Scorer used to rank filtered candidates.
+    #[serde(default)]
+    pub scorer: ScorerStage,
+    /// Picker used to select one scored candidate.
+    #[serde(default)]
+    pub picker: PickerStage,
+}
+
+/// A pipeline configuration or compiled registry is invalid.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum RouterPipelineConfigError {
+    #[error("model {model:?}, {stage} routing: {source}")]
+    ModelStage {
+        model: String,
+        stage: &'static str,
+        source: Box<RouterPipelineConfigError>,
+    },
+    /// The selected router algorithm rejected its parameters.
+    #[error("invalid parameters for router algorithm {name:?}: {message}")]
+    InvalidParameters { name: String, message: String },
+    /// A configured name was empty.
+    #[error("router algorithm name must not be empty")]
+    EmptyName,
+    /// A compiled implementation omitted its name.
+    #[error("compiled {category} descriptor has an empty name")]
+    EmptyDescriptorName { category: &'static str },
+    /// Two compiled implementations claim the same name.
+    #[error("duplicate compiled {category} algorithm name {name:?}")]
+    DuplicateDescriptorName {
+        category: &'static str,
+        name: String,
+    },
+    /// The configuration selected no compiled implementation.
+    #[error("unknown compiled {category} algorithm {name:?}")]
+    UnknownAlgorithm {
+        category: &'static str,
+        name: String,
+    },
+}
 
 macro_rules! algorithm_name_wrapper {
     ($type:ident, $default:literal) => {
@@ -140,45 +154,6 @@ macro_rules! algorithm_name_wrapper {
 algorithm_name_wrapper!(FilterAlgorithm, "allow_all");
 algorithm_name_wrapper!(ScorerAlgorithm, "kv_least_loaded");
 algorithm_name_wrapper!(PickerAlgorithm, "gamble_sampling");
-
-/// One Router pipeline stage with an algorithm and its algorithm-owned parameters.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AlgorithmStage<A> {
-    /// Compiled algorithm selected for this stage.
-    #[serde(default)]
-    pub algorithm: A,
-    /// Parameters consumed by the selected algorithm at pipeline construction.
-    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
-    pub parameters: serde_json::Map<String, serde_json::Value>,
-}
-
-impl<A: Default> Default for AlgorithmStage<A> {
-    fn default() -> Self {
-        Self {
-            algorithm: A::default(),
-            parameters: Default::default(),
-        }
-    }
-}
-
-pub type FilterStage = AlgorithmStage<FilterAlgorithm>;
-pub type ScorerStage = AlgorithmStage<ScorerAlgorithm>;
-pub type PickerStage = AlgorithmStage<PickerAlgorithm>;
-
-/// Configured algorithms selected for each Router pipeline stage.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RouterPipelineConfig {
-    /// Filter used before scoring.
-    #[serde(default)]
-    pub filter: FilterStage,
-    /// Scorer used to rank filtered candidates.
-    #[serde(default)]
-    pub scorer: ScorerStage,
-    /// Picker used to select one scored candidate.
-    #[serde(default)]
-    pub picker: PickerStage,
-}
 
 impl RouterPipelineConfig {
     /// Builds the selected target-selection algorithms compiled into this binary.
@@ -285,6 +260,63 @@ impl RouterPipelineConfig {
     }
 }
 
+impl AlgorithmName {
+    fn new(value: String) -> Result<Self, RouterPipelineConfigError> {
+        if value.is_empty() {
+            return Err(RouterPipelineConfigError::EmptyName);
+        }
+        Ok(Self(value))
+    }
+
+    /// Returns the configured stable algorithm name.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for AlgorithmName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl FromStr for AlgorithmName {
+    type Err = RouterPipelineConfigError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::new(value.to_owned())
+    }
+}
+
+impl Serialize for AlgorithmName {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for AlgorithmName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+impl<A: Default> Default for AlgorithmStage<A> {
+    fn default() -> Self {
+        Self {
+            algorithm: A::default(),
+            parameters: Default::default(),
+        }
+    }
+}
+
 fn filter_descriptor(name: &str) -> Result<&'static FilterDescriptor, RouterPipelineConfigError> {
     inventory::iter::<FilterDescriptor>
         .into_iter()
@@ -355,36 +387,4 @@ fn validate_descriptor_names<'a>(
         });
     }
     Ok(())
-}
-
-/// A pipeline configuration or compiled registry is invalid.
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum RouterPipelineConfigError {
-    #[error("model {model:?}, {stage} routing: {source}")]
-    ModelStage {
-        model: String,
-        stage: &'static str,
-        source: Box<RouterPipelineConfigError>,
-    },
-    /// The selected router algorithm rejected its parameters.
-    #[error("invalid parameters for router algorithm {name:?}: {message}")]
-    InvalidParameters { name: String, message: String },
-    /// A configured name was empty.
-    #[error("router algorithm name must not be empty")]
-    EmptyName,
-    /// A compiled implementation omitted its name.
-    #[error("compiled {category} descriptor has an empty name")]
-    EmptyDescriptorName { category: &'static str },
-    /// Two compiled implementations claim the same name.
-    #[error("duplicate compiled {category} algorithm name {name:?}")]
-    DuplicateDescriptorName {
-        category: &'static str,
-        name: String,
-    },
-    /// The configuration selected no compiled implementation.
-    #[error("unknown compiled {category} algorithm {name:?}")]
-    UnknownAlgorithm {
-        category: &'static str,
-        name: String,
-    },
 }

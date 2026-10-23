@@ -72,6 +72,7 @@ impl RouteCandidate {
             model: self.model.clone(),
             revision: self.revision.clone(),
             data_parallel_rank: self.data_parallel_rank,
+            kv_source: None,
         }
     }
 }

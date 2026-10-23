@@ -8,8 +8,11 @@
 为 Router 的 Filter 和 Scorer 提供 KV 前缀匹配：
 
 - 本地加速器缓存：`Device/Local`。
+- Prefill 可读取的远端设备 KV 缓存：`Device/Remote`。
 - 引擎的 CPU 与文件卸载缓存：`HostPinned/Local`、`Disk/Local`。
 - Mooncake 共享内存与 SSD 缓存：`External/Remote`。
+
+这些位置描述 KV 存放在哪里，不绑定具体传输库。NIXL 和 Mooncake 都可以查询和复用 Decode 保留的设备前缀，Mooncake Store 则单独提供共享缓存查询。配置及运行条件见 [P/D 传输与复用](../../../../docs/features/inference-parameters_zh.md#分离预填充与解码并复用-kv)。
 
 ## 在路由算法中调用
 
@@ -21,7 +24,7 @@ fn needs_kv_prefix(&self) -> bool {
 }
 ```
 
-`PipelineRouter::start` 会在选择目标前异步调用 `KvPrefixIndexer::prepare`。算法在 `filter` 或 `score` 中同步使用传入的查询器：
+Router 会在调用算法前准备观测结果。在 `filter` 或 `score` 中，通过传入的查询器同步读取即可：
 
 ```rust
 use foretoken_kv_indexer::{KvPrefixIndexer, KvPrefixQueryResult};
@@ -33,7 +36,7 @@ fn candidate_prefix(
     indexer: &dyn KvPrefixIndexer,
 ) -> KvPrefixQueryResult {
     match request.kv_prefix_lookup(
-        &candidate.route_target_id,
+        candidate.route_target_id.as_str(),
         candidate.data_parallel_rank,
     ) {
         Ok(lookup) => indexer.prefix_matches(lookup),

@@ -2,11 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Build from the repository root so Cargo uses the data-plane workspace and
-# its engine adapters. The inference engine image must provide the Python
-# entrypoint required by the selected adapter. FORETOKEN_VLLM_PYTHON may select
-# an image-specific executable; model-server otherwise uses `python3`. The
-# current vLLM adapter uses vllm.entrypoints.cli.main.
+# Build from the repository root using the declared data-plane dependencies.
+# The inference image supplies its Python entrypoint and accelerator libraries.
 
 ARG BASE_IMAGE_REGISTRY=docker.io
 ARG UV_IMAGE_REGISTRY=ghcr.io
@@ -14,106 +11,50 @@ ARG RUST_BUILDER_IMAGE=${BASE_IMAGE_REGISTRY}/library/rust:1.97.1-bullseye
 ARG INFERENCE_ENGINE_IMAGE
 ARG FORETOKEN_VLLM_PYTHON
 ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.12.22
+ARG GO_IMAGE=${BASE_IMAGE_REGISTRY}/library/golang:1.25.10-bookworm
 
 FROM ${UV_IMAGE} AS uv
+
+FROM ${GO_IMAGE} AS mooncake-go
 
 # Keep the build-time patch utility out of the inference image.
 FROM ${BASE_IMAGE_REGISTRY}/library/debian:bookworm-slim AS patch-tool
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends patch ca-certificates curl \
+    && apt-get install -y --no-install-recommends patch \
     && rm -rf /var/lib/apt/lists/*
 
-# The upstream musl binary also runs in inference images with older glibc.
-FROM patch-tool AS dragonfly-client
-ARG TARGETARCH
-ARG DRAGONFLY_CLIENT_VERSION=1.5.5
+FROM ${RUST_BUILDER_IMAGE} AS compiler
+COPY --from=uv /uv /usr/local/bin/uv
+ENV UV_PYTHON_INSTALL_DIR=/opt/foretoken-python
 ARG FORETOKEN_GITHUB_MIRROR
-RUN case "$TARGETARCH" in amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; *) exit 1 ;; esac \
-    && package="dragonfly-client-v${DRAGONFLY_CLIENT_VERSION}-${arch}-unknown-linux-musl" \
-    && origin="${FORETOKEN_GITHUB_MIRROR:-https://github.com}" \
-    && curl --fail --location "${origin%/}/dragonflyoss/client/releases/download/v${DRAGONFLY_CLIENT_VERSION}/${package}.tar.gz" --output /tmp/client.tar.gz \
-    && mkdir /out \
-    && tar -xzf /tmp/client.tar.gz --strip-components=1 -C /out "$package/dfget" "$package/LICENSE" \
-    && chmod 755 /out/dfget
+RUN mirror="${FORETOKEN_GITHUB_MIRROR:-https://github.com}"; \
+    UV_PYTHON_INSTALL_MIRROR="${mirror%/}/astral-sh/python-build-standalone/releases/download" \
+      uv venv /opt/foretoken-compiler --python 3.12
+ENV PATH=/opt/foretoken-compiler/bin:${PATH}
+WORKDIR /workspace
 
-FROM ${RUST_BUILDER_IMAGE} AS builder
-
+FROM compiler AS builder
 ARG FORETOKEN_GITHUB_MIRROR
 ARG FORETOKEN_CARGO_REGISTRY
 ARG CARGO_NET_GIT_FETCH_WITH_CLI
 ARG FORETOKEN_MODEL_SERVER_BINARY=foretoken-model-server
-ARG VLLM_REVISION
-
-WORKDIR /workspace
-
-# Python adapters belong to the file export, not the Rust compilation input.
+ARG BUILD_JOBS
 COPY --exclude=model-server/python data-plane/ ./data-plane/
-
-# Lock only upstream preparation so other components can compile independently.
-# Preserve captured Rust sources when completing the upstream tree for patch preparation.
-RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm,sharing=locked \
-    if [ -n "${FORETOKEN_GITHUB_MIRROR}" ]; then \
-      printf '[url "%s/"]\n\tinsteadOf = https://github.com/\n' \
-        "${FORETOKEN_GITHUB_MIRROR%/}" > /root/.gitconfig; \
-    fi \
-    && if [ -n "${FORETOKEN_CARGO_REGISTRY}" ] && [ "${FORETOKEN_CARGO_REGISTRY}" != "sparse+https://index.crates.io/" ]; then \
-      mkdir -p /workspace/.cargo; \
-      printf '[source.crates-io]\nreplace-with = "foretoken-mirror"\n\n[source.foretoken-mirror]\nregistry = "%s"\n' \
-        "${FORETOKEN_CARGO_REGISTRY}" > /workspace/.cargo/config.toml; \
-    fi \
-    && if [ ! -f data-plane/third_party/vllm/vllm/v1/engine/core.py ]; then \
-      if [ ! -f /var/cache/vllm/rust/Cargo.toml ]; then \
-        git -C /var/cache/vllm init -q \
-        && git -C /var/cache/vllm fetch --depth=1 https://github.com/vllm-project/vllm.git "${VLLM_REVISION}" \
-        && git -C /var/cache/vllm checkout -q --detach FETCH_HEAD; \
-      fi \
-      && mkdir -p data-plane/third_party/vllm \
-      && if [ -d data-plane/third_party/vllm/rust ]; then \
-        git -C /var/cache/vllm archive HEAD | tar --anchored --exclude=rust -x -C data-plane/third_party/vllm; \
-      else \
-        git -C /var/cache/vllm archive HEAD | tar -x -C data-plane/third_party/vllm; \
-      fi; \
-    fi
-
-# Share Cargo's own cache locks with its registry and Git data. Bullseye cannot
-# load procedural macros linked against the frontend builder's newer glibc.
-ENV CARGO_HOME=/var/cache/foretoken-cargo
-# Retain prepared inputs with their outputs; refresh changed trees so Cargo sees patch removals.
-RUN --mount=type=cache,id=foretoken-cargo-home,target=/var/cache/foretoken-cargo \
+COPY deploy/build-source ./deploy/build-source
+COPY LICENSE ./LICENSE
+ENV CARGO_HOME=/var/cache/foretoken/cargo-home
+# Keep this target separate from the frontend's newer glibc toolchain.
+RUN --mount=type=cache,id=foretoken-vllm-source,target=/var/cache/foretoken/vllm \
+    --mount=type=cache,id=foretoken-cargo-home,target=/var/cache/foretoken/cargo-home \
     --mount=type=cache,id=foretoken-cargo-target-model-server-prepared-source,target=/workspace/data-plane/target,sharing=locked \
-    if [ -n "${CARGO_NET_GIT_FETCH_WITH_CLI}" ]; then \
-      export CARGO_NET_GIT_FETCH_WITH_CLI; \
-    fi \
-    && cargo run --locked --manifest-path data-plane/xtask/Cargo.toml -- prepare-vllm \
-    && mkdir -p data-plane/target/vllm-rust \
-    && if git diff --no-index --quiet data-plane/target/vllm-rust data-plane/third_party/vllm/rust; then \
-      :; \
-    else \
-      result=$?; \
-      test "$result" -eq 1 \
-      && rm -rf data-plane/target/vllm-rust \
-      && cp -R data-plane/third_party/vllm/rust data-plane/target/vllm-rust; \
-    fi \
-    && rm -rf data-plane/third_party/vllm/rust \
-    && cp -a data-plane/target/vllm-rust data-plane/third_party/vllm/rust \
-    && cargo build --locked --release \
-      --manifest-path data-plane/Cargo.toml \
-      --package foretoken-model-server --bin "${FORETOKEN_MODEL_SERVER_BINARY}" \
-    && install -Dm755 \
-      "data-plane/target/release/${FORETOKEN_MODEL_SERVER_BINARY}" \
-      /out/model-server
+    python3 -I deploy/build-source model-server /out --cache /var/cache/foretoken --parts rust
 
 FROM scratch AS source-export
-COPY --from=builder /out/model-server /bin/foretoken-model-server
+COPY --from=builder /out/ /
 COPY data-plane/model-server/python/ /python/
-COPY LICENSE /LICENSE
-COPY <<EOF /complete.json
-{"component":"model-server"}
-EOF
 
-# vLLM-Omni images already contain their Python runtime and model plugins. This
-# target only adds the thin Foretoken lifecycle/proxy adapter and deliberately
-# skips the standard vLLM patch and dependency stages below.
+# The Omni image supplies Python, model plugins, and provider SDKs.
+# Add shared preparation and the lifecycle adapter without applying standard vLLM patches.
 FROM ${INFERENCE_ENGINE_IMAGE} AS omni-runtime
 
 ARG OMNI_VIDEO_SYNC_TIMEOUT=4000
@@ -124,10 +65,12 @@ ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
 ARG OCI_REVISION
 LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.revision="${OCI_REVISION}"
-COPY --from=builder /out/model-server /usr/local/bin/foretoken-omni-model-server
+COPY --from=builder /out/bin/foretoken-model-server /usr/local/bin/foretoken-omni-model-server
+COPY data-plane/model-server/python/foretoken_prepare.py /opt/foretoken/python/foretoken_prepare.py
+COPY data-plane/model-server/python/foretoken_model_sources/ /opt/foretoken/python/foretoken_model_sources/
 ENTRYPOINT ["foretoken-omni-model-server"]
 
-FROM ${INFERENCE_ENGINE_IMAGE} AS engine-runtime
+FROM ${INFERENCE_ENGINE_IMAGE} AS engine-base
 
 ARG FORETOKEN_VLLM_PYTHON
 ENV FORETOKEN_VLLM_PYTHON=${FORETOKEN_VLLM_PYTHON}
@@ -139,6 +82,7 @@ RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
     "${FORETOKEN_VLLM_PYTHON:-python3}" /tmp/vllm-patches/apply.py
 
 ARG UV_DEFAULT_INDEX=https://pypi.org/simple
+ARG BUILD_JOBS
 # Engine images may provide a Python virtual environment without pip.
 # MACA also exposes torch.version.cuda, so select dependencies from the engine build.
 # Precompile installed packages to avoid repeated bytecode compilation at startup.
@@ -152,25 +96,56 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
       'import torch; print("maca" if getattr(torch.version, "maca", None) else "cuda" if torch.version.cuda else "other")') \
     && set -- modelscope==1.35.3 tzdata \
     && case "$backend" in cuda) set -- "$@" bitsandbytes==0.49.2 modelexpress==0.6.0 nixl==1.4.1 ;; esac \
-    && "$python_path" -c 'from importlib.metadata import version; print("torch==" + version("torch")); print("vllm==" + version("vllm"))' > /tmp/foretoken-engine-constraints.txt \
+    && PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python_path" -c \
+      'from vllm_patches import runtime_constraints; print("\n".join(f"{name}==={version}" for name, version in sorted(runtime_constraints(set()).items())))' > /tmp/foretoken-engine-constraints.txt \
     && uv pip install --no-cache --python "$python_path" \
       --constraint /tmp/foretoken-engine-constraints.txt \
       --default-index "${UV_DEFAULT_INDEX}" "$@" \
     && PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python_path" -c \
-      'from vllm_patches import install_mooncake_dependencies, check_installed_dependencies; install_mooncake_dependencies(); check_installed_dependencies()' \
-    && "$python_path" -c 'import compileall, site; raise SystemExit(not all(compileall.compile_dir(path, quiet=1) for path in site.getsitepackages()))' \
+      'from vllm_patches import check_installed_dependencies; check_installed_dependencies()' \
+    && "$python_path" -c 'import compileall, os, site; raise SystemExit(not all(compileall.compile_dir(path, quiet=1, workers=int(os.environ.get("BUILD_JOBS") or 1)) for path in site.getsitepackages()))' \
     && rm /tmp/foretoken-engine-constraints.txt
+
+# Keep application changes out of the native wheel's build inputs. The required
+# license also permits an absent optional third_party directory in source archives.
+FROM scratch AS mooncake-inputs
+COPY deploy/mooncake/ /deploy/mooncake/
+COPY data-plane/patches/vllm/mooncake.version /data-plane/patches/vllm/mooncake.version
+COPY LICENSE third_party* /third_party/
+
+# Build against the selected Python/CUDA ABI. Runtime images consume the complete
+# wheel and do not retain native compilers or build-time system packages.
+FROM engine-base AS mooncake-build
+USER root
+COPY --from=uv /uv /usr/local/bin/uv
+COPY --from=mooncake-go /usr/local/go /usr/local/go
+ARG BUILD_JOBS=2
+ARG FORETOKEN_GITHUB_MIRROR
+ARG GOPROXY
+ARG GOSUMDB
+RUN --mount=type=bind,from=mooncake-inputs,target=/input \
+    --mount=type=cache,id=foretoken-mooncake-source,target=/var/cache/foretoken/mooncake \
+    "${FORETOKEN_VLLM_PYTHON:-python3}" -I /input/deploy/mooncake/build-cuda-wheel \
+      --output /out --cache /var/cache/foretoken/mooncake --jobs "${BUILD_JOBS}"
+
+FROM engine-base AS engine-runtime
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    --mount=from=mooncake-build,source=/out,target=/tmp/mooncake-wheels \
+    --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches \
+    PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "${FORETOKEN_VLLM_PYTHON:-python3}" -c \
+      'from pathlib import Path; from vllm_patches import install_mooncake_dependencies, check_installed_dependencies; install_mooncake_dependencies(Path("/tmp/mooncake-wheels")); check_installed_dependencies()'
+COPY --from=mooncake-build /out/licenses/ /usr/local/share/licenses/
+COPY deploy/mooncake/NOTICE /usr/local/share/foretoken-mooncake/NOTICE
+COPY deploy/mooncake/patches/ /usr/local/share/foretoken-mooncake/patches/
 
 FROM engine-runtime AS environment
 ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
 ARG OCI_REVISION
 LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.revision="${OCI_REVISION}"
-COPY --from=dragonfly-client /out/dfget /usr/local/bin/dfget
-COPY --from=dragonfly-client /out/LICENSE /usr/share/licenses/dragonfly-client/LICENSE
 
 FROM environment AS runtime
-COPY --from=builder /out/model-server /usr/local/bin/foretoken-model-server
+COPY --from=builder /out/bin/foretoken-model-server /usr/local/bin/foretoken-model-server
 COPY data-plane/model-server/python/ /opt/foretoken/python/
 
 # Preserve the inference engine image's runtime user and environment. The workload owns its

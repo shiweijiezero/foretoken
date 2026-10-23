@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from dataclasses import dataclass
 from importlib import resources
@@ -19,9 +20,10 @@ from foretoken.accelerators.discovery import (
     ExporterMonitor,
     MetricRequirement,
 )
+from foretoken.downloads.sources import platform_image_reference
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, resource_ref
-from foretoken.downloads.sources import platform_image_reference
+from foretoken.kubernetes.documents import encode_resources
 
 
 @dataclass(frozen=True)
@@ -80,10 +82,12 @@ class MetaXMetricsDiscovery(AcceleratorMetricsDiscovery):
 
     def has_capacity(self, node: dict[str, Any]) -> bool:
         """Return whether Kubernetes advertises an allocatable MetaX GPU."""
+        from kubernetes.utils.quantity import parse_quantity
+
         allocatable = (node.get("status") or {}).get("allocatable") or {}
         for resource in METAX_GPU_RESOURCES:
             try:
-                if int(str(allocatable.get(resource))) > 0:
+                if parse_quantity(allocatable.get(resource)) > 0:
                     return True
             except (TypeError, ValueError):
                 continue
@@ -126,24 +130,6 @@ class MetaXExporterLifecycle:
         self.daemonset = resource_ref(daemonset)
         self._resources = tuple(resource_ref(doc) for doc in self._workloads)
 
-    def _existing_resources(self) -> tuple[dict[str, Any], ...]:
-        """Read exact identities, including before monitoring CRDs are installed."""
-        monitors_available = "servicemonitors.monitoring.coreos.com" in (
-            self._kubectl.api_resource_names("monitoring.coreos.com")
-        )
-        existing = []
-        for ref in self._resources:
-            if ref.kind == "ServiceMonitor" and not monitors_available:
-                continue
-            value = self._kubectl.get_if_exists(ref.kind, ref.name, ref.namespace)
-            if value is not None:
-                existing.append(value)
-        return tuple(existing)
-
-    def _owned(self, document: dict[str, Any]) -> bool:
-        key, value = self._management_label
-        return (document["metadata"].get("labels") or {}).get(key) == value
-
     def managed_resources(self) -> tuple[ResourceRef, ...]:
         """Return CLI-owned resources for planning install or uninstall."""
         return tuple(
@@ -170,7 +156,7 @@ class MetaXExporterLifecycle:
         self.ensure_available()
         # Existing namespace metadata stays with its owner, and cleanup never deletes it.
         if not self._kubectl.exists("namespace", self.namespace):
-            self._kubectl.apply(yaml.safe_dump(self._namespace))
+            self._kubectl.apply(json.dumps(self._namespace))
         documents = deepcopy(self._workloads)
         for document in documents:
             labels = document["metadata"].setdefault("labels", {})
@@ -202,11 +188,29 @@ class MetaXExporterLifecycle:
                     self._image if self._image is not None
                     else platform_image_reference(container["image"], self._image_registry)
                 )
-        self._kubectl.apply(yaml.safe_dump_all(documents, sort_keys=False))
+        self._kubectl.apply(encode_resources(documents))
         self._kubectl.rollout_status(self.daemonset, timeout)
 
     def uninstall(self, timeout: str) -> None:
         """Delete only CLI-owned exporter resources, retaining the namespace."""
         documents = tuple(doc for doc in self._existing_resources() if self._owned(doc))
         if documents:
-            self._kubectl.delete(yaml.safe_dump_all(reversed(documents)), timeout)
+            self._kubectl.delete(encode_resources(reversed(documents)), timeout)
+
+    def _existing_resources(self) -> tuple[dict[str, Any], ...]:
+        """Read exact identities, including before monitoring CRDs are installed."""
+        monitors_available = "servicemonitors.monitoring.coreos.com" in (
+            self._kubectl.api_resource_names("monitoring.coreos.com")
+        )
+        existing = []
+        for ref in self._resources:
+            if ref.kind == "ServiceMonitor" and not monitors_available:
+                continue
+            value = self._kubectl.get_if_exists(ref.kind, ref.name, ref.namespace)
+            if value is not None:
+                existing.append(value)
+        return tuple(existing)
+
+    def _owned(self, document: dict[str, Any]) -> bool:
+        key, value = self._management_label
+        return (document["metadata"].get("labels") or {}).get(key) == value

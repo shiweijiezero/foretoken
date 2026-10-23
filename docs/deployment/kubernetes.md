@@ -5,7 +5,7 @@
 
 [English](kubernetes.md) | [中文](kubernetes_zh.md)
 
-Use this guide for K3s, RKE2, KubeSphere, cloud Kubernetes, or another cluster that is not created by the local kind or k3d guides.
+Use this guide to administer K3s, RKE2, KubeSphere, cloud Kubernetes, or another cluster that is not created by the local kind or k3d guides. To give members service access without platform permissions, prepare their [deployment namespaces](../../cli/README.md#prepare-a-namespace-for-members) after installing the platform.
 
 ## 1. Prepare the cluster
 
@@ -50,6 +50,7 @@ Use a registry without authentication for an internal network when available. If
 
 ```bash
 docker login registry.example.com:5000
+kubectl create namespace foretoken-platform --dry-run=client -o yaml | kubectl apply -f -
 kubectl create secret generic registry-auth \
   --namespace foretoken-platform \
   --from-file=.dockerconfigjson="$HOME/.docker/config.json" \
@@ -68,22 +69,44 @@ workload:
 
 Install with `--values deploy/platform-values.yaml` when using the authenticated registry.
 
+### Assign external service addresses
+
+The default shared Gateway needs a LoadBalancer address. If the cluster already provides these addresses, use its existing implementation. When installation reports `LoadBalancer support Not verified`, Foretoken can configure MetalLB with unused addresses in the nodes' subnet. Obtain the range from the cluster administrator and add it to `deploy/platform-values.yaml`, replacing this example:
+
+```yaml
+loadBalancer:
+  managedAddresses:
+    - 192.168.1.240-192.168.1.250
+```
+
+Apply it with the same installation settings:
+
+```bash
+foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
+```
+
+### RDMA networking
+
+RDMA accelerates data transfer between model instances. Installation discovers available devices, reuses compatible cluster configuration, and prepares supported device allocation and networking. Ordinary deployments need no NIC or port settings in the model configuration. Host drivers and the physical network must already be operational.
+
 ## 3. Deploy and update code
 
-The Quick Start uses the repository's `data/` directory on local k3d. On a remote cluster, Foretoken automatically provisions a dynamic PVC for this relative directory, so the example YAML does not need to change. Multi-node clusters use `ReadWriteMany`; a single-node cluster uses `ReadWriteOnce` automatically. Set `initialSize`, `storageClassName`, `accessMode`, or `maxSize` in `cache.yaml` when the cluster needs a different storage policy.
+Use the platform's default model storage when it is configured. If none is prepared, or you want a separate volume, [request dynamic storage](../features/model-storage.md#use-dynamic-storage). To use a different shared directory, [select an administrator-authorized path](../features/model-storage.md#choose-a-directory).
 
 Deploy and update code:
 
 ```bash
-foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 ```
 
-After editing controller, frontend or model-server code, run the same command again to update this deployment namespace. Shared CRD changes require `foretoken install -e . --registry "$REGISTRY"` first, retaining any installation overrides. See [Deploy Foretoken from Source](source.md#deploy-a-model-service) for engine checkouts and runtime changes.
+Without `--name`, the instance name comes from `metadata.name` of the `FrontendService` in [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml): `qwen3-0-6b` in this example. It is deployed in the current kubeconfig namespace. Add `--name candidate-a` to use `candidate-a` instead, including in subsequent commands.
+
+After editing controller, frontend or model-server code, run the same deployment command again to update only that instance. Shared CRD changes require `foretoken install -e . --registry "$REGISTRY"` first, retaining any installation overrides. See [Deploy Foretoken from Source](source.md#deploy-a-model-service) for engine checkouts and runtime changes.
 
 ## 4. Remove Foretoken
 
 ```bash
-foretoken delete examples/quickstart/qwen3-0.6b
+foretoken delete qwen3-0-6b
 foretoken uninstall
 ```
 

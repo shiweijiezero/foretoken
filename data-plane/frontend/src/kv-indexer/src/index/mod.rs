@@ -54,6 +54,8 @@ pub struct KvPrefixQuery<'a> {
 pub struct KvPrefixMatch {
     pub placement: KvPlacement,
     pub matched_tokens: usize,
+    /// Decode prefix source for the receiving Prefill model server to acquire.
+    pub kv_source: Option<foretoken_model_protocol::KvReuseSource>,
 }
 
 pub trait KvLocalityIndex: Send {

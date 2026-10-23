@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+{{/* Deployment selections outlive a Helm revision; platform retirement owns deletion. */}}
+{{- range .Values.rdma.preparedNetworks }}
+{{- if .master }}
+{{- $namespace := default $.Release.Namespace .namespace }}
+{{- if ne $namespace $.Release.Namespace }}
+{{- fail "managed RDMA network attachments must use the platform namespace" }}
+{{- end }}
+{{- $ipam := dict "type" "whereabouts" "range" .subnet }}
+{{- with $.Values.rdma.ipamConfigFile }}
+{{- $_ := set $ipam "configuration_path" . }}
+{{- end }}
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: {{ .name }}
+  namespace: {{ $namespace }}
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "foretoken.labels" $ | nindent 4 }}
+spec:
+  config: {{ dict "cniVersion" "1.0.0" "name" .name "type" "macvlan" "master" .master "mode" "bridge" "ipam" $ipam | toJson | quote }}
+{{- end }}
+{{- end }}

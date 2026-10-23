@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Defines OpenAI-compatible request data transfer objects (DTOs) and HTTP handlers.
+//! OpenAI-compatible HTTP handlers over the shared generation pipeline.
 
-use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::rejection::JsonRejection;
@@ -12,32 +11,40 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
+use foretoken_admission::{AdmissionRequest, CallerIdentity, with_caller};
 use foretoken_chat::{
-    AssistantContentBlock, AssistantToolCall, ChatContent, ChatContentPart, ChatMessage,
-    ChatOptions, ChatRequest, ChatTool, ChatToolChoice, GenerationPromptMode, ParserSelection,
-    ReasoningEffort, ResolvedToolContext,
+    ChatOptions, ChatRequest, GenerationPromptMode, ParserSelection, ResolvedToolContext,
 };
-use foretoken_engine_core_client::protocol::structured_outputs::StructuredOutputsParams;
 use foretoken_text::{Prompt, SamplingParams, TextDecodeOptions};
-use serde::{Deserialize, Serialize};
+use futures::FutureExt;
+use hyproxy::headers::hopby::StripHopByHopLayer;
 use serde_json::{Value, json};
+use tracing::Instrument;
 
 mod async_video;
+mod convert;
 mod output;
+mod stored;
+mod types;
 mod video;
 
+use self::convert::{
+    completion_sampling, decode_options, openai_message, openai_tool, prepare_chat,
+    validate_multimodal_input,
+};
 use self::output::{
     CompletionResponseOptions, chat_collected, chat_stream_with_options, text_collected_many,
     text_stream_many,
 };
+use self::types::{
+    ChatCompletionRequest, CompletionRequest, DetokenizeRequest, DetokenizeResponse,
+    TokenizeRequest, TokenizeResponse, completion_prompts,
+};
 use super::{ApiState, RequestTiming, server_request_id};
 use crate::AdmissionOrigin;
 use crate::runtime::{GenerationError, GenerationRequest, RequestSnapshot};
-use foretoken_admission::{AdmissionRequest, CallerIdentity};
 
 const MAX_COMPLETION_FAN_OUT: usize = 64;
-
-type LoweredResponseFormat = (Option<Value>, Option<StructuredOutputsParams>);
 
 /// Registers OpenAI generation, model discovery, and tokenization endpoints.
 pub(super) fn router() -> Router<ApiState> {
@@ -49,26 +56,195 @@ pub(super) fn router() -> Router<ApiState> {
         .route("/v1/generate", post(completions))
         .route("/v1/completions", post(completions))
         .route("/v1/chat/completions", post(chat_completions))
-        .route("/v1/videos/sync", post(video::generate))
+        .route(
+            "/v1/videos/sync",
+            post(video::generate).layer(StripHopByHopLayer::new()),
+        )
         .merge(async_video::router())
+        .merge(stored::router())
 }
 
-fn model_card(id: String) -> Value {
-    let root = id.clone();
-    let created = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    json!({
-        "id": id,
-        "object": "model",
-        "created": created,
-        "owned_by": "vllm",
-        "root": root,
-        "parent": null,
-        "max_model_len": null,
-        "permission": [],
-    })
+/// Admits a bounded completion batch and returns shared generation as OpenAI JSON or SSE.
+async fn completions(
+    Extension(state): Extension<RequestSnapshot>,
+    timing: Option<Extension<RequestTiming>>,
+    request: Result<Json<CompletionRequest>, JsonRejection>,
+) -> Response {
+    // Protected requests inherit HTTP intake time; legacy callers retain handler entry.
+    // Every candidate shares the same admission, preprocessing, and completion budget.
+    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(error) => return json_error(error),
+    };
+    let stream = request.stream;
+    let include_usage = request.stream_options.include_usage;
+    let mut sampling_params = completion_sampling(&request);
+    let prompts = completion_prompts(request.prompt);
+    let best_of = request.best_of.unwrap_or(request.n);
+    if include_usage && !stream {
+        return client_error("stream_options.include_usage requires stream=true");
+    }
+    if request.n == 0 {
+        return client_error("n must be at least 1");
+    }
+    if best_of < request.n {
+        return client_error("best_of must be greater than or equal to n");
+    }
+    if prompts.len().saturating_mul(best_of as usize) > MAX_COMPLETION_FAN_OUT {
+        return client_error(format!(
+            "prompt count multiplied by best_of cannot exceed {MAX_COMPLETION_FAN_OUT}"
+        ));
+    }
+    if stream && prompts.len() != 1 {
+        return client_error("streaming completions require exactly one prompt");
+    }
+    if stream && request.best_of.is_some() {
+        return client_error("best_of is not supported with stream=true");
+    }
+
+    // `best_of` needs sampled-token probabilities for ranking even when the public response
+    // deliberately omits logprobs.
+    let public_logprobs = request.logprobs.is_some();
+    if request.best_of.is_some() && !public_logprobs {
+        sampling_params.logprobs = Some(0);
+    }
+    let units = prompts.len() * best_of as usize;
+    let request_id = server_request_id("cmpl");
+    let admission_request = AdmissionRequest {
+        model: request.model.clone(),
+        caller: CallerIdentity::current(),
+        units: units as u32,
+        received_at: timing.started_at,
+        track_execution: false,
+    };
+    let mut admission = match state.generation.admit(&admission_request).await {
+        Ok(permit) => permit,
+        Err(error) => return openai_error(error),
+    };
+    let mut requests = Vec::with_capacity(units);
+    for prompt in prompts {
+        for _ in 0..best_of {
+            requests.push(GenerationRequest {
+                admission: Some(admission.split_one()),
+                model: request.model.clone(),
+                request_id: if requests.is_empty() {
+                    request_id.clone()
+                } else {
+                    server_request_id("cmpl")
+                },
+                prompt: prompt.clone(),
+                sampling_params: sampling_params.clone(),
+                decode_options: decode_options(request.stop.clone()),
+                intermediate: stream,
+                priority: request.priority,
+                cache_salt: request.cache_salt.clone(),
+                session_id: request.session_id.clone(),
+                arrival_time: timing.arrival_time,
+                started_at: timing.started_at,
+                tool_call_parser: ParserSelection::None,
+                reasoning_parser: ParserSelection::None,
+            });
+        }
+    }
+    let mut requests = requests.into_iter();
+    let Some(first_request) = requests.next() else {
+        return openai_error(GenerationError::InvalidRequest);
+    };
+    // First acceptance establishes response metadata and the batch grant before
+    // parallel candidates can encounter an initial Busy response.
+    let first = match state.generation.generate(first_request).await {
+        Ok(generated) => generated,
+        Err(error) => return openai_error(error),
+    };
+    let pending = requests
+        .map(|request| {
+            let generation = state.generation.clone();
+            let caller = admission_request.caller.clone();
+            // SSE can poll after the HTTP handler's task-local scope has ended.
+            async move { with_caller(caller, generation.generate(request)).await }
+                .in_current_span()
+                .boxed()
+        })
+        .collect();
+    let options = CompletionResponseOptions {
+        n: request.n as usize,
+        candidates_per_prompt: best_of as usize,
+        echo: request.echo,
+        echo_without_generation: request.echo && request.max_tokens == Some(0),
+        expose_logprobs: public_logprobs,
+        return_token_ids: request.return_token_ids,
+        return_tokens_as_token_ids: request.return_tokens_as_token_ids,
+        return_prompt_token_ids: request.return_prompt_token_ids,
+    };
+    if stream {
+        text_stream_many(first, pending, state.stream_idle, include_usage, options)
+    } else {
+        text_collected_many(first, pending, state.stream_idle, options).await
+    }
+}
+
+/// Lowers chat input, selects optional storage, and returns shared generation as OpenAI JSON or SSE.
+async fn chat_completions(
+    State(api): State<ApiState>,
+    Extension(state): Extension<RequestSnapshot>,
+    timing: Option<Extension<RequestTiming>>,
+    request: Result<Json<ChatCompletionRequest>, JsonRejection>,
+) -> Response {
+    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
+    let Json(mut request) = match request {
+        Ok(request) => request,
+        Err(error) => return json_error(error),
+    };
+    let id = server_request_id("chatcmpl");
+    let metadata = request.metadata.take().unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        return client_error("metadata must be a JSON object");
+    }
+    // Preserve submitted content parts independently of the shared chat representation.
+    let original_messages = request
+        .store
+        .unwrap_or(false)
+        .then(|| request.messages.clone());
+    let stream = request.stream;
+    let include_usage = request.stream_options.include_usage;
+    let include_reasoning = request.include_reasoning.unwrap_or(false);
+    let (model, chat) = match prepare_chat(request, id) {
+        Ok(prepared) => prepared,
+        Err(error) => return client_error(error),
+    };
+    let archive = match original_messages {
+        Some(messages) => {
+            let Some(store) = api.store else {
+                return crate::api::store_error(crate::store::StoreError::Disabled);
+            };
+            Some(stored::ChatArchive::new(
+                store,
+                CallerIdentity::current().caller,
+                messages,
+                metadata.clone(),
+            ))
+        }
+        None => None,
+    };
+    let generated = match state
+        .generate_chat(model, chat, include_reasoning, timing)
+        .await
+    {
+        Ok(generated) => generated,
+        Err(error) => return openai_error(error),
+    };
+    if stream {
+        chat_stream_with_options(
+            generated,
+            state.stream_idle,
+            include_usage,
+            metadata,
+            archive,
+        )
+    } else {
+        chat_collected(generated, state.stream_idle, metadata, archive).await
+    }
 }
 
 async fn list_models(State(state): State<ApiState>) -> Json<Value> {
@@ -89,24 +265,7 @@ async fn retrieve_model(
     }
 }
 
-fn resolve_model(
-    state: &RequestSnapshot,
-    requested: Option<String>,
-) -> Result<String, GenerationError> {
-    if let Some(model) = requested {
-        return state
-            .models
-            .iter()
-            .any(|candidate| candidate == &model)
-            .then_some(model)
-            .ok_or(GenerationError::ModelNotFound);
-    }
-    match state.models.as_ref() {
-        [model] => Ok(model.clone()),
-        _ => Err(GenerationError::InvalidRequest),
-    }
-}
-
+/// Tokenizes text or rendered chat under the shared request admission and timing budget.
 async fn tokenize(
     Extension(state): Extension<RequestSnapshot>,
     timing: Option<Extension<RequestTiming>>,
@@ -222,6 +381,7 @@ async fn tokenize(
     }
 }
 
+/// Decodes token IDs through CPU-only admission without starting backend generation.
 async fn detokenize(
     Extension(state): Extension<RequestSnapshot>,
     timing: Option<Extension<RequestTiming>>,
@@ -249,420 +409,44 @@ async fn detokenize(
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum TokenizeRequest {
-    Completion(TokenizeCompletionRequest),
-    Chat(TokenizeChatRequest),
+fn model_card(id: String) -> Value {
+    let root = id.clone();
+    let created = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    json!({
+        "id": id,
+        "object": "model",
+        "created": created,
+        "owned_by": "vllm",
+        "root": root,
+        "parent": null,
+        "max_model_len": null,
+        "permission": [],
+    })
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TokenizeCompletionRequest {
-    #[serde(default)]
-    model: Option<String>,
-    prompt: String,
-    #[serde(default = "default_true")]
-    add_special_tokens: bool,
-    #[serde(default)]
-    return_token_strs: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TokenizeChatRequest {
-    #[serde(default)]
-    model: Option<String>,
-    messages: Vec<OpenAiMessage>,
-    #[serde(default = "default_true")]
-    add_generation_prompt: bool,
-    #[serde(default)]
-    continue_final_message: bool,
-    #[serde(default)]
-    add_special_tokens: bool,
-    #[serde(default)]
-    return_token_strs: bool,
-    #[serde(default)]
-    tools: Vec<OpenAiTool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DetokenizeRequest {
-    #[serde(default)]
-    model: Option<String>,
-    tokens: Vec<u32>,
-}
-
-#[derive(Serialize)]
-struct TokenizeResponse {
-    count: usize,
-    max_model_len: u32,
-    tokens: Vec<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    token_strs: Option<Vec<String>>,
-}
-
-#[derive(Serialize)]
-struct DetokenizeResponse {
-    prompt: String,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn one() -> u32 {
-    1
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum CompletionPrompt {
-    Text(String),
-    TokenIds(Vec<u32>),
-    Texts(Vec<String>),
-    TokenIdBatches(Vec<Vec<u32>>),
-}
-
-impl CompletionPrompt {
-    fn into_prompts(self) -> Vec<Prompt> {
-        match self {
-            Self::Text(text) => vec![Prompt::Text(text)],
-            Self::TokenIds(token_ids) => vec![Prompt::TokenIds(token_ids)],
-            Self::Texts(texts) => texts.into_iter().map(Prompt::Text).collect(),
-            Self::TokenIdBatches(batches) => batches.into_iter().map(Prompt::TokenIds).collect(),
-        }
+fn resolve_model(
+    state: &RequestSnapshot,
+    requested: Option<String>,
+) -> Result<String, GenerationError> {
+    if let Some(model) = requested {
+        return state
+            .models
+            .iter()
+            .any(|candidate| candidate == &model)
+            .then_some(model)
+            .ok_or(GenerationError::ModelNotFound);
+    }
+    match state.models.as_ref() {
+        [model] => Ok(model.clone()),
+        _ => Err(GenerationError::InvalidRequest),
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CompletionRequest {
-    model: String,
-    prompt: CompletionPrompt,
-    #[serde(default)]
-    stream: bool,
-    #[serde(default)]
-    stream_options: OpenAiStreamOptions,
-    #[serde(default = "one")]
-    n: u32,
-    #[serde(default)]
-    best_of: Option<u32>,
-    #[serde(default)]
-    echo: bool,
-    #[serde(default)]
-    return_token_ids: bool,
-    #[serde(default)]
-    return_tokens_as_token_ids: bool,
-    #[serde(default)]
-    return_prompt_token_ids: bool,
-    #[serde(default, rename = "request_id")]
-    _client_request_id: Option<String>,
-    #[serde(default)]
-    temperature: Option<f32>,
-    #[serde(default)]
-    top_p: Option<f32>,
-    #[serde(default)]
-    top_k: Option<u32>,
-    #[serde(default)]
-    min_p: Option<f32>,
-    #[serde(default)]
-    seed: Option<i64>,
-    #[serde(default)]
-    max_tokens: Option<u32>,
-    #[serde(default)]
-    min_tokens: Option<u32>,
-    #[serde(default)]
-    frequency_penalty: Option<f32>,
-    #[serde(default)]
-    presence_penalty: Option<f32>,
-    #[serde(default)]
-    repetition_penalty: Option<f32>,
-    #[serde(default)]
-    stop_token_ids: Option<Vec<u32>>,
-    #[serde(default)]
-    ignore_eos: bool,
-    #[serde(default)]
-    logit_bias: Option<HashMap<u32, f32>>,
-    #[serde(default)]
-    allowed_token_ids: Option<Vec<u32>>,
-    #[serde(default)]
-    bad_words: Option<Vec<String>>,
-    #[serde(default)]
-    logprobs: Option<i32>,
-    #[serde(default)]
-    prompt_logprobs: Option<i32>,
-    #[serde(default)]
-    priority: i32,
-    #[serde(default)]
-    cache_salt: Option<String>,
-    #[serde(default)]
-    session_id: Option<String>,
-    #[serde(default)]
-    stop: Option<Stop>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiStreamOptions {
-    #[serde(default)]
-    include_usage: bool,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(untagged)]
-enum Stop {
-    One(String),
-    Many(Vec<String>),
-}
-impl Stop {
-    fn into_vec(self) -> Vec<String> {
-        match self {
-            Self::One(s) => vec![s],
-            Self::Many(v) => v,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ChatCompletionRequest {
-    model: String,
-    messages: Vec<OpenAiMessage>,
-    #[serde(default)]
-    stream: bool,
-    #[serde(default)]
-    stream_options: OpenAiStreamOptions,
-    #[serde(default, rename = "request_id")]
-    _client_request_id: Option<String>,
-    #[serde(default)]
-    temperature: Option<f32>,
-    #[serde(default)]
-    top_p: Option<f32>,
-    #[serde(default)]
-    top_k: Option<u32>,
-    #[serde(default)]
-    min_p: Option<f32>,
-    #[serde(default)]
-    seed: Option<i64>,
-    #[serde(default)]
-    max_tokens: Option<u32>,
-    #[serde(default)]
-    min_tokens: Option<u32>,
-    #[serde(default)]
-    frequency_penalty: Option<f32>,
-    #[serde(default)]
-    presence_penalty: Option<f32>,
-    #[serde(default)]
-    repetition_penalty: Option<f32>,
-    #[serde(default)]
-    stop_token_ids: Option<Vec<u32>>,
-    #[serde(default)]
-    ignore_eos: bool,
-    #[serde(default)]
-    logit_bias: Option<HashMap<u32, f32>>,
-    #[serde(default)]
-    allowed_token_ids: Option<Vec<u32>>,
-    #[serde(default)]
-    bad_words: Option<Vec<String>>,
-    #[serde(default)]
-    logprobs: bool,
-    #[serde(default)]
-    top_logprobs: Option<u32>,
-    #[serde(default)]
-    priority: i32,
-    #[serde(default)]
-    cache_salt: Option<String>,
-    #[serde(default)]
-    session_id: Option<String>,
-    #[serde(default)]
-    stop: Option<Stop>,
-    #[serde(default)]
-    tools: Vec<OpenAiTool>,
-    #[serde(default)]
-    tool_choice: Option<OpenAiToolChoice>,
-    #[serde(default)]
-    parallel_tool_calls: bool,
-    #[serde(default)]
-    response_format: Option<OpenAiResponseFormat>,
-    #[serde(default)]
-    reasoning_effort: Option<ReasoningEffort>,
-    #[serde(default)]
-    include_reasoning: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiMessage {
-    role: String,
-    #[serde(default)]
-    content: Option<OpenAiChatContent>,
-    #[serde(default)]
-    tool_calls: Vec<OpenAiToolCall>,
-    #[serde(default)]
-    tool_call_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum OpenAiChatContent {
-    Text(String),
-    Parts(Vec<OpenAiContentPart>),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum OpenAiContentPart {
-    Text { text: String },
-    ImageUrl { image_url: OpenAiImageUrl },
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiImageUrl {
-    url: String,
-    #[serde(default)]
-    detail: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiToolCall {
-    id: String,
-    #[serde(rename = "type")]
-    kind: OpenAiFunctionType,
-    function: OpenAiFunctionCall,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum OpenAiFunctionType {
-    Function,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiFunctionCall {
-    name: String,
-    arguments: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiTool {
-    #[serde(rename = "type")]
-    kind: OpenAiFunctionType,
-    function: OpenAiToolFunction,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiToolFunction {
-    name: String,
-    #[serde(default)]
-    description: Option<String>,
-    parameters: Value,
-    #[serde(default)]
-    strict: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum OpenAiToolChoice {
-    Mode(OpenAiToolChoiceMode),
-    Function(OpenAiNamedToolChoice),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum OpenAiToolChoiceMode {
-    None,
-    Auto,
-    Required,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiNamedToolChoice {
-    #[serde(rename = "type")]
-    kind: OpenAiFunctionType,
-    function: OpenAiNamedFunction,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiNamedFunction {
-    name: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum OpenAiResponseFormat {
-    Text,
-    JsonObject,
-    JsonSchema { json_schema: OpenAiJsonSchema },
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiJsonSchema {
-    name: String,
-    schema: Value,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    strict: Option<bool>,
-}
-
-fn sampling(
-    temperature: Option<f32>,
-    top_p: Option<f32>,
-    max_tokens: Option<u32>,
-) -> SamplingParams {
-    SamplingParams {
-        temperature,
-        top_p,
-        max_tokens,
-        ..Default::default()
-    }
-}
-fn completion_sampling(request: &CompletionRequest) -> SamplingParams {
-    SamplingParams {
-        temperature: request.temperature,
-        top_p: request.top_p,
-        top_k: request.top_k,
-        seed: request.seed,
-        max_tokens: if request.echo && request.max_tokens == Some(0) {
-            Some(1)
-        } else {
-            request.max_tokens
-        },
-        min_tokens: request.min_tokens,
-        logprobs: request.logprobs,
-        prompt_logprobs: request
-            .prompt_logprobs
-            .or(request.logprobs.filter(|_| request.echo)),
-        min_p: request.min_p,
-        frequency_penalty: request.frequency_penalty,
-        presence_penalty: request.presence_penalty,
-        repetition_penalty: request.repetition_penalty,
-        stop_token_ids: request.stop_token_ids.clone(),
-        ignore_eos: request.ignore_eos,
-        logit_bias: request.logit_bias.clone(),
-        allowed_token_ids: request.allowed_token_ids.clone(),
-        bad_words: request.bad_words.clone(),
-        ..Default::default()
-    }
-}
-fn decode_options(stop: Option<Stop>) -> TextDecodeOptions {
-    TextDecodeOptions {
-        stop_strings: stop.map(Stop::into_vec),
-        ..Default::default()
-    }
-}
 /// Returns a request-validation diagnostic in the OpenAI error envelope.
-fn client_error(message: impl Into<String>) -> Response {
+pub(super) fn client_error(message: impl Into<String>) -> Response {
     (
         StatusCode::BAD_REQUEST,
         Json(json!({"error": {
@@ -673,7 +457,7 @@ fn client_error(message: impl Into<String>) -> Response {
 }
 
 /// Preserves extractor diagnostics and transport statuses; JSON content errors remain HTTP 400.
-fn json_error(error: JsonRejection) -> Response {
+pub(super) fn json_error(error: JsonRejection) -> Response {
     let status = match error.status() {
         StatusCode::UNPROCESSABLE_ENTITY => StatusCode::BAD_REQUEST,
         status => status,
@@ -753,429 +537,4 @@ pub(crate) fn openai_error(error: GenerationError) -> Response {
         Json(json!({"error": {"message": message, "type": kind, "code": code}})),
     )
         .into_response()
-}
-async fn completions(
-    Extension(state): Extension<RequestSnapshot>,
-    timing: Option<Extension<RequestTiming>>,
-    request: Result<Json<CompletionRequest>, JsonRejection>,
-) -> Response {
-    // Protected requests inherit HTTP intake time; legacy callers retain handler entry.
-    // Every candidate shares the same admission, preprocessing, and completion budget.
-    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
-    let Json(request) = match request {
-        Ok(request) => request,
-        Err(error) => return json_error(error),
-    };
-    let stream = request.stream;
-    let include_usage = request.stream_options.include_usage;
-    let mut sampling_params = completion_sampling(&request);
-    let prompts = request.prompt.into_prompts();
-    let best_of = request.best_of.unwrap_or(request.n);
-    if include_usage && !stream {
-        return client_error("stream_options.include_usage requires stream=true");
-    }
-    if request.n == 0 {
-        return client_error("n must be at least 1");
-    }
-    if best_of < request.n {
-        return client_error("best_of must be greater than or equal to n");
-    }
-    if prompts.len().saturating_mul(best_of as usize) > MAX_COMPLETION_FAN_OUT {
-        return client_error(format!(
-            "prompt count multiplied by best_of cannot exceed {MAX_COMPLETION_FAN_OUT}"
-        ));
-    }
-    if stream && prompts.len() != 1 {
-        return client_error("streaming completions require exactly one prompt");
-    }
-    if stream && request.best_of.is_some() {
-        return client_error("best_of is not supported with stream=true");
-    }
-
-    // `best_of` needs sampled-token probabilities for ranking even when the public response
-    // deliberately omits logprobs.
-    let public_logprobs = request.logprobs.is_some();
-    if request.best_of.is_some() && !public_logprobs {
-        sampling_params.logprobs = Some(0);
-    }
-    let units = prompts.len() * best_of as usize;
-    let request_id = server_request_id("cmpl");
-    let admission_request = AdmissionRequest {
-        model: request.model.clone(),
-        caller: CallerIdentity::current(),
-        units: units as u32,
-        received_at: timing.started_at,
-    };
-    let mut admission = match state.generation.admit(&admission_request).await {
-        Ok(permit) => permit,
-        Err(error) => return openai_error(error),
-    };
-    let mut generated = Vec::with_capacity(units);
-    for prompt in prompts {
-        for _ in 0..best_of {
-            match state
-                .generation
-                .generate(GenerationRequest {
-                    admission: Some(admission.split_one()),
-                    model: request.model.clone(),
-                    request_id: if generated.is_empty() {
-                        request_id.clone()
-                    } else {
-                        server_request_id("cmpl")
-                    },
-                    prompt: prompt.clone(),
-                    sampling_params: sampling_params.clone(),
-                    decode_options: decode_options(request.stop.clone()),
-                    intermediate: stream,
-                    priority: request.priority,
-                    cache_salt: request.cache_salt.clone(),
-                    session_id: request.session_id.clone(),
-                    arrival_time: timing.arrival_time,
-                    started_at: timing.started_at,
-                    tool_call_parser: ParserSelection::None,
-                    reasoning_parser: ParserSelection::None,
-                })
-                .await
-            {
-                Ok(item) => generated.push(item),
-                Err(error) => return openai_error(error),
-            }
-        }
-    }
-    let options = CompletionResponseOptions {
-        n: request.n as usize,
-        candidates_per_prompt: best_of as usize,
-        echo: request.echo,
-        echo_without_generation: request.echo && request.max_tokens == Some(0),
-        expose_logprobs: public_logprobs,
-        return_token_ids: request.return_token_ids,
-        return_tokens_as_token_ids: request.return_tokens_as_token_ids,
-        return_prompt_token_ids: request.return_prompt_token_ids,
-    };
-    if stream {
-        text_stream_many(generated, state.stream_idle, include_usage, options)
-    } else {
-        text_collected_many(generated, state.stream_idle, options).await
-    }
-}
-
-async fn chat_completions(
-    Extension(state): Extension<RequestSnapshot>,
-    timing: Option<Extension<RequestTiming>>,
-    request: Result<Json<ChatCompletionRequest>, JsonRejection>,
-) -> Response {
-    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
-    let Json(request) = match request {
-        Ok(request) => request,
-        Err(error) => return json_error(error),
-    };
-    let id = server_request_id("chatcmpl");
-    if let Err(error) = validate_multimodal_input(&request.messages) {
-        return client_error(error);
-    }
-    let messages = match request
-        .messages
-        .iter()
-        .map(openai_message)
-        .collect::<Result<Vec<_>, _>>()
-    {
-        Ok(messages) => messages,
-        Err(error) => return client_error(error),
-    };
-    let tools = match request
-        .tools
-        .iter()
-        .map(openai_tool)
-        .collect::<Result<Vec<_>, _>>()
-    {
-        Ok(tools) => tools,
-        Err(error) => return client_error(error),
-    };
-    let tool_choice = match request
-        .tool_choice
-        .as_ref()
-        .map(openai_tool_choice)
-        .transpose()
-    {
-        Ok(Some(choice)) => choice,
-        // OpenAI's omitted tool_choice defaults to auto when tools are supplied.
-        Ok(None) if !tools.is_empty() => ChatToolChoice::Auto,
-        Ok(None) => ChatToolChoice::None,
-        Err(error) => return client_error(error),
-    };
-
-    // Lower sampling and rendering options before entering the shared generation lifecycle.
-    let stream = request.stream;
-    let include_usage = request.stream_options.include_usage;
-    if include_usage && !stream {
-        return client_error("stream_options.include_usage requires stream=true");
-    }
-    if request.top_logprobs.is_some_and(|value| value > 20) {
-        return client_error("top_logprobs must be at most 20");
-    }
-    if !request.logprobs && request.top_logprobs.is_some() {
-        return client_error("top_logprobs requires logprobs=true");
-    }
-    let mut sampling_params = sampling(request.temperature, request.top_p, request.max_tokens);
-    sampling_params.top_k = request.top_k;
-    sampling_params.min_p = request.min_p;
-    sampling_params.seed = request.seed;
-    sampling_params.min_tokens = request.min_tokens;
-    sampling_params.frequency_penalty = request.frequency_penalty;
-    sampling_params.presence_penalty = request.presence_penalty;
-    sampling_params.repetition_penalty = request.repetition_penalty;
-    sampling_params.stop_token_ids = request.stop_token_ids.clone();
-    sampling_params.ignore_eos = request.ignore_eos;
-    sampling_params.logit_bias = request.logit_bias.clone();
-    sampling_params.allowed_token_ids = request.allowed_token_ids.clone();
-    sampling_params.bad_words = request.bad_words.clone();
-    sampling_params.logprobs = request
-        .logprobs
-        .then_some(request.top_logprobs.unwrap_or_default() as i32);
-    let (response_format, structured_output) = match response_format(request.response_format) {
-        Ok(format) => format,
-        Err(error) => return client_error(error),
-    };
-    if let Some(constraint) = structured_output {
-        sampling_params.structured_outputs = Some(constraint);
-    }
-    let include_reasoning = request.include_reasoning.unwrap_or(false);
-    let tool_context = match ResolvedToolContext::new(
-        &messages,
-        tools,
-        Some(tool_choice),
-        request.parallel_tool_calls,
-    ) {
-        Ok(tool_context) => tool_context,
-        Err(error) => return client_error(error.to_string()),
-    };
-    let chat = ChatRequest {
-        request_id: id.clone(),
-        messages,
-        sampling_params,
-        chat_options: ChatOptions {
-            reasoning_effort: request.reasoning_effort,
-            response_format,
-            ..Default::default()
-        },
-        tool_context,
-        decode_options: decode_options(request.stop),
-        intermediate: request.stream,
-        priority: request.priority,
-        documents: None,
-        cache_salt: request.cache_salt.clone(),
-        add_special_tokens: false,
-        data_parallel_rank: None,
-        session_id: request.session_id.clone(),
-        lora_request: None,
-    };
-    if let Err(error) = chat.validate() {
-        return client_error(error.to_string());
-    }
-    let generated = match state
-        .generate_chat(request.model, chat, include_reasoning, timing)
-        .await
-    {
-        Ok(generated) => generated,
-        Err(error) => return openai_error(error),
-    };
-    if stream {
-        chat_stream_with_options(generated, state.stream_idle, include_usage)
-    } else {
-        chat_collected(generated, state.stream_idle).await
-    }
-}
-
-/// Checks the supported image URL form without echoing media data.
-fn validate_image_data_url(value: &str) -> Result<(), &'static str> {
-    if value.split_once(',').is_some_and(|(metadata, payload)| {
-        metadata.starts_with("data:image/") && metadata.ends_with(";base64") && !payload.is_empty()
-    }) {
-        Ok(())
-    } else {
-        Err("image_url.url must be a non-empty base64 image data URL")
-    }
-}
-
-/// Applies the same image URL requirements to chat generation and token counting.
-fn validate_multimodal_input(messages: &[OpenAiMessage]) -> Result<(), &'static str> {
-    for part in messages
-        .iter()
-        .filter_map(|message| match &message.content {
-            Some(OpenAiChatContent::Parts(parts)) => Some(parts.as_slice()),
-            Some(OpenAiChatContent::Text(_)) | None => None,
-        })
-        .flatten()
-    {
-        if let OpenAiContentPart::ImageUrl { image_url } = part {
-            validate_image_data_url(&image_url.url)?;
-        }
-    }
-    Ok(())
-}
-
-/// Returns the renderer format and grammar constraint to lower.
-fn response_format(
-    format: Option<OpenAiResponseFormat>,
-) -> Result<LoweredResponseFormat, &'static str> {
-    match format {
-        None => Ok((None, None)),
-        Some(OpenAiResponseFormat::Text) => Ok((Some(json!({"type":"text"})), None)),
-        Some(OpenAiResponseFormat::JsonObject) => Ok((
-            Some(json!({"type":"json_object"})),
-            Some(StructuredOutputsParams::json_object()),
-        )),
-        Some(OpenAiResponseFormat::JsonSchema { json_schema }) => {
-            // Preserve OpenAI's named schema envelope when lowering the grammar.
-            if json_schema.name.is_empty() {
-                return Err("response_format.json_schema.name must not be empty");
-            }
-            if !json_schema.schema.is_object() {
-                return Err("response_format.json_schema.schema must be a JSON object");
-            }
-            let mut envelope = serde_json::Map::from_iter([
-                ("name".into(), Value::String(json_schema.name)),
-                ("schema".into(), json_schema.schema.clone()),
-            ]);
-            if let Some(description) = json_schema.description {
-                envelope.insert("description".into(), Value::String(description));
-            }
-            if let Some(strict) = json_schema.strict {
-                envelope.insert("strict".into(), Value::Bool(strict));
-            }
-            let value = Value::Object(envelope);
-            Ok((
-                Some(json!({"type":"json_schema", "json_schema": value})),
-                Some(StructuredOutputsParams::json(json_schema.schema)),
-            ))
-        }
-    }
-}
-
-/// Validates and lowers an OpenAI function tool.
-fn openai_tool(tool: &OpenAiTool) -> Result<ChatTool, &'static str> {
-    let OpenAiTool {
-        kind: OpenAiFunctionType::Function,
-        function,
-    } = tool;
-    if function.name.is_empty() {
-        return Err("tools[].function.name must not be empty");
-    }
-    if !function.parameters.is_object() {
-        return Err("tools[].function.parameters must be a JSON object");
-    }
-    Ok(ChatTool {
-        name: function.name.clone(),
-        description: function.description.clone(),
-        parameters: function.parameters.clone(),
-        strict: function.strict,
-    })
-}
-
-/// Resolves an OpenAI tool selection, rejecting empty function names.
-fn openai_tool_choice(choice: &OpenAiToolChoice) -> Result<ChatToolChoice, &'static str> {
-    Ok(match choice {
-        OpenAiToolChoice::Mode(OpenAiToolChoiceMode::None) => ChatToolChoice::None,
-        OpenAiToolChoice::Mode(OpenAiToolChoiceMode::Auto) => ChatToolChoice::Auto,
-        OpenAiToolChoice::Mode(OpenAiToolChoiceMode::Required) => ChatToolChoice::Required,
-        OpenAiToolChoice::Function(OpenAiNamedToolChoice {
-            kind: OpenAiFunctionType::Function,
-            function,
-        }) if !function.name.is_empty() => ChatToolChoice::Function {
-            name: function.name.clone(),
-        },
-        OpenAiToolChoice::Function(_) => return Err("tool_choice.function.name must not be empty"),
-    })
-}
-
-/// Converts public content parts while retaining their deserialization diagnostics.
-fn openai_content(content: &OpenAiChatContent) -> Result<ChatContent, String> {
-    match content {
-        OpenAiChatContent::Text(text) => Ok(ChatContent::Text(text.clone())),
-        OpenAiChatContent::Parts(parts) => parts
-            .iter()
-            .map(|part| match part {
-                OpenAiContentPart::Text { text } => Ok(ChatContentPart::text(text.clone())),
-                OpenAiContentPart::ImageUrl { image_url } => serde_json::from_value(json!({
-                    "type": "image_url",
-                    "image_url": image_url.url.clone(),
-                    "detail": image_url.detail.clone(),
-                }))
-                .map_err(|error| format!("messages[].content: {error}")),
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map(ChatContent::Parts),
-    }
-}
-
-/// Enforces role-specific fields before constructing the shared chat representation.
-fn openai_message(message: &OpenAiMessage) -> Result<ChatMessage, String> {
-    let content = message.content.as_ref().map(openai_content).transpose()?;
-    Ok(match message.role.as_str() {
-        "system" if message.tool_calls.is_empty() && message.tool_call_id.is_none() => {
-            ChatMessage::System {
-                content: content.ok_or("messages[].content is required for this role")?,
-            }
-        }
-        "developer" if message.tool_calls.is_empty() && message.tool_call_id.is_none() => {
-            ChatMessage::Developer {
-                content: content.ok_or("messages[].content is required for this role")?,
-                tools: None,
-            }
-        }
-        "user" if message.tool_calls.is_empty() && message.tool_call_id.is_none() => {
-            ChatMessage::User {
-                content: content.ok_or("messages[].content is required for this role")?,
-            }
-        }
-        "assistant" => {
-            if message.tool_call_id.is_some() {
-                return Err("assistant messages must not include tool_call_id".into());
-            }
-            let mut blocks = content
-                .map(|content| {
-                    content
-                        .try_flatten_to_text()
-                        .map(|text| AssistantContentBlock::Text { text })
-                })
-                .transpose()
-                .map_err(|error| format!("assistant content: {error}"))?
-                .into_iter()
-                .collect::<Vec<_>>();
-            blocks.extend(message.tool_calls.iter().map(|call| match call {
-                OpenAiToolCall {
-                    id,
-                    kind: OpenAiFunctionType::Function,
-                    function,
-                } => AssistantContentBlock::ToolCall(AssistantToolCall {
-                    id: id.clone(),
-                    name: function.name.clone(),
-                    arguments: function.arguments.clone(),
-                }),
-            }));
-            if blocks.is_empty() {
-                return Err("assistant messages must include content or tool_calls".into());
-            }
-            ChatMessage::assistant_blocks(blocks)
-        }
-        "tool" if message.tool_calls.is_empty() => ChatMessage::tool_response(
-            content.ok_or("messages[].content is required for this role")?,
-            message
-                .tool_call_id
-                .clone()
-                .ok_or("tool messages require tool_call_id")?,
-        ),
-        "system" | "developer" | "user" => {
-            return Err(
-                "system, developer, and user messages must not include tool_calls or tool_call_id"
-                    .into(),
-            );
-        }
-        "tool" => return Err("tool messages must not include tool_calls".into()),
-        _ => {
-            return Err(
-                "messages[].role must be system, developer, user, assistant, or tool".into(),
-            );
-        }
-    })
 }

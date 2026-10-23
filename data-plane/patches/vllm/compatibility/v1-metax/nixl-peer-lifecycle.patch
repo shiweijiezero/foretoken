@@ -1,0 +1,201 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py
+@@ -835,6 +835,7 @@
+ 
+         # TTL-based eviction of stale remote engine state.
+         self._engine_last_active: dict[EngineId, float] = {}
++        self._engine_by_address: dict[tuple[str, int], EngineId] = {}
+         self._engine_ttl: float = vllm_config.kv_transfer_config.get_from_extra_config(
+             "engine_ttl", 3600.0
+         )
+@@ -1299,6 +1300,7 @@
+                         self._remote_agents[eid] = remote_agents
+                         self._engine_clock_offset[eid] = clock_offset
+                         self._engine_last_active[eid] = time.perf_counter()
++                        self._track_remote_engine_replacement(eid, host, port)
+                     except Exception as e:
+                         self._log_failure(
+                             failure_type="handshake_setup_failed",
+@@ -2930,12 +2932,50 @@
+         self._sync_device_after_direct_recv(direct_device_recving)
+ 
+         # Handle timeout to avoid stranding blocks on remote.
++        self._reap_expired_send_leases(done_sending)
++
++        self._cleanup_replaced_remote_engines()
++        return KVConnectorTransferResults(
++            finished_sending=done_sending,
++            finished_recving=done_recving,
++            failed_recving=failed_recv_reqs,
++        )
++
++    def get_finished(self) -> tuple[set[str], set[str]]:
++        """Compatibility wrapper for the legacy completion API."""
++        results = self.get_transfer_results()
++        return results.finished_sending, results.finished_recving
++
++    def _sync_device_after_direct_recv(self, done_recving: set[str]) -> None:
++        """Make direct NIXL writes visible before model execution."""
++        requires_sync = current_platform.is_rocm() and self._has_mamba
++        if self.use_host_buffer or not done_recving or not requires_sync:
++            return
++
++        torch.accelerator.synchronize()
++
++    def _get_new_notifs(self) -> set[str]:
++        """Get req_ids which got a remote xfer notification.
++
++        Subclasses must implement this to handle mode-specific notifications.
++        """
++        raise NotImplementedError
++
++    def _reap_expired_send_leases(self, done_sending: set[str]) -> None:
++        """Reclaim expired send-side KV leases into ``done_sending``.
++
++        ``_reqs_to_send`` is not ordered by expiry: heartbeats update the
++        deadline in place, and mixed TTLs share the map, so a live head
++        entry can sit in front of already-expired ones. Scan every entry
++        rather than stopping at the first still-live request.
++        """
++        if not self._reqs_to_send:
++            return
+         now = time.perf_counter()
+-        while self._reqs_to_send:
+-            req_id, expires = next(iter(self._reqs_to_send.items()))
+-            # Sorted dict, oldest requests are put first so we can exit early.
+-            if now < expires:
+-                break
++        expired = [
++            req_id for req_id, expires in self._reqs_to_send.items() if now >= expires
++        ]
++        for req_id in expired:
+             count = self.consumer_notification_counts_by_req.pop(req_id, 0)
+             self.expected_consumer_notifications_by_req.pop(req_id, None)
+             self.xfer_stats.record_kv_expired_req()
+@@ -2948,32 +2988,6 @@
+             self._reqs_to_process.remove(req_id)
+             del self._reqs_to_send[req_id]
+             done_sending.add(req_id)
+-
+-        return KVConnectorTransferResults(
+-            finished_sending=done_sending,
+-            finished_recving=done_recving,
+-            failed_recving=failed_recv_reqs,
+-        )
+-
+-    def get_finished(self) -> tuple[set[str], set[str]]:
+-        """Compatibility wrapper for the legacy completion API."""
+-        results = self.get_transfer_results()
+-        return results.finished_sending, results.finished_recving
+-
+-    def _sync_device_after_direct_recv(self, done_recving: set[str]) -> None:
+-        """Make direct NIXL writes visible before model execution."""
+-        requires_sync = current_platform.is_rocm() and self._has_mamba
+-        if self.use_host_buffer or not done_recving or not requires_sync:
+-            return
+-
+-        torch.accelerator.synchronize()
+-
+-    def _get_new_notifs(self) -> set[str]:
+-        """Get req_ids which got a remote xfer notification.
+-
+-        Subclasses must implement this to handle mode-specific notifications.
+-        """
+-        raise NotImplementedError
+ 
+     def _handle_heartbeat(self, payload: str) -> None:
+         """Extend leases for requests referenced in a heartbeat.
+@@ -3494,6 +3508,45 @@
+             and meta.remote is not None
+         }
+ 
++    def _track_remote_engine_replacement(
++        self, engine_id: EngineId, host: str, port: int
++    ) -> None:
++        """Record the engine currently serving a pull peer address."""
++        # TODO: Also handle push mode, which handshakes in both directions.
++        if self._TRANSFER_MODE != "pull":
++            return
++        previous = self._engine_by_address.get((host, port))
++        self._engine_by_address[(host, port)] = engine_id
++        if previous is None or previous == engine_id:
++            return
++        logger.info(
++            "Remote engine at %s:%d changed from %s to %s.",
++            host,
++            port,
++            previous,
++            engine_id,
++        )
++
++    def _cleanup_replaced_remote_engines(self) -> None:
++        """Release replaced pull peers once requests and handshakes have drained."""
++        if self._TRANSFER_MODE != "pull":
++            return
++        with self._handshake_lock:
++            if self._handshake_futures:
++                return
++            replaced = self._remote_agents.keys() - self._engine_by_address.values()
++        if not replaced:
++            return
++        # _recving_metadata is only accessed from this (main) thread.
++        busy = {
++            meta.remote.engine_id
++            for meta in self._recving_metadata.values()
++            if meta.remote is not None
++        }
++        for engine_id in replaced - busy:
++            self._cleanup_remote_engine(engine_id, log_eviction=False)
++            logger.info("Released NIXL state for replaced remote engine %s.", engine_id)
++
+     def _cleanup_remote_engine(
+         self, engine_id: EngineId, *, log_eviction: bool = True
+     ) -> None:
+@@ -3511,6 +3564,9 @@
+         # Pop under the handshake lock; NIXL teardown stays outside it.
+         with self._handshake_lock:
+             agents = self._remote_agents.pop(engine_id)
++            for address, eid in list(self._engine_by_address.items()):
++                if eid == engine_id:
++                    del self._engine_by_address[address]
+         for agent_name in agents.values():
+             self.nixl_wrapper.remove_remote_agent(agent_name)
+ 
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/nixl/pull_worker.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/nixl/pull_worker.py
+@@ -64,8 +64,14 @@
+                 len(meta.local_physical_block_ids),
+                 len(meta.remote.block_ids),
+             )
+-            # always store metadata for failure recovery
+-            self._recving_metadata[req_id] = meta
++            # Full local hits and aborted cleanup only notify P; no recv is awaited.
++            # On a full local hit:
++            # - Notification failure must not fail the request: its KV is local.
++            # - Receive completion must not be reported: num_external_tokens == 0,
++            #   so the scheduler never entered WAITING_FOR_REMOTE_KVS to begin with.
++            # Aborted cleanup requests have already been removed from the scheduler.
++            if meta.awaiting_kvs or any(meta.local_block_ids):
++                self._recving_metadata[req_id] = meta
+             if remote_engine_id not in self._remote_agents:
+                 # Initiate handshake with remote engine to exchange metadata.
+                 with self._handshake_lock:
+@@ -78,7 +84,14 @@
+ 
+         # Start transfers for requests whose handshakes have now finished.
+         while not self._ready_requests.empty():
+-            self._read_blocks_for_req(*self._ready_requests.get_nowait())
++            req_id, meta = self._ready_requests.get_nowait()
++            assert meta.remote is not None
++            if meta.remote.engine_id not in self._remote_agents:
++                # The engine was released after its handshake completed, so
++                # handshake again. This fails if the engine is gone.
++                self._background_nixl_handshake(req_id, meta.remote.engine_id, meta)
++                continue
++            self._read_blocks_for_req(req_id, meta)
+ 
+         if self.pcp_rank > 0 and not self.pcp_dcp_sharded:
+             # Replicated-KV PCP: only PCP rank 0 serves the KV, so this rank

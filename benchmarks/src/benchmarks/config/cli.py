@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import MISSING, fields
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -29,6 +29,29 @@ from benchmarks.config.benchmark import (
     WandbRunConfig,
     parse_duration_seconds,
 )
+from benchmarks.config.evaluation import deployment_labels
+from benchmarks.config.video import VideoEndpointConfig
+
+
+def parse_benchmark_arguments(
+    argv: Sequence[str] | None = None,
+) -> BenchmarkConfig:
+    """Parse performance arguments after top-level ``foretoken perf``."""
+    parser = argparse.ArgumentParser(
+        prog="foretoken perf",
+        description=(
+            "Measure HTTP latency and throughput for Foretoken and "
+            "OpenAI-compatible inference services"
+        ),
+        epilog="For video generation, use --video; run foretoken perf --video --help for its options.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    _add_benchmark_arguments(parser)
+
+    parsed_args = parser.parse_args(argv)
+    validate_profile_arguments(parser, parsed_args)
+    config = _benchmark_config(parsed_args)
+    return config
 
 
 def _default(cls: type, name: str) -> Any:
@@ -73,11 +96,7 @@ def _add_benchmark_arguments(
     parser.add_argument(
         "--health-url",
         default=_default(ModelServiceSource, "health_url"),
-        help=(
-            "Health endpoint; derived from --url when omitted"
-            if video
-            else "Optional service health endpoint checked before the benchmark"
-        ),
+        help="Optional service health endpoint checked before the benchmark",
     )
     parser.add_argument(
         "--timeout",
@@ -189,7 +208,7 @@ def _add_benchmark_arguments(
     )
     if video:
         parser.set_defaults(
-            timeout=3600.0,
+            timeout=_default(VideoEndpointConfig, "timeout_s"),
             num_prompts=0,
             output=("local",),
             output_dir="results/video",
@@ -202,6 +221,11 @@ def _add_benchmark_arguments(
         nargs="*",
         metavar="PATH",
         help="Kustomize directories to deploy or reuse sequentially with the same workload",
+    )
+    parser.add_argument(
+        "--name", dest="instance_name",
+        default=_default(ModelServiceSource, "instance_name"),
+        help="Deployment instance name for a single Kustomize PATH; not a model alias",
     )
     parser.add_argument(
         "--model", nargs="+", default=[],
@@ -478,30 +502,18 @@ def _add_benchmark_arguments(
 
 
 def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
+    """Map the explicit CLI surface to typed service, workload, and result choices for execution."""
     paths = tuple(namespace.kustomize_paths or ())
     urls = tuple(namespace.url or ())
     models = tuple(namespace.model or ())
     if paths and urls:
         raise ValueError("provide Kustomize paths or --url values, not both")
+    if namespace.instance_name and len(paths) != 1:
+        raise ValueError("--name requires exactly one Kustomize PATH")
     sources = paths or urls
     if models and len(models) not in (1, len(sources)):
         raise ValueError("--model accepts one shared value or one value per service")
-    service_choices = (
-        tuple(
-            {"name": Path(path).name, "path": path,
-             "model": models[0] if len(models) == 1 else models[index] if models else ""}
-            for index, path in enumerate(paths)
-        )
-        if paths
-        else tuple(
-            {
-                "name": urlsplit(url).netloc or f"url-{index + 1}",
-                "url": url,
-                "model": models[0] if len(models) == 1 else models[index] if models else "",
-            }
-            for index, url in enumerate(urls)
-        )
-    )
+    service_choices = _service_choices(paths, urls, models)
     first_choice = service_choices[0] if service_choices else {}
     return BenchmarkConfig(
         service=ModelServiceSource(
@@ -513,6 +525,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             timeout_seconds=namespace.timeout,
             max_retries=namespace.max_retries,
             wait_timeout=namespace.wait_timeout,
+            instance_name=namespace.instance_name,
         ),
         load=HttpLoadSchedule(
             max_concurrency=namespace.max_concurrency,
@@ -594,22 +607,36 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
     )
 
 
-def parse_benchmark_arguments(
-    argv: Sequence[str] | None = None,
-) -> BenchmarkConfig:
-    """Parse performance arguments after top-level ``foretoken perf``."""
-    parser = argparse.ArgumentParser(
-        prog="foretoken perf",
-        description=(
-            "Measure HTTP latency and throughput for Foretoken and "
-            "OpenAI-compatible inference services"
-        ),
-        epilog="For video generation, use --video; run foretoken perf --video --help for its options.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+def _service_choices(
+    paths: tuple[str, ...], urls: tuple[str, ...], models: tuple[str, ...],
+) -> tuple[dict[str, str], ...]:
+    """Assign readable, distinct CLI method labels without changing explicit sweep names."""
+    labels = (
+        deployment_labels(tuple(ModelServiceSource(kustomize_path=path) for path in paths))
+        if paths else tuple(urlsplit(url).netloc.rsplit("@", 1)[-1] or f"url-{index + 1}" for index, url in enumerate(urls))
     )
-    _add_benchmark_arguments(parser)
-
-    parsed_args = parser.parse_args(argv)
-    validate_profile_arguments(parser, parsed_args)
-    config = _benchmark_config(parsed_args)
-    return config
+    choices = [
+        {"name": labels[index], "path" if paths else "url": source,
+         "model": models[0] if len(models) == 1 else models[index] if models else ""}
+        for index, source in enumerate(paths or urls)
+    ]
+    counts = Counter(choice["name"] for choice in choices)
+    for choice in choices:
+        if counts[choice["name"]] > 1 and choice["model"]:
+            choice["name"] += " / " + choice["model"]
+    counts = Counter(choice["name"] for choice in choices)
+    for choice in choices:
+        if counts[choice["name"]] > 1 and "url" in choice:
+            choice["name"] += " " + (urlsplit(choice["url"]).path or "/")
+    counts = Counter(choice["name"] for choice in choices)
+    reserved = set(counts)
+    for index, choice in enumerate(choices):
+        name = choice["name"]
+        if counts[name] <= 1:
+            continue
+        suffix = index + 1
+        while f"{name} ({suffix})" in reserved:
+            suffix += 1
+        choice["name"] = f"{name} ({suffix})"
+        reserved.add(choice["name"])
+    return tuple(choices)

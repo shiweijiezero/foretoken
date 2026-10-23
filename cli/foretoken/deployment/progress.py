@@ -7,14 +7,18 @@ from __future__ import annotations
 
 import json
 import re
+import signal
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Iterable
+from contextlib import ExitStack
+from dataclasses import dataclass
 from typing import Any, Self
 
-from foretoken.kubernetes.client import Kubectl
 from foretoken.errors import DeploymentError
-from foretoken.kubernetes.client import ResourceRef
+from foretoken.kubernetes.client import Kubectl, ResourceRef
+from foretoken.processes.execution import CommandExecution
 
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 # Labels identify Foretoken workloads; ownership is resolved by UID, never by name prefix.
@@ -27,18 +31,12 @@ _WORKLOAD_LABELS = (
 )
 
 
-def _message(text: str) -> str:
-    """Remove terminal controls while retaining diagnostic line breaks and indentation."""
-    return "".join(c for c in _ANSI.sub("", text) if c.isprintable() or c in "\n\t")
+@dataclass(frozen=True)
+class _LogReader:
+    """Keep one container attempt's process and cancellation scope together until retirement."""
 
-
-def _termination_detail(state: dict[str, Any]) -> str:
-    """Present kubelet's container exit metadata and original termination message."""
-    metadata = f"reason={state.get('reason', '')} exit={state.get('exitCode')}"
-    if state.get("signal"):
-        metadata += f" signal={state['signal']}"
-    message = state.get("message", "")
-    return metadata + ("\n" + message if message else "")
+    process: subprocess.Popen
+    lifetime: ExitStack
 
 
 class StartupProgress:
@@ -55,7 +53,7 @@ class StartupProgress:
         self._previous: dict[tuple[str, str, int], dict[str, tuple[str, float]]] = {}
         self._owners: dict[str, dict[str, Any]] = {}
         self._seen_owners: set[str] = set()
-        self._logs: dict[tuple[str, str, str], subprocess.Popen] = {}
+        self._logs: dict[tuple[str, str, str], _LogReader] = {}
         self._unavailable = ""
 
     def __enter__(self) -> Self:
@@ -66,102 +64,6 @@ class StartupProgress:
         """Reap log readers on readiness, failure, timeout, or interruption."""
         self._stop(self._logs.values())
         self._logs.clear()
-
-    @staticmethod
-    def _stop(processes: Iterable[subprocess.Popen]) -> None:
-        """Close read-only log connections without leaving local child processes."""
-        readers = list(processes)
-        for process in readers:
-            if process.poll() is None:
-                process.kill()
-        for process in readers:
-            process.wait()
-
-    def _follow(
-        self, pod: dict[str, Any], container: dict[str, Any],
-        live_readers: set[tuple[str, str, str]],
-    ) -> str:
-        """Attach once per actual container identity and report failed log connections."""
-        meta = pod["metadata"]
-        previous = container.get("lastState", {}).get("terminated", {})
-        sources = [("previous", previous.get("containerID"), False)]
-        state = container.get("state", {})
-        if "running" in state or "terminated" in state:
-            sources.append(("current", container.get("containerID"), "running" in state))
-        failures = []
-        for source, container_id, follow in sources:
-            if not container_id:
-                continue
-            # A running container becomes lastState after exit. Its runtime ID,
-            # not restart-count arithmetic, identifies logs already followed.
-            key = (meta["uid"], container["name"], container_id)
-            live_readers.add(key)
-            if key not in self._logs:
-                self._logs[key] = self._log_process(
-                    meta, container["name"], follow=follow, previous=source == "previous",
-                )
-            if (code := self._logs[key].poll()) not in (None, 0):
-                failures.append(f"{source} log reader exited with code {code}")
-        return "; ".join(failures)
-
-    def _log_process(
-        self, metadata: dict[str, Any], container: str, *,
-        follow: bool = False, previous: bool = False,
-    ) -> subprocess.Popen:
-        """Stream all available log lines directly through kubectl's native source prefixes."""
-        args = [
-            "logs", metadata["name"], "-n", metadata["namespace"], "-c", container,
-            "--prefix=true", "--tail=-1",
-        ]
-        if follow:
-            args.append("--follow=true")
-        if previous:
-            args.append("--previous=true")
-        try:
-            return subprocess.Popen(self.kubectl.command(args), stdin=subprocess.DEVNULL)
-        except OSError as exc:
-            raise DeploymentError(
-                f"cannot follow logs for {metadata['name']}/{container}: {exc}"
-            ) from exc
-
-    def _get(self, args: list[str], deadline: float) -> dict[str, Any]:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise DeploymentError("startup observation time budget exhausted")
-        output = self.kubectl.run(
-            [*args, "--request-timeout=3s", "-o", "json"],
-            timeout=min(remaining, 4.0),
-        ).stdout
-        return json.loads(output) if output.strip() else {}
-
-    def _service(
-        self, obj: dict[str, Any], namespace: str,
-        selected: set[tuple[str, str, str]], cache: dict[str, dict[str, Any]],
-        deadline: float,
-    ) -> ResourceRef | None:
-        """Follow controller references to a selected service, checking every UID."""
-        visited: set[str] = set()
-        while True:
-            metadata = obj.get("metadata", {})
-            identity = (namespace, obj.get("kind", ""), metadata.get("name", ""))
-            if identity in selected:
-                return ResourceRef(kind=identity[1], name=identity[2], namespace=namespace)
-            owner = next((o for o in metadata.get("ownerReferences", [])
-                          if o.get("controller")), None)
-            if owner is None or owner["uid"] in visited:
-                return None
-            uid = owner["uid"]
-            visited.add(uid)
-            self._seen_owners.add(uid)
-            if uid not in cache:
-                group = owner["apiVersion"].split("/")[0]
-                kind = owner["kind"] if "/" not in owner["apiVersion"] else f"{owner['kind']}.{group}"
-                value = self._get(["get", kind, owner["name"], "-n", namespace,
-                                   "--ignore-not-found"], deadline)
-                if value.get("metadata", {}).get("uid") != uid:
-                    return None
-                cache[uid] = value
-            obj = cache[uid]
 
     def poll(
         self, resources: Iterable[ResourceRef], elapsed: float, budget: float = 5.0,
@@ -255,6 +157,114 @@ class StartupProgress:
                 self.emit(f"[{elapsed:6.1f}s] Startup observations unavailable — {message}")
                 self._unavailable = message
 
+    @staticmethod
+    def _stop(readers: Iterable[_LogReader]) -> None:
+        """Close every owned log process group, even when another reader's cleanup fails."""
+        with ExitStack() as cleanup:
+            for reader in readers:
+                cleanup.callback(reader.lifetime.close)
+
+    def _follow(
+        self, pod: dict[str, Any], container: dict[str, Any],
+        live_readers: set[tuple[str, str, str]],
+    ) -> str:
+        """Attach once per actual container identity and report failed log connections."""
+        meta = pod["metadata"]
+        previous = container.get("lastState", {}).get("terminated", {})
+        sources = [("previous", previous.get("containerID"), False)]
+        state = container.get("state", {})
+        if "running" in state or "terminated" in state:
+            sources.append(("current", container.get("containerID"), "running" in state))
+        failures = []
+        for source, container_id, follow in sources:
+            if not container_id:
+                continue
+            # A running container becomes lastState after exit. Its runtime ID,
+            # not restart-count arithmetic, identifies logs already followed.
+            key = (meta["uid"], container["name"], container_id)
+            live_readers.add(key)
+            if key not in self._logs:
+                self._logs[key] = self._start_log_reader(
+                    meta, container["name"], follow=follow, previous=source == "previous",
+                )
+            reader = self._logs[key]
+            if (code := reader.process.poll()) is not None:
+                # Retire the group promptly; keep its container identity only to
+                # avoid replaying logs after the process ID can be reused.
+                reader.lifetime.close()
+                if code != 0:
+                    failures.append(f"{source} log reader exited with code {code}")
+        return "; ".join(failures)
+
+    def _start_log_reader(
+        self, metadata: dict[str, Any], container: str, *,
+        follow: bool = False, previous: bool = False,
+    ) -> _LogReader:
+        """Stream native kubectl prefixes while retaining the entire reader process group's lifetime."""
+        args = [
+            "logs", metadata["name"], "-n", metadata["namespace"], "-c", container,
+            "--prefix=true", "--tail=-1",
+        ]
+        if follow:
+            args.append("--follow=true")
+        if previous:
+            args.append("--previous=true")
+        try:
+            with ExitStack() as lifetime:
+                execution = CommandExecution(report_failure=False)
+                process = lifetime.enter_context(execution.process(
+                    self.kubectl.command(args), stdin=subprocess.DEVNULL,
+                    stdout=sys.stderr, stderr=sys.stderr,
+                    interrupt_signal=signal.SIGKILL, shutdown_grace=0,
+                ))
+                # Read-only followers need no drain; cancel their group before
+                # closing the process context that joins its leader.
+                lifetime.callback(execution.cancel)
+                return _LogReader(process, lifetime.pop_all())
+        except OSError as exc:
+            raise DeploymentError(
+                f"cannot follow logs for {metadata['name']}/{container}: {exc}"
+            ) from exc
+
+    def _get(self, args: list[str], deadline: float) -> dict[str, Any]:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise DeploymentError("startup observation time budget exhausted")
+        output = self.kubectl.run(
+            [*args, "--request-timeout=3s", "-o", "json"],
+            timeout=min(remaining, 4.0),
+        ).stdout
+        return json.loads(output) if output.strip() else {}
+
+    def _service(
+        self, obj: dict[str, Any], namespace: str,
+        selected: set[tuple[str, str, str]], cache: dict[str, dict[str, Any]],
+        deadline: float,
+    ) -> ResourceRef | None:
+        """Follow controller references to a selected service, checking every UID."""
+        visited: set[str] = set()
+        while True:
+            metadata = obj.get("metadata", {})
+            identity = (namespace, obj.get("kind", ""), metadata.get("name", ""))
+            if identity in selected:
+                return ResourceRef(kind=identity[1], name=identity[2], namespace=namespace)
+            owner = next((o for o in metadata.get("ownerReferences", [])
+                          if o.get("controller")), None)
+            if owner is None or owner["uid"] in visited:
+                return None
+            uid = owner["uid"]
+            visited.add(uid)
+            self._seen_owners.add(uid)
+            if uid not in cache:
+                group = owner["apiVersion"].split("/")[0]
+                kind = owner["kind"] if "/" not in owner["apiVersion"] else f"{owner['kind']}.{group}"
+                value = self._get(["get", kind, owner["name"], "-n", namespace,
+                                   "--ignore-not-found"], deadline)
+                if value.get("metadata", {}).get("uid") != uid:
+                    return None
+                cache[uid] = value
+            obj = cache[uid]
+
     def _report(
         self, pod: dict[str, Any], container: dict[str, Any], service: ResourceRef,
         elapsed: float, stage: str, detail: str, alive: set[tuple[str, str, int]],
@@ -274,3 +284,17 @@ class StartupProgress:
         if previous is None or previous[0] != text or (channel != "LogsUnavailable" and time.monotonic() - previous[1] >= 30):
             self.emit(f"[{elapsed:6.1f}s] {text}")
             observations[channel] = (text, time.monotonic())
+
+
+def _message(text: str) -> str:
+    """Remove terminal controls while retaining diagnostic line breaks and indentation."""
+    return "".join(c for c in _ANSI.sub("", text) if c.isprintable() or c in "\n\t")
+
+
+def _termination_detail(state: dict[str, Any]) -> str:
+    """Present kubelet's container exit metadata and original termination message."""
+    metadata = f"reason={state.get('reason', '')} exit={state.get('exitCode')}"
+    if state.get("signal"):
+        metadata += f" signal={state['signal']}"
+    message = state.get("message", "")
+    return metadata + ("\n" + message if message else "")

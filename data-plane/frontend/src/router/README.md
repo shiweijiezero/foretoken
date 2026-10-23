@@ -56,7 +56,7 @@ spec:
         cacheWeight: 0.7
 ```
 
-`kv_least_loaded` combines cache credit with per-rank request pressure. By default, GPU-local reuse receives full credit and the additional prefix requiring CPU, filesystem or shared-store restoration receives half credit. Equal shared-cache hits therefore retain each target's local-cache advantage, while load can change the ranking.
+`kv_least_loaded` combines cache credit with per-rank request pressure. By default, GPU-local reuse receives full credit and the additional prefix restored from CPU, filesystem, a shared store or another instance's device cache receives half credit. Equal shared-cache hits therefore retain each target's local-cache advantage, while load can change the ranking.
 
 Both weights accept values from 0 to 1:
 
@@ -65,7 +65,7 @@ Both weights accept values from 0 to 1:
 | `cacheWeight` | `0.5` | Balances cache affinity against load; `0` selects by load alone and skips cache queries for this scorer. |
 | `restoreWeight` | `0.5` | Credit for the restored extension relative to GPU-local reuse; `0` credits only GPU-local reuse, and `1` gives both equal credit. |
 
-For Encoder and Decode, `kv_least_loaded` uses load alone. These weights express routing preferences, not transfer-time estimates.
+For Encoder and Decode, `kv_least_loaded` uses load alone. These weights control routing preference. [Decode-to-Prefill reuse](../../../../docs/features/inference-parameters.md#prefilldecode-separation-and-kv-reuse) remains available with load-only scorers or `cacheWeight: 0`, for both Mooncake and NIXL.
 
 A target with unavailable prefix observations remains eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
 

@@ -48,11 +48,15 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-pip install -e .
+uv venv --python 3.12 --seed  # 使用 pip 时：python3 -m venv .venv（Python 3.11+）
+source .venv/bin/activate
+uv pip install -e .  # 或 pip install -e .
 
 # 使用发布的 CLI：
-# pip install foretoken
+# uv pip install foretoken  # 或 pip install foretoken
 ```
+
+后续命令在已激活的环境中执行。
 
 ### 2. 安装 Kubernetes 平台
 
@@ -69,7 +73,7 @@ foretoken install -e .
 # foretoken install
 ```
 
-安装准备集群共享的 API 和依赖；部署时，再在服务所在的命名空间创建独立控制器。
+平台在集群中安装一次。各部署实例拥有独立的控制器和服务，默认通过共享 Gateway 提供 HTTP 访问。
 
 宿主机需要 Docker、NVIDIA Container Toolkit、k3d、kubectl 和 [Helm 4](cli/README_zh.md#开始前)，且当前用户可以无 `sudo` 执行 `docker info`。需要时请先按 [k3d 部署指南](docs/deployment/k3d_zh.md) 安装宿主机依赖。使用 kind 或已有 Kubernetes 集群时，按上表进入对应指南。
 
@@ -79,17 +83,23 @@ foretoken install -e .
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
-该示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB。示例使用仓库根目录的 `./data` 目录保存模型文件和运行时缓存。更多部署配置见 [`examples/`](examples/)。
+不传 `--name` 时，实例名取自 [`frontend.yaml`](examples/quickstart/qwen3-0.6b/frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `qwen3-0-6b`。
+
+实例包含一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB。模型文件和运行时缓存使用平台默认存储，本机示例对应创建集群时准备的 `./data`。更多部署配置见 [`examples/`](examples/)。
 
 同时尝试不同代码改动，见[并行运行候选方案](docs/deployment/source_zh.md#并行运行候选方案)；修改 vLLM，见[使用本地引擎源码](docs/deployment/source_zh.md#修改推理引擎)。
 
 ### 4. 发送测试请求
 
+Gateway 根据 Host 将请求路由到目标实例。
+
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $FORETOKEN_REQUEST_HOST" \
   -H "Content-Type: application/json" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
@@ -148,47 +158,22 @@ codex \
 
 ## 网关模式
 
-网关模式通过 Kubernetes Gateway 和域名提供统一入口，适合已经使用 Gateway 或需要集中管理外部流量的集群。
+复用已有 Gateway 或选择其监听器，见[安装选项](cli/README_zh.md#install)。
 
-在 `examples/quickstart/qwen3-0.6b/frontend.yaml` 的 `spec` 中添加访问域名：
+使用自定义域名、HTTPS 或限定域名的监听器时，在 `examples/quickstart/qwen3-0.6b/frontend.yaml` 中填写 Gateway 接受的主机名并重新部署。HTTPS 还需对应的 DNS 和网关证书：
 
 ```yaml
 spec:
   hostname: foretoken.example.com
 ```
 
-然后运行：
-
-```bash
-# 为上面的源码安装启用网关模式
-foretoken install -e . --frontend-mode gateway
-# 使用发布版平台时：
-# foretoken install --frontend-mode gateway
-
-# 部署快速开始示例
-foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
-
-# 获取网关地址和请求域名
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
-
-# 发送测试请求
-curl --fail-with-body --no-buffer \
-  "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
-  -H "Host: $FORETOKEN_REQUEST_HOST" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
-```
-
-命令会按需安装 Envoy Gateway。复用已有 Gateway 或指定 listener，见[命令行工具使用指南](cli/README_zh.md)。
-
 ## 停止与卸载
 
 ```bash
-# 删除快速开始的资源，包括命名空间和运行时缓存 PVC
-foretoken delete examples/quickstart/qwen3-0.6b
+# 只删除快速开始实例
+foretoken delete qwen3-0-6b
 
-# 卸载 Foretoken 平台
+# 平台管理员：不再有部署需要平台时卸载
 foretoken uninstall
 ```
 

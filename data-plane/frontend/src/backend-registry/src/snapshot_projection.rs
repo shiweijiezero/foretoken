@@ -5,8 +5,9 @@
 
 use foretoken_kv_indexer::{KvEventSourceConfig, KvRouteBinding, KvRuntimeConfig};
 use foretoken_llm_facade::HttpFacade;
-use foretoken_model_protocol::ModelServerRole;
-use foretoken_model_protocol::{KvCacheLocality, KvPlacement, KvStorageTier};
+use foretoken_model_protocol::{
+    KvCacheLocality, KvConnector, KvPlacement, KvStorageTier, ModelServerRole,
+};
 use foretoken_router::{
     ModelRouteTable, RouteTarget, RouteTargetId, RouteTargetSet, ScalingTarget, ScalingTargetKind,
 };
@@ -14,9 +15,67 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::registry::Component;
-use crate::snapshot::{ServingSnapshot, SnapshotError};
+use crate::snapshot::{
+    ServingSnapshot, SnapshotEpdComponent, SnapshotEpdPipelineScope, SnapshotError, SnapshotGroup,
+    SnapshotPdComponent, SnapshotPdPipelineScope,
+};
 
-/// Projects prompt-side KV event sources and route bindings from a serving snapshot.
+/// Projects validated snapshot topology into the router's route table and backend components.
+///
+/// `BackendRegistry::from_snapshot` takes ownership of both outputs; this function consumes the snapshot.
+pub(crate) fn project_registry(
+    snapshot: ServingSnapshot,
+) -> Result<(ModelRouteTable, BTreeMap<RouteTargetId, Component>), SnapshotError> {
+    // Validate snapshot-wide identity and admission ownership before consuming topology
+    // vectors so every emitted route receives one unambiguous scaling target set.
+    if snapshot.version == 0 {
+        return Err(SnapshotError::InvalidVersion);
+    }
+    snapshot.model_identities()?;
+    let mut admission_by_target = BTreeMap::<ScalingTarget, RouteTargetSet>::new();
+    for sets in snapshot.admission_target_sets()?.into_values() {
+        for set in sets {
+            for target in set.targets() {
+                if admission_by_target
+                    .insert(target.clone(), set.clone())
+                    .is_some_and(|existing| existing != set)
+                {
+                    return Err(SnapshotError::ConflictingAdmissionTarget(
+                        target.uid.clone(),
+                    ));
+                }
+            }
+        }
+    }
+    let mut routes = Vec::new();
+    let mut components = BTreeMap::new();
+    let aggregate_models = project_aggregate(
+        snapshot.groups,
+        &admission_by_target,
+        &mut routes,
+        &mut components,
+    )?;
+    let pd_models = project_pd(
+        snapshot.pd_components,
+        &snapshot.pd_pipeline_scopes,
+        &aggregate_models,
+        &admission_by_target,
+        &mut routes,
+        &mut components,
+    )?;
+    project_epd(
+        snapshot.epd_components,
+        &snapshot.epd_pipeline_scopes,
+        &aggregate_models,
+        &pd_models,
+        &admission_by_target,
+        &mut routes,
+        &mut components,
+    )?;
+    Ok((ModelRouteTable::new(routes), components))
+}
+
+/// Projects KV event sources and route bindings from a serving snapshot.
 ///
 /// `BackendRegistryBuild` consumes this derived runtime configuration while the snapshot remains controller-owned.
 pub(crate) fn project_kv_runtime(
@@ -25,8 +84,6 @@ pub(crate) fn project_kv_runtime(
     let mut sources = BTreeMap::new();
     let mut bindings = BTreeMap::new();
 
-    // Aggregate and prefill runtimes are the only components that publish prompt-side
-    // KV events. Each data-parallel rank gets an independent source and route binding.
     let mut add_route = |route_target_id: &RouteTargetId,
                          endpoint: &str,
                          model_revision: &str,
@@ -85,7 +142,10 @@ pub(crate) fn project_kv_runtime(
         );
     }
     for component in &snapshot.pd_components {
-        if component.role == ModelServerRole::Prefill {
+        if matches!(
+            component.role,
+            ModelServerRole::Prefill | ModelServerRole::Decode
+        ) {
             add_route(
                 &component.route_target_id,
                 &component.endpoint,
@@ -115,56 +175,15 @@ pub(crate) fn project_kv_runtime(
     })
 }
 
-fn pool_target(service_uid: String, pool_uid: String, pool_name: String) -> ScalingTarget {
-    ScalingTarget {
-        service_uid,
-        name: pool_name,
-        uid: pool_uid,
-        kind: ScalingTargetKind::Pool,
-    }
-}
-
-/// Projects validated snapshot topology into the router's route table and backend components.
-///
-/// `BackendRegistry::from_snapshot` takes ownership of both outputs; this function consumes the snapshot.
-pub(crate) fn project_registry(
-    snapshot: ServingSnapshot,
-) -> Result<(ModelRouteTable, BTreeMap<RouteTargetId, Component>), SnapshotError> {
-    // Validate snapshot-wide identity and admission ownership before consuming topology
-    // vectors so every emitted route receives one unambiguous scaling target set.
-    if snapshot.version == 0 {
-        return Err(SnapshotError::InvalidVersion);
-    }
-    snapshot.model_identities()?;
-    let mut admission_by_target = BTreeMap::<ScalingTarget, RouteTargetSet>::new();
-    for sets in snapshot.admission_target_sets()?.into_values() {
-        for set in sets {
-            for target in set.targets() {
-                if admission_by_target
-                    .insert(target.clone(), set.clone())
-                    .is_some_and(|existing| existing != set)
-                {
-                    return Err(SnapshotError::ConflictingAdmissionTarget(
-                        target.uid.clone(),
-                    ));
-                }
-            }
-        }
-    }
-    let admission_targets = |target: &ScalingTarget| {
-        admission_by_target
-            .get(target)
-            .cloned()
-            .ok_or_else(|| SnapshotError::MissingAdmissionTarget(target.uid.clone()))
-    };
-    let mut routes = Vec::new();
-    let mut components = BTreeMap::new();
+/// Adds independently executable groups while retaining one facade per physical endpoint.
+fn project_aggregate(
+    groups: Vec<SnapshotGroup>,
+    admission_by_target: &BTreeMap<ScalingTarget, RouteTargetSet>,
+    routes: &mut Vec<RouteTarget>,
+    components: &mut BTreeMap<RouteTargetId, Component>,
+) -> Result<BTreeSet<String>, SnapshotError> {
     let mut aggregate_models = BTreeSet::new();
-    let mut pd_models = BTreeSet::new();
-
-    // Aggregate groups map one physical model-server endpoint directly to one routing
-    // target and one reusable HTTP facade.
-    for group in snapshot.groups {
+    for group in groups {
         if group.service_uid.is_empty()
             || group.pool_uid.is_empty()
             || group.pool_name.is_empty()
@@ -196,7 +215,7 @@ pub(crate) fn project_registry(
         let target = pool_target(group.service_uid, group.pool_uid, group.pool_name);
         routes.push(RouteTarget {
             route_target_id: group.route_target_id,
-            admission_targets: admission_targets(&target)?,
+            admission_targets: admission_targets(admission_by_target, &target)?,
             target,
             model: group.model,
             revision: group.revision,
@@ -208,11 +227,23 @@ pub(crate) fn project_registry(
             data_parallel_size: group.data_parallel_size,
         });
     }
-    // P/D components are admitted independently by Pool, but routing is valid only when
-    // every component belongs to the explicit prefill/decode membership of its pipeline.
+    Ok(aggregate_models)
+}
+
+/// Adds P/D routes only within the snapshot's explicit prefill/decode scope membership.
+fn project_pd(
+    pd_components: Vec<SnapshotPdComponent>,
+    pd_pipeline_scopes: &[SnapshotPdPipelineScope],
+    aggregate_models: &BTreeSet<String>,
+    admission_by_target: &BTreeMap<ScalingTarget, RouteTargetSet>,
+    routes: &mut Vec<RouteTarget>,
+    components: &mut BTreeMap<RouteTargetId, Component>,
+) -> Result<BTreeSet<String>, SnapshotError> {
+    let mut pd_models = BTreeSet::new();
+    // Components are admitted independently by Pool, but routing requires explicit membership.
     let mut pipeline_scope_members =
         BTreeMap::<String, (BTreeSet<RouteTargetId>, BTreeSet<RouteTargetId>)>::new();
-    for pipeline_scope in &snapshot.pd_pipeline_scopes {
+    for pipeline_scope in pd_pipeline_scopes {
         pipeline_scope_members.insert(
             pipeline_scope.pipeline_scope_id.clone(),
             (
@@ -229,24 +260,21 @@ pub(crate) fn project_registry(
             ),
         );
     }
-    for component in snapshot.pd_components {
+    for component in pd_components {
         if component.service_uid.is_empty()
             || component.pool_uid.is_empty()
             || component.pool_name.is_empty()
             || component.route_target_id.as_str().is_empty()
             || component.pipeline_scope_id.is_empty()
             || component.endpoint.is_empty()
-            || component.profile_name.is_empty()
-            || component.profile_revision.is_empty()
             || component.kv_scope_id.is_empty()
         {
             return Err(SnapshotError::IncompletePdComponent(
                 component.route_target_id,
             ));
         }
-        if component.connector != "MooncakeConnector"
-            || !matches!(component.protocol.as_str(), "rdma" | "tcp")
-        {
+        let connector = component.connector;
+        if !matches!(component.protocol.as_str(), "rdma" | "tcp") {
             return Err(SnapshotError::UnsupportedPdTransport(
                 component.route_target_id,
             ));
@@ -258,6 +286,7 @@ pub(crate) fn project_registry(
         }
         pd_models.insert(component.model.clone());
         if component.role == ModelServerRole::Prefill
+            && connector == KvConnector::Mooncake
             && component.prefill_bootstrap_endpoint.is_none()
         {
             return Err(SnapshotError::IncompletePdComponent(
@@ -285,7 +314,7 @@ pub(crate) fn project_registry(
         );
         let route = RouteTarget {
             route_target_id: component.route_target_id.clone(),
-            admission_targets: admission_targets(&target)?,
+            admission_targets: admission_targets(admission_by_target, &target)?,
             target,
             model: component.model,
             revision: component.revision,
@@ -299,12 +328,12 @@ pub(crate) fn project_registry(
         let component = match route.role {
             ModelServerRole::Prefill => Component::Prefill {
                 endpoint: component.endpoint,
-                bootstrap: component
-                    .prefill_bootstrap_endpoint
-                    .expect("validated prefill bootstrap endpoint"),
+                bootstrap: component.prefill_bootstrap_endpoint,
+                connector,
             },
             ModelServerRole::Decode => Component::Decode {
                 endpoint: component.endpoint,
+                connector,
             },
             ModelServerRole::Aggregate | ModelServerRole::Encoder => {
                 return Err(SnapshotError::InvalidPdPipelineScope(
@@ -325,11 +354,22 @@ pub(crate) fn project_registry(
             return Err(SnapshotError::InvalidPdPipelineScope(pipeline_scope_id));
         }
     }
+    Ok(pd_models)
+}
 
-    // The controller owns connector compatibility. The frontend verifies only that every
-    // published route belongs to exactly one complete, service-local scope with the declared role.
+/// Adds E/P/D routes after verifying complete, unique, service-local scope membership.
+fn project_epd(
+    epd_components: Vec<SnapshotEpdComponent>,
+    epd_pipeline_scopes: &[SnapshotEpdPipelineScope],
+    aggregate_models: &BTreeSet<String>,
+    pd_models: &BTreeSet<String>,
+    admission_by_target: &BTreeMap<ScalingTarget, RouteTargetSet>,
+    routes: &mut Vec<RouteTarget>,
+    components: &mut BTreeMap<RouteTargetId, Component>,
+) -> Result<(), SnapshotError> {
+    // The controller owns connector compatibility. Projection verifies structural scope ownership.
     let mut epd_components_by_id = BTreeMap::new();
-    for component in &snapshot.epd_components {
+    for component in &epd_components {
         if component.service_uid.is_empty()
             || component.pool_uid.is_empty()
             || component.pool_name.is_empty()
@@ -353,7 +393,7 @@ pub(crate) fn project_registry(
 
     let mut pipeline_scope_ids = BTreeSet::new();
     let mut pipeline_scope_by_route_target = BTreeMap::new();
-    for pipeline_scope in &snapshot.epd_pipeline_scopes {
+    for pipeline_scope in epd_pipeline_scopes {
         let invalid_scope =
             || SnapshotError::InvalidEpdPipelineScope(pipeline_scope.pipeline_scope_id.clone());
         if pipeline_scope.pipeline_scope_id.is_empty()
@@ -408,9 +448,8 @@ pub(crate) fn project_registry(
         return Err(SnapshotError::InvalidEpdPipelineScope(String::new()));
     }
 
-    // Only structurally valid scopes are materialized into executable components. Each
-    // route retains its Pool capacity owner while admission covers the complete stage set.
-    for component in snapshot.epd_components {
+    // Materialize only valid scopes, retaining Pool capacity ownership and complete admission sets.
+    for component in epd_components {
         let target = pool_target(
             component.service_uid.clone(),
             component.pool_uid.clone(),
@@ -418,7 +457,7 @@ pub(crate) fn project_registry(
         );
         let route = RouteTarget {
             route_target_id: component.route_target_id.clone(),
-            admission_targets: admission_targets(&target)?,
+            admission_targets: admission_targets(admission_by_target, &target)?,
             target,
             model: component.model,
             revision: component.revision,
@@ -439,12 +478,14 @@ pub(crate) fn project_registry(
             },
             ModelServerRole::Prefill => Component::Prefill {
                 endpoint: component.endpoint,
-                bootstrap: component.prefill_bootstrap_endpoint.ok_or_else(|| {
+                bootstrap: Some(component.prefill_bootstrap_endpoint.ok_or_else(|| {
                     SnapshotError::IncompleteEpdComponent(route.route_target_id.clone())
-                })?,
+                })?),
+                connector: KvConnector::Mooncake,
             },
             ModelServerRole::Decode => Component::Decode {
                 endpoint: component.endpoint,
+                connector: KvConnector::Mooncake,
             },
             ModelServerRole::Aggregate => unreachable!("aggregate E/P/D component was rejected"),
         };
@@ -456,5 +497,25 @@ pub(crate) fn project_registry(
         }
         routes.push(route);
     }
-    Ok((ModelRouteTable::new(routes), components))
+    Ok(())
+}
+
+fn pool_target(service_uid: String, pool_uid: String, pool_name: String) -> ScalingTarget {
+    ScalingTarget {
+        service_uid,
+        name: pool_name,
+        uid: pool_uid,
+        kind: ScalingTargetKind::Pool,
+    }
+}
+
+/// Resolves the controller-owned complete admission set for one emitted Pool target.
+fn admission_targets(
+    admission_by_target: &BTreeMap<ScalingTarget, RouteTargetSet>,
+    target: &ScalingTarget,
+) -> Result<RouteTargetSet, SnapshotError> {
+    admission_by_target
+        .get(target)
+        .cloned()
+        .ok_or_else(|| SnapshotError::MissingAdmissionTarget(target.uid.clone()))
 }

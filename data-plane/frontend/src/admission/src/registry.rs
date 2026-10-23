@@ -7,9 +7,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use foretoken_request_ledger::{Outcome, RequestLedger, ReservationRef};
+use foretoken_request_ledger::{LedgerError, Outcome, RequestLedger, ReservationRef};
 use tokio::sync::Notify;
 use tokio::time::Instant;
+use tracing::Instrument;
 
 use crate::permit::BatchReservation;
 use crate::{
@@ -26,6 +27,56 @@ pub struct PreparedAdmissions {
 struct AdmissionMembers {
     frontends: Vec<String>,
     backends: Vec<String>,
+}
+
+#[derive(Clone)]
+struct WaitingRequest {
+    reservation: ReservationRef,
+    caller: String,
+    role: Option<String>,
+    ready: bool,
+    reserved: bool,
+    error: Option<AdmissionError>,
+    retry_at: Instant,
+}
+
+#[derive(Default)]
+struct ModelState {
+    version: u64,
+    config: Option<AdmissionConfig>,
+    members: Arc<AdmissionMembers>,
+    applied_version: Option<u64>,
+    waiting: Vec<WaitingRequest>,
+    last_caller: BTreeMap<i32, String>,
+    ledger_failure_reported: bool,
+}
+
+/// A model's local request ordering, retained across routing and configuration generations.
+pub struct Admission {
+    model: String,
+    scope: String,
+    frontend: String,
+    ledger: Option<Arc<RequestLedger>>,
+    state: Mutex<ModelState>,
+    dispatch: tokio::sync::Mutex<()>,
+    owner_epoch: tokio::sync::OnceCell<u64>,
+    pub(crate) changed: Notify,
+}
+
+#[derive(Default)]
+struct RegistryState {
+    current: BTreeMap<String, Arc<Admission>>,
+    retired: BTreeMap<String, Weak<Admission>>,
+    membership_version: Option<u64>,
+    closed: bool,
+}
+
+/// Owns model queues for one frontend process; the ledger owns cross-replica capacity.
+pub struct AdmissionRegistry {
+    state: Mutex<RegistryState>,
+    scope: String,
+    frontend: String,
+    ledger: Option<Arc<RequestLedger>>,
 }
 
 impl PreparedAdmissions {
@@ -46,22 +97,6 @@ impl PreparedAdmissions {
             }),
         })
     }
-}
-
-#[derive(Default)]
-struct RegistryState {
-    current: BTreeMap<String, Arc<Admission>>,
-    retired: BTreeMap<String, Weak<Admission>>,
-    membership_version: Option<u64>,
-    closed: bool,
-}
-
-/// Owns model queues for one frontend process; the ledger owns cross-replica capacity.
-pub struct AdmissionRegistry {
-    state: Mutex<RegistryState>,
-    scope: String,
-    frontend: String,
-    ledger: Option<Arc<RequestLedger>>,
 }
 
 impl AdmissionRegistry {
@@ -121,7 +156,7 @@ impl AdmissionRegistry {
     }
 
     /// Reconciles controller-observed owners independently of candidate settings preparation.
-    /// The snapshot watcher supplies model names; existing queues and draining models are retained.
+    /// The snapshot watcher supplies current models; the ledger includes retired model records.
     /// Store retries do not block runtime activation or acknowledge the candidate configuration.
     pub fn publish_membership(
         self: &Arc<Self>,
@@ -142,11 +177,6 @@ impl AdmissionRegistry {
             return;
         }
         state.membership_version = Some(version);
-        let models: BTreeSet<_> = models
-            .into_iter()
-            .chain(state.current.keys().cloned())
-            .chain(state.retired.keys().cloned())
-            .collect();
         drop(state);
         let members = AdmissionMembers {
             frontends: frontend_instances.to_vec(),
@@ -165,24 +195,17 @@ impl AdmissionRegistry {
                 }) {
                     return;
                 }
-                let mut applied = true;
-                for model in &models {
-                    if ledger
-                        .publish_membership(
-                            &scope,
-                            model,
-                            version,
-                            &members.frontends,
-                            &members.backends,
-                        )
-                        .await
-                        .is_err()
-                    {
-                        applied = false;
-                        break;
-                    }
-                }
-                if applied {
+                if ledger
+                    .publish_membership(
+                        &scope,
+                        &models,
+                        version,
+                        &members.frontends,
+                        &members.backends,
+                    )
+                    .await
+                    .is_ok()
+                {
                     return;
                 }
                 tokio::time::sleep(Duration::from_secs(1)).await;
@@ -250,40 +273,69 @@ impl AdmissionRegistry {
     }
 }
 
-#[derive(Clone)]
-struct WaitingRequest {
-    reservation: ReservationRef,
-    caller: String,
-    role: Option<String>,
-    ready: bool,
-    reserved: bool,
-    error: Option<AdmissionError>,
-    retry_at: Instant,
-}
-
-#[derive(Default)]
-struct ModelState {
-    version: u64,
-    config: Option<AdmissionConfig>,
-    members: Arc<AdmissionMembers>,
-    applied_version: Option<u64>,
-    waiting: Vec<WaitingRequest>,
-    last_caller: BTreeMap<i32, String>,
-}
-
-/// A model's local request ordering, retained across routing and configuration generations.
-pub struct Admission {
-    model: String,
-    scope: String,
-    frontend: String,
-    ledger: Option<Arc<RequestLedger>>,
-    state: Mutex<ModelState>,
-    dispatch: tokio::sync::Mutex<()>,
-    owner_epoch: tokio::sync::OnceCell<u64>,
-    pub(crate) changed: Notify,
-}
-
 impl Admission {
+    /// Reserves waiting capacity before preprocessing, without occupying execution concurrency.
+    pub async fn enter(
+        self: &Arc<Self>,
+        request: &AdmissionRequest,
+        deadline: Instant,
+    ) -> Result<AdmissionPermit, AdmissionError> {
+        let observation = crate::telemetry::AdmissionAttempt::work(&self.model, deadline);
+        let resolved = match self.configuration() {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                observation.complete(&Err::<(), _>(error));
+                return Err(error);
+            }
+        };
+        let expires = resolved
+            .1
+            .wait_timeout()
+            .expect("published admission timeout is valid")
+            .and_then(|timeout| Instant::now().checked_add(timeout))
+            .map_or(deadline, |waiting_deadline| waiting_deadline.min(deadline));
+        let model = self.clone();
+        let request = request.clone();
+        // A canceled caller cannot abandon a store command whose result is still unknown. The
+        // detached task finishes enqueue and drops any unclaimed permit, without dispatching work.
+        let entry = tokio::spawn(
+            async move {
+                model
+                    .enter_waiting(&request, expires, deadline, resolved)
+                    .await
+            }
+            .in_current_span(),
+        );
+        let result = match tokio::time::timeout_at(expires, entry).await {
+            Ok(result) => result.expect("admission entry task must not panic"),
+            Err(_) if expires == deadline => Err(AdmissionError::DeadlineExceeded),
+            Err(_) => Err(AdmissionError::QueueTimeout),
+        };
+        let result = if Instant::now() >= expires {
+            drop(result);
+            Err(if expires == deadline {
+                AdmissionError::DeadlineExceeded
+            } else {
+                AdmissionError::QueueTimeout
+            })
+        } else {
+            result
+        };
+        match result {
+            Ok(permit) => {
+                if permit.is_reserved() {
+                    observation.begin_wait();
+                }
+                permit.observe(observation);
+                Ok(permit)
+            }
+            Err(error) => {
+                observation.complete(&Err::<(), _>(error));
+                Err(error)
+            }
+        }
+    }
+
     fn new(
         model: String,
         scope: String,
@@ -302,6 +354,7 @@ impl Admission {
         }
     }
 
+    /// Applies a publication to this stable queue and persists its settings without blocking activation.
     fn replace(
         self: &Arc<Self>,
         version: u64,
@@ -342,7 +395,7 @@ impl Admission {
                 }) {
                     return;
                 }
-                if ledger
+                let result = ledger
                     .publish(
                         &scope,
                         &model,
@@ -351,9 +404,12 @@ impl Admission {
                         &members.frontends,
                         &members.backends,
                     )
-                    .await
-                    .is_ok()
-                {
+                    .await;
+                let published = match owner.upgrade() {
+                    Some(owner) => owner.ledger_result("publish_configuration", result).is_ok(),
+                    None => result.is_ok(),
+                };
+                if published {
                     if let Some(owner) = owner.upgrade() {
                         if tracked && owner.initialize_owner().await.is_err() {
                             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -382,6 +438,35 @@ impl Admission {
         ))
     }
 
+    /// Reports store failure transitions across this model's operations without changing admission state.
+    pub(crate) fn ledger_result<T>(
+        &self,
+        operation: &'static str,
+        result: Result<T, LedgerError>,
+    ) -> Result<T, AdmissionError> {
+        let mut state = self.state.lock().expect("model admission lock poisoned");
+        match &result {
+            Err(error @ LedgerError::Storage(source)) if source.is_io_error() => {
+                if !state.ledger_failure_reported {
+                    tracing::warn!(model = %self.model, operation, %error, "request capacity store is unavailable");
+                    state.ledger_failure_reported = true;
+                } else {
+                    tracing::debug!(model = %self.model, operation, %error, "request capacity operation is still unavailable");
+                }
+            }
+            Ok(_) if state.ledger_failure_reported => {
+                state.ledger_failure_reported = false;
+                tracing::info!(model = %self.model, operation, "request capacity store recovered");
+            }
+            Err(LedgerError::OwnerClosed) | Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(model = %self.model, operation, %error, "request capacity operation failed");
+            }
+        }
+        result.map_err(AdmissionError::from)
+    }
+
+    /// Registers this model's frontend process epoch once before it publishes waiting requests.
     async fn initialize_owner(&self) -> Result<u64, AdmissionError> {
         let ledger = self
             .ledger
@@ -389,10 +474,12 @@ impl Admission {
             .ok_or(AdmissionError::StoreUnavailable)?;
         self.owner_epoch
             .get_or_try_init(|| async {
-                ledger
-                    .register_frontend(&self.scope, &self.model, &self.frontend)
-                    .await
-                    .map_err(AdmissionError::from)
+                self.ledger_result(
+                    "register_frontend",
+                    ledger
+                        .register_frontend(&self.scope, &self.model, &self.frontend)
+                        .await,
+                )
             })
             .await
             .copied()
@@ -407,65 +494,7 @@ impl Admission {
         Ok(())
     }
 
-    /// Reserves waiting capacity before preprocessing, without occupying execution concurrency.
-    pub async fn enter(
-        self: &Arc<Self>,
-        request: &AdmissionRequest,
-        deadline: Instant,
-    ) -> Result<AdmissionPermit, AdmissionError> {
-        let observation = crate::telemetry::AdmissionAttempt::work(&self.model, deadline);
-        let resolved = match self.configuration() {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                observation.complete(&Err::<(), _>(error));
-                return Err(error);
-            }
-        };
-        let expires = resolved
-            .1
-            .wait_timeout()
-            .expect("published admission timeout is valid")
-            .and_then(|timeout| Instant::now().checked_add(timeout))
-            .map_or(deadline, |waiting_deadline| waiting_deadline.min(deadline));
-        let model = self.clone();
-        let request = request.clone();
-        // A canceled caller cannot abandon a store command whose result is still unknown. The
-        // detached task finishes enqueue and drops any unclaimed permit, without dispatching work.
-        let entry = tokio::spawn(async move {
-            model
-                .enter_waiting(&request, expires, deadline, resolved)
-                .await
-        });
-        let result = match tokio::time::timeout_at(expires, entry).await {
-            Ok(result) => result.expect("admission entry task must not panic"),
-            Err(_) if expires == deadline => Err(AdmissionError::DeadlineExceeded),
-            Err(_) => Err(AdmissionError::QueueTimeout),
-        };
-        let result = if Instant::now() >= expires {
-            drop(result);
-            Err(if expires == deadline {
-                AdmissionError::DeadlineExceeded
-            } else {
-                AdmissionError::QueueTimeout
-            })
-        } else {
-            result
-        };
-        match result {
-            Ok(permit) => {
-                if permit.is_reserved() {
-                    observation.begin_wait();
-                }
-                permit.observe(observation);
-                Ok(permit)
-            }
-            Err(error) => {
-                observation.complete(&Err::<(), _>(error));
-                Err(error)
-            }
-        }
-    }
-
+    /// Enters model admission and returns waiting ownership for the complete candidate batch.
     async fn enter_waiting(
         self: &Arc<Self>,
         request: &AdmissionRequest,
@@ -489,7 +518,10 @@ impl Admission {
         if Instant::now() >= expires {
             return Err(AdmissionError::QueueTimeout);
         }
-        if config.max_waiting_requests.is_none() && config.role_rules.is_empty() {
+        if config.max_waiting_requests.is_none()
+            && config.role_rules.is_empty()
+            && !request.track_execution
+        {
             return Ok(AdmissionPermit::unrestricted(
                 self.clone(),
                 expires,
@@ -509,27 +541,33 @@ impl Admission {
             final_stage: true,
         };
         let caller = request.caller.caller.clone().unwrap_or_default();
-        ledger
-            .publish(
-                &self.scope,
-                &self.model,
-                version,
-                serde_json::to_value(&config).expect("admission settings serialize"),
-                &members.frontends,
-                &members.backends,
-            )
-            .await?;
+        self.ledger_result(
+            "publish_configuration",
+            ledger
+                .publish(
+                    &self.scope,
+                    &self.model,
+                    version,
+                    serde_json::to_value(&config).expect("admission settings serialize"),
+                    &members.frontends,
+                    &members.backends,
+                )
+                .await,
+        )?;
         let epoch = self.initialize_owner().await?;
-        let outcome = ledger
-            .enqueue(
-                &reservation,
-                &self.frontend,
-                epoch,
-                &caller,
-                request.caller.role.as_deref().unwrap_or_default(),
-                request.units,
-            )
-            .await;
+        let outcome = self.ledger_result(
+            "enqueue",
+            ledger
+                .enqueue(
+                    &reservation,
+                    &self.frontend,
+                    epoch,
+                    &caller,
+                    request.caller.role.as_deref().unwrap_or_default(),
+                    request.units,
+                )
+                .await,
+        );
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -543,7 +581,7 @@ impl Admission {
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                 });
-                return Err(error.into());
+                return Err(error);
             }
         };
         match outcome {
@@ -579,6 +617,7 @@ impl Admission {
         Ok(permit)
     }
 
+    /// Marks a prepared batch eligible for caller selection without granting execution capacity.
     pub(crate) fn ready(&self, id: &str) -> Result<(), AdmissionError> {
         let mut state = self.state.lock().expect("model admission lock poisoned");
         if state.config.is_none() {
@@ -596,6 +635,8 @@ impl Admission {
         Ok(())
     }
 
+    /// Lets a batch observe its dispatch grant, rejecting retired queues or revoked role membership.
+    /// The permit retains capacity ownership; this read does not advance caller rotation.
     pub(crate) fn granted(&self, id: &str) -> Result<bool, AdmissionError> {
         let state = self.state.lock().expect("model admission lock poisoned");
         let config = state.config.as_ref().ok_or(AdmissionError::Closed)?;
@@ -620,8 +661,8 @@ impl Admission {
         Ok(entry.reserved)
     }
 
-    // Only caller heads are considered. Preparing or deferred heads preserve that caller's FIFO
-    // without blocking other callers; priority bands are visited from highest to lowest.
+    /// Reserves one eligible caller head using priority bands and caller rotation.
+    /// Preparing or deferred heads preserve that caller's FIFO without blocking other callers.
     pub(crate) async fn grant_ready(&self) -> Result<(), AdmissionError> {
         let _dispatch = self.dispatch.lock().await;
         let (version, config, members) = self.configuration()?;
@@ -629,23 +670,28 @@ impl Admission {
             .ledger
             .as_ref()
             .ok_or(AdmissionError::StoreUnavailable)?;
-        ledger
-            .publish(
-                &self.scope,
-                &self.model,
-                version,
-                serde_json::to_value(config).expect("admission settings serialize"),
-                &members.frontends,
-                &members.backends,
-            )
-            .await?;
+        self.ledger_result(
+            "publish_configuration",
+            ledger
+                .publish(
+                    &self.scope,
+                    &self.model,
+                    version,
+                    serde_json::to_value(config).expect("admission settings serialize"),
+                    &members.frontends,
+                    &members.backends,
+                )
+                .await,
+        )?;
         let candidates = {
             let state = self.state.lock().expect("model admission lock poisoned");
             let config = state.config.as_ref().ok_or(AdmissionError::Closed)?;
             let mut callers = BTreeSet::new();
             let mut bands: BTreeMap<i32, Vec<WaitingRequest>> = BTreeMap::new();
             for entry in &state.waiting {
-                if !callers.insert(entry.caller.clone()) || entry.reserved {
+                let ordered =
+                    config.max_waiting_requests.is_some() || !config.role_rules.is_empty();
+                if (ordered && !callers.insert(entry.caller.clone())) || entry.reserved {
                     continue;
                 }
                 if entry.error.is_some() || !entry.ready || entry.retry_at > Instant::now() {
@@ -677,7 +723,7 @@ impl Admission {
             candidates
         };
         for candidate in candidates {
-            match ledger.dispatch(&candidate.reservation).await? {
+            match self.ledger_result("dispatch", ledger.dispatch(&candidate.reservation).await)? {
                 Outcome::Applied => {
                     if let Some(entry) = self
                         .state
@@ -716,6 +762,8 @@ impl Admission {
         Ok(())
     }
 
+    /// Captures current role priority and Pool constraints for a waiting or newly granted batch.
+    /// Readiness may inspect these rules before dispatch; the permit snapshots them when granted.
     pub(crate) fn dispatch_rules(&self, id: &str) -> Result<crate::DispatchRules, AdmissionError> {
         let state = self.state.lock().expect("model admission lock poisoned");
         let config = state.config.as_ref().ok_or(AdmissionError::Closed)?;
@@ -738,6 +786,8 @@ impl Admission {
         })
     }
 
+    /// Advances caller rotation after backend acceptance and retires only the local waiting entry.
+    /// The execution owner retains the ledger slot until native termination is confirmed.
     pub(crate) fn accepted(&self, id: &str) {
         let mut state = self.state.lock().expect("model admission lock poisoned");
         if let Some(index) = state
@@ -762,6 +812,8 @@ impl Admission {
         self.changed.notify_waiters();
     }
 
+    /// Returns an explicitly unaccepted batch to its existing caller position for a later dispatch turn.
+    /// The permit has already returned shared concurrency before this local retry delay begins.
     pub(crate) fn defer(&self, id: &str) {
         if let Some(entry) = self
             .state

@@ -293,6 +293,25 @@ spec:
                 - message: kvCache.offload and kvCache.mooncakeStore are mutually
                     exclusive
                   rule: '!(has(self.offload) && has(self.mooncakeStore))'
+              kvTransfer:
+                description: KVTransfer selects one transport for this service's prefill
+                  and decode Pools.
+                properties:
+                  connector:
+                    description: Connector defaults to mooncake when omitted.
+                    enum:
+                    - mooncake
+                    - nixl
+                    type: string
+                  protocol:
+                    description: |-
+                      Protocol is selected automatically when omitted: RDMA when both stages can request
+                      the platform's advertised devices, otherwise TCP. Set it to override that choice.
+                    enum:
+                    - tcp
+                    - rdma
+                    type: string
+                type: object
               maxInputTokens:
                 description: MaxInputTokens is the prompt admission limit for requests
                   routed to the default Pool.
@@ -1024,6 +1043,10 @@ spec:
             - timeouts
             type: object
             x-kubernetes-validations:
+            - message: kvTransfer requires prefill and decode modelPools
+              rule: '!has(self.kvTransfer) || (has(self.modelPools) && self.modelPools.exists(pool,
+                has(pool.role) && pool.role == ''prefill'') && self.modelPools.exists(pool,
+                has(pool.role) && pool.role == ''decode''))'
             - message: spec.modelPools is mutually exclusive with top-level replicas,
                 nodes, resources, maxInputTokens, kvCache, and features
               rule: '!has(self.modelPools) || !(has(self.replicas) || has(self.nodes)
@@ -1261,9 +1284,8 @@ spec:
                 type: integer
               poolApplications:
                 additionalProperties:
-                  description: |-
-                    ApplicationSelection pins trusted platform execution settings until an explicit deployment.
-                    Controllers persist it before creating consumers so recovery never reselects platform defaults.
+                  description: ModelApplicationSelection retains model execution and
+                    distributed queue choices until redeployment.
                   properties:
                     admissionStore:
                       description: AdmissionStore retains the ledger connection selected
@@ -1300,8 +1322,7 @@ spec:
                           x-kubernetes-map-type: atomic
                       type: object
                       x-kubernetes-validations:
-                      - message: exactly one admission store URL or Secret reference
-                          is required
+                      - message: exactly one Redis URL or Secret reference is required
                         rule: has(self.url) != has(self.urlSecretRef)
                     applicationURL:
                       type: string
@@ -1319,6 +1340,29 @@ spec:
                         Zero retains startup-only limits; one selects live file configuration.
                       format: int32
                       maximum: 1
+                      type: integer
+                    leaderWorkerScheduling:
+                      description: LeaderWorkerScheduling retains placement and quota
+                        queues when platform defaults change.
+                      properties:
+                        kueueLocalQueueName:
+                          description: KueueLocalQueueName selects quota admission
+                            in the workload's namespace.
+                          maxLength: 63
+                          pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                          type: string
+                        volcanoQueueName:
+                          description: VolcanoQueueName selects Volcano group placement;
+                            omission keeps the ordinary scheduler.
+                          maxLength: 253
+                          pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                          type: string
+                      type: object
+                    preparationVersion:
+                      description: |-
+                        PreparationVersion pins the selected executable's artifact acquisition and cache contract.
+                        Absence retains the backend's earlier acquisition protocol.
+                      format: int32
                       type: integer
                     sourceRevision:
                       description: SourceRevision retains the admitted source intent

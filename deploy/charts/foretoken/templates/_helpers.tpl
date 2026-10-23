@@ -3,6 +3,15 @@
 
 {{/* Defines shared naming, labeling, and image-rendering helpers. */}}
 
+{{/* These listeners belong to the controller deployment, independently of workload ports. */}}
+{{- define "foretoken.controllerPorts" -}}
+{{- dict "metrics" 8080 "health" 8081 | toJson -}}
+{{- end }}
+
+{{- define "foretoken.applicationFilesPort" -}}
+8080
+{{- end }}
+
 {{- define "foretoken.compactName" -}}
 {{- if gt (len .) 63 -}}
 {{- printf "%s-%s" (. | trunc 54 | trimSuffix "-") (. | sha256sum | trunc 8) -}}
@@ -21,7 +30,7 @@
 {{- end }}
 
 {{- define "foretoken.applicationFilesOrigin" -}}
-{{- default (printf "http://%s.%s.svc:8080" (include "foretoken.applicationFilesName" .) .Release.Namespace) .Values.applicationFiles.origin -}}
+{{- default (printf "http://%s.%s.svc:%s" (include "foretoken.applicationFilesName" .) .Release.Namespace (include "foretoken.applicationFilesPort" .)) .Values.applicationFiles.origin -}}
 {{- end }}
 
 {{- define "foretoken.platformName" -}}
@@ -51,6 +60,28 @@
 
 {{- define "foretoken.admissionStoreURL" -}}
 {{- default (printf "redis://%s.%s.svc:6379" (include "foretoken.admissionStoreName" .) .Release.Namespace) .Values.admissionStore.externalURL -}}
+{{- end }}
+
+{{- define "foretoken.responseStoreName" -}}
+{{- include "foretoken.compactName" (printf "%s-response-store" .Release.Name) -}}
+{{- end }}
+
+{{/* Selected applications keep their managed cache when new deployments use an external default. */}}
+{{- define "foretoken.responseStoreManaged" -}}
+{{- $workload := lookup "apps/v1" "Deployment" .Release.Namespace (include "foretoken.responseStoreName" .) -}}
+{{- $metadata := get $workload "metadata" | default dict -}}
+{{- $annotations := get $metadata "annotations" | default dict -}}
+{{- $labels := get $metadata "labels" | default dict -}}
+{{- $owned := and (eq (get $labels "app.kubernetes.io/managed-by") .Release.Service) (eq (get $annotations "meta.helm.sh/release-name") .Release.Name) (eq (get $annotations "meta.helm.sh/release-namespace") .Release.Namespace) -}}
+{{- if or $owned (not (or .Values.responseStore.externalURL .Values.responseStore.externalURLSecret.name)) -}}
+true
+{{- else -}}
+false
+{{- end -}}
+{{- end }}
+
+{{- define "foretoken.responseStoreURL" -}}
+{{- default (printf "redis://%s.%s.svc:6379" (include "foretoken.responseStoreName" .) .Release.Namespace) .Values.responseStore.externalURL -}}
 {{- end }}
 
 {{- define "foretoken.clusterName" -}}
@@ -221,14 +252,19 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 
 {{- define "foretoken.validateValues" -}}
-{{- if and .Values.admissionStore.externalURL .Values.admissionStore.externalURLSecret.name -}}
-{{- fail "admissionStore.externalURL and externalURLSecret are mutually exclusive" -}}
+{{- range $name, $connection := dict "admissionStore" .Values.admissionStore "responseStore" .Values.responseStore -}}
+{{- if and $connection.externalURL $connection.externalURLSecret.name -}}
+{{- fail (printf "%s.externalURL and externalURLSecret are mutually exclusive" $name) -}}
 {{- end -}}
-{{- if contains "@" .Values.admissionStore.externalURL -}}
-{{- fail "admission store credentials require admissionStore.externalURLSecret" -}}
+{{- if contains "@" $connection.externalURL -}}
+{{- fail (printf "%s credentials require externalURLSecret" $name) -}}
+{{- end -}}
 {{- end -}}
 {{- if and .Values.rdma.managed .Values.rdma.resourceName -}}
 {{- fail "rdma.managed and an external rdma.resourceName are mutually exclusive" -}}
+{{- end -}}
+{{- if and .Values.rdma.managed (kindIs "slice" .Values.rdma.bindings) -}}
+{{- fail "rdma.bindings consume existing allocations and cannot enable rdma.managed" -}}
 {{- end -}}
 {{- if eq (trim .Values.image.repository) "" -}}
 {{- fail "image.repository must reference a control-plane image" -}}
@@ -236,9 +272,6 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- if .Values.frontend.enabled -}}
 {{- if eq (trim .Values.frontend.image) "" -}}
 {{- fail "frontend.image is required when frontend.enabled=true" -}}
-{{- end -}}
-{{- if and .Values.frontend.gateway.create (ne .Values.frontend.mode "gateway") -}}
-{{- fail "frontend.gateway.create requires frontend.mode=gateway" -}}
 {{- end -}}
 {{- if eq .Values.frontend.mode "gateway" -}}
 {{- if .Values.frontend.gateway.create -}}

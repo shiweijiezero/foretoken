@@ -1,0 +1,1744 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_scheduler.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_scheduler.py
+@@ -4,6 +4,7 @@
+ 
+ import threading
+ import time
++from concurrent.futures import Future
+ from typing import TYPE_CHECKING, Any
+ 
+ import msgspec
+@@ -20,10 +21,14 @@
+     KVConnectorMetadata,
+ )
+ from vllm.distributed.kv_transfer.kv_connector.v1.nixl.metadata import (
++    BEGIN_READ_LEASE_MSG,
+     GET_META_MSG,
++    NIXL_CONNECTOR_VERSION,
++    READ_LEASE_STATE_MSG,
+     HeartbeatInfo,
+     NixlConnectorMetadata,
+     NixlHandshakePayload,
++    NixlTransferWorkerMetadata,
+     ReqId,
+ )
+ from vllm.distributed.kv_transfer.kv_connector.v1.nixl.utils import zmq_ctx
+@@ -107,7 +112,12 @@
+ 
+         # Background thread for handling new handshake requests.
+         self._nixl_handshake_listener_t: threading.Thread | None = None
++        self._handshake_listener_result: Future[None] = Future()
+         self._stop_event = threading.Event()
++        # Native source control runs on the existing handshake listener.
++        self.read_lease_handler = None
++        self.read_lease_state_handler = None
++        self.pending_transfers: set[str] = set()
+ 
+         # Requests that need to start recv/send.
+         # New requests are added by update_state_after_alloc in
+@@ -128,6 +138,7 @@
+         self._heartbeat_by_engine: dict[EngineId, HeartbeatInfo] = {}
+         # Reverse lookup: local req_id -> (engine_id, remote_req_id) for O(1) removal
+         self._heartbeat_req_engine: dict[ReqId, tuple[EngineId, ReqId]] = {}
++        self._finished_receive_counts: dict[ReqId, int] = {}
+         self._last_heartbeat_time: float = 0.0
+ 
+         # Gather Sliding Window sizes for each kv cache group (if any) in number of
+@@ -202,9 +213,10 @@
+         if params is not None and params.get("do_remote_decode"):
+             self._truncate_request_for_prefill(request)
+ 
+-        # NOTE (NickLucche) This excludes request meant for P, ie heartbeats are
+-        # effectively disabled for Bidirectional KV transfer.
+-        if params is None or not params.get("do_remote_prefill"):
++        # Renew queued claimed reads; unclaimed decoder blocks keep their idle TTL.
++        if params is None or not (
++            params.get("do_remote_prefill") or params.get("remote_read_lease")
++        ):
+             return
+         # Only track if all required remote fields are present.
+         remote_engine_id = params.get("remote_engine_id")
+@@ -224,14 +236,18 @@
+             return
+         if remote_engine_id not in self._heartbeat_by_engine:
+             self._heartbeat_by_engine[remote_engine_id] = HeartbeatInfo(
+-                req_ids=set(),
++                consumer_by_request={},
+                 host=host,
+                 port=port,
+                 tp_size=tp_size,
+                 dcp_size=dcp_size,
+                 pp_size=pp_size,
+             )
+-        self._heartbeat_by_engine[remote_engine_id].req_ids.add(remote_request_id)
++        info = self._heartbeat_by_engine[remote_engine_id]
++        consumer_id = params.get("remote_consumer_id")
++        info.consumer_by_request[remote_request_id] = (
++            request.request_id if consumer_id is None else consumer_id
++        )
+         self._heartbeat_req_engine[request.request_id] = (
+             remote_engine_id,
+             remote_request_id,
+@@ -239,11 +255,12 @@
+ 
+     def _stop_heartbeat(self, req_id: ReqId) -> None:
+         """Remove *req_id* from heartbeat tracking (if tracked)."""
++        self._finished_receive_counts.pop(req_id, None)
+         if key := self._heartbeat_req_engine.pop(req_id, None):
+             engine_id, remote_id = key
+             if info := self._heartbeat_by_engine.get(engine_id):
+-                info.req_ids.discard(remote_id)
+-                if not info.req_ids:
++                info.consumer_by_request.pop(remote_id, None)
++                if not info.consumer_by_request:
+                     # Clean up empty engines so we don't leak a key when remote dies.
+                     del self._heartbeat_by_engine[engine_id]
+ 
+@@ -325,19 +342,44 @@
+         if self._nixl_handshake_listener_t is None:
+             ready_event = threading.Event()
+             self._nixl_handshake_listener_t = threading.Thread(
+-                target=self._nixl_handshake_listener,
++                target=self._run_handshake_listener,
+                 args=(
+                     encoded_data,
+                     ready_event,
+                     self._stop_event,
+                     self.side_channel_host,
+                     self.side_channel_port,
++                    self.read_lease_handler,
++                    self.read_lease_state_handler,
+                 ),
+                 daemon=True,
+                 name="nixl_handshake_listener",
+             )
+             self._nixl_handshake_listener_t.start()
+             ready_event.wait()  # Wait for listener ZMQ socket to be ready.
++        self._raise_listener_failure()
++
++    def _run_handshake_listener(self, encoded_data, ready_event, *args) -> None:
++        """Return background listener failures to the engine's existing main loop."""
++        try:
++            self._nixl_handshake_listener(encoded_data, ready_event, *args)
++        except Exception as error:
++            self._handshake_listener_result.set_exception(error)
++        else:
++            self._handshake_listener_result.set_result(None)
++        finally:
++            # Binding can fail before the listener publishes readiness.
++            ready_event.set()
++
++    def _raise_listener_failure(self) -> None:
++        """Surface a failed control listener while scheduler references stay held."""
++        if self._handshake_listener_result.done():
++            try:
++                self._handshake_listener_result.result()
++            except Exception as error:
++                raise RuntimeError(
++                    "NIXL handshake listener failed; engine buffers require retirement"
++                ) from error
+ 
+     @staticmethod
+     def _nixl_handshake_listener(
+@@ -346,6 +388,8 @@
+         stop_event: threading.Event,
+         host: str,
+         port: int,
++        read_lease_handler=None,
++        read_lease_state_handler=None,
+     ):
+         """Background thread for getting new NIXL handshakes."""
+         # NOTE(rob): this is a simple implementation. We will move
+@@ -364,22 +408,48 @@
+                     if stop_event.is_set():
+                         break
+                     continue
+-                # Decode (GET_META_MSG, pp_rank, tp_rank).
+-                msg, target_pp_rank, target_tp_rank = msgspec.msgpack.decode(msg)
++                message = msgspec.msgpack.decode(msg)
++                if message[0] == BEGIN_READ_LEASE_MSG:
++                    granted = read_lease_handler is not None and read_lease_handler(
++                        *message[1:]
++                    )
++                    sock.send_multipart(
++                        (identity, b"", msgspec.msgpack.encode(granted))
++                    )
++                    continue
++                if message[0] == READ_LEASE_STATE_MSG:
++                    released = (
++                        read_lease_state_handler is not None
++                        and read_lease_state_handler(*message[1:])
++                    )
++                    sock.send_multipart(
++                        (identity, b"", msgspec.msgpack.encode(released))
++                    )
++                    continue
++                if message[0] != GET_META_MSG:
++                    # Reject old handshakes and delayed control messages before
++                    # unpacking their version-specific arguments.
++                    sock.send_multipart(
++                        (
++                            identity,
++                            b"",
++                            msgspec.msgpack.encode("NIXL protocol mismatch"),
++                        )
++                    )
++                    continue
++                _, target_pp_rank, target_tp_rank = message
+                 logger.debug(
+                     "Received message for pp rank %s, tp rank %s",
+                     target_pp_rank,
+                     target_tp_rank,
+                 )
+-                if msg != GET_META_MSG:
+-                    logger.warning("Connection listener got unexpected message %s", msg)
+-                # Echo our perf_counter so P can estimate the clock offset.
+-                # perf_counter is only comparable within a process, so this
+-                # listener must run in the same process that stamps the block
+-                # expiry deadline (`_reqs_need_send`).
+-                ts = msgspec.msgpack.encode(time.perf_counter())
+                 sock.send_multipart(
+-                    (identity, b"", encoded_data[(target_pp_rank, target_tp_rank)], ts)
++                    (
++                        identity,
++                        b"",
++                        msgspec.msgpack.encode(NIXL_CONNECTOR_VERSION),
++                        encoded_data[(target_pp_rank, target_tp_rank)],
++                    )
+                 )
+ 
+     def _prefill_backoff(self) -> int:
+@@ -476,6 +546,7 @@
+         self,
+         scheduler_output: SchedulerOutput,
+     ) -> KVConnectorMetadata:
++        self._raise_listener_failure()
+         meta = NixlConnectorMetadata()
+ 
+         # Loop through scheduled reqs and convert to ReqMeta.
+@@ -521,12 +592,32 @@
+         return meta
+ 
+     def update_connector_output(self, connector_output: "KVConnectorOutput") -> None:
+-        """Stop heartbeating for requests whose KV transfer completed."""
+-        for req_id in connector_output.finished_recving or ():
+-            self._stop_heartbeat(req_id)
++        """Stop renewal after every reader finishes its read or no-read cleanup."""
++        worker_meta = connector_output.kv_connector_worker_meta
++        if isinstance(worker_meta, NixlTransferWorkerMetadata):
++            self.pending_transfers = worker_meta.pending_transfers
++            for req_id, count in worker_meta.finished_receives.items():
++                if req_id not in self._heartbeat_req_engine:
++                    continue
++                self._finished_receive_counts[req_id] = (
++                    self._finished_receive_counts.get(req_id, 0) + count
++                )
++                if (
++                    self._finished_receive_counts[req_id]
++                    == self.vllm_config.parallel_config.world_size
++                ):
++                    self._stop_heartbeat(req_id)
++
++    def get_pending_transfers(self) -> set[str]:
++        """Return observed and unbroadcast transfers for scheduling and draining."""
++        self._raise_listener_failure()
++        pending = self.pending_transfers | self._reqs_need_recv.keys()
++        if self.vllm_config.kv_transfer_config.kv_role == "kv_producer":
++            pending.update(self._reqs_need_send)
++        return pending
+ 
+     def has_pending_push_work(self) -> bool:
+-        return False
++        return bool(self.get_pending_transfers())
+ 
+     ############################################################
+     # Abstract methods that subclasses must implement
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py
+@@ -40,9 +40,12 @@
+ from vllm.distributed.kv_transfer.kv_connector.v1.metrics import KVConnectorStats
+ from vllm.distributed.kv_transfer.kv_connector.v1.nixl.metadata import (
+     GET_META_MSG,
++    NIXL_CONNECTOR_VERSION,
++    READ_LEASE_STATE_MSG,
+     NixlAgentMetadata,
+     NixlConnectorMetadata,
+     NixlHandshakePayload,
++    NixlTransferWorkerMetadata,
+     ReqId,
+     ReqMeta,
+     TransferHandle,
+@@ -560,11 +563,13 @@
+         self.nixl_backends = vllm_config.kv_transfer_config.get_from_extra_config(
+             "backends", ["UCX"]
+         )
+-        kv_lease_duration: int = vllm_config.kv_transfer_config.get_from_extra_config(
+-            "kv_lease_duration", 30
++        self._kv_lease_duration: int = (
++            vllm_config.kv_transfer_config.get_from_extra_config(
++                "kv_lease_duration", 30
++            )
+         )
+         # NOTE (NickLucche): For now we use a hardcoded value for a simpler interface.
+-        self._lease_extension = kv_lease_duration * 2 // 3
++        self._lease_extension = self._kv_lease_duration * 2 // 3
+ 
+         self._bidirectional_kv_xfer_enabled: bool = (
+             vllm_config.kv_transfer_config.get_from_extra_config(
+@@ -682,8 +687,6 @@
+         self._remote_agents: dict[EngineId, dict[tuple[int, int], str]] = defaultdict(
+             dict
+         )
+-        # Map of engine_id -> clock offset.
+-        self._engine_clock_offset: dict[EngineId, float] = {}
+ 
+         # Metadata.
+         self.engine_id: EngineId = engine_id
+@@ -847,6 +850,12 @@
+         self._failed_recv_reqs: queue.Queue[ReqId] = queue.Queue()
+         self._recv_failures: set[ReqId] = set()
+         self._pending_recv_notifs: dict[ReqId, list[tuple[str, bytes]]] = {}
++        self._pending_read_lease_acks: dict[ReqId, ReqMeta] = {}
++        self._ready_read_lease_releases: dict[ReqId, float] = {}
++        self._read_lease_ack_futures: dict[ReqId, Future[bool]] = {}
++        self._finished_receives: set[ReqId] = set()
++        self._completed_source_reads: set[tuple[ReqId, str, str, int, int]] = set()
++        self._source_heartbeats: set[tuple[ReqId, str, int]] = set()
+ 
+         # Handshake metadata of this worker for NIXL transfers.
+         self.xfer_handshake_metadata: NixlHandshakePayload | None = None
+@@ -857,9 +866,7 @@
+             thread_name_prefix="vllm-nixl-handshake-initiator",
+         )
+         self._ready_requests = queue.Queue[tuple[ReqId, ReqMeta]]()
+-        self._handshake_futures: dict[
+-            EngineId, Future[tuple[dict[tuple[int, int], str], float]]
+-        ] = {}
++        self._handshake_futures: dict[EngineId, Future[dict[tuple[int, int], str]]] = {}
+         # Protects _handshake_futures and _remote_agents.
+         self._handshake_lock = threading.RLock()
+ 
+@@ -1012,7 +1019,7 @@
+         remote_dcp_size: int = 1,
+         remote_pp_size: int = 1,
+         notif_agents_only: bool = False,
+-    ) -> tuple[dict[tuple[int, int], str], float]:
++    ) -> dict[tuple[int, int], str]:
+         """Do a NIXL handshake with a remote instance."""
+         if self._is_csa_linear:
+             self._validate_csa_linear_tp_layout(remote_tp_size)
+@@ -1040,11 +1047,6 @@
+         )
+         remote_rank_to_agent_name: dict[tuple[int, int], str] = {}
+         path = make_zmq_path("tcp", host, port)
+-        # Clock offset to the peer, estimated from the handshake round-trip.
+-        # Keep the lowest-RTT sample: hop cost is ~uniform across ranks, so a
+-        # higher RTT is just noise that skews the midpoint estimate.
+-        best_rtt = float("inf")
+-        best_offset: float | None = None
+ 
+         with zmq_ctx(zmq.REQ, path) as sock:
+             for remote_pp_rank, remote_rank in itertools.product(
+@@ -1066,15 +1068,15 @@
+                 start_time = time.perf_counter()
+                 sock.send(msg)
+                 reply_parts = sock.recv_multipart()
+-                recv_time = time.perf_counter()
+-                assert len(reply_parts) == 2
+-                handshake_bytes = reply_parts[0]
+-
+-                remote_perf = msgspec.msgpack.decode(reply_parts[1])
+-                rtt = recv_time - start_time
+-                if rtt < best_rtt:
+-                    best_rtt = rtt
+-                    best_offset = remote_perf - (start_time + recv_time) / 2
++                if (
++                    len(reply_parts) != 2
++                    or msgspec.msgpack.decode(reply_parts[0]) != NIXL_CONNECTOR_VERSION
++                ):
++                    raise RuntimeError(
++                        "Remote NIXL peer does not support the required source "
++                        f"authorization protocol {NIXL_CONNECTOR_VERSION}"
++                    )
++                handshake_bytes = reply_parts[1]
+ 
+                 # Decode handshake payload to get compatibility hash
+                 handshake_decoder = msgspec.msgpack.Decoder(NixlHandshakePayload)
+@@ -1156,8 +1158,7 @@
+                 remote_ranks = (remote_pp_rank, remote_rank)
+                 remote_rank_to_agent_name[remote_ranks] = remote_agent_name
+ 
+-        assert best_offset is not None
+-        return remote_rank_to_agent_name, best_offset
++        return remote_rank_to_agent_name
+ 
+     def _add_notif_only_remote_agent(
+         self, metadata: NixlAgentMetadata, remote_tp_size: int, remote_dcp_size: int = 1
+@@ -1295,7 +1296,7 @@
+         dcp_size: int = 1,
+         pp_size: int = 1,
+         notif_agents_only: bool = False,
+-    ) -> Future[tuple[dict[tuple[int, int], str], float]] | None:
++    ) -> Future[dict[tuple[int, int], str]] | None:
+         """Ensure a handshake is in-flight (or already done) for *engine_id*.
+ 
+         Returns the ``Future`` if a handshake is pending (or was just
+@@ -1324,15 +1325,13 @@
+             self._handshake_futures[engine_id] = fut
+ 
+             def done_callback(
+-                f: Future[tuple[dict[tuple[int, int], str], float]],
++                f: Future[dict[tuple[int, int], str]],
+                 eid=engine_id,
+             ):
+                 with self._handshake_lock:
+                     del self._handshake_futures[eid]
+                     try:
+-                        remote_agents, clock_offset = f.result()
+-                        self._remote_agents[eid] = remote_agents
+-                        self._engine_clock_offset[eid] = clock_offset
++                        self._remote_agents[eid] = f.result()
+                         self._engine_last_active[eid] = time.perf_counter()
+                         self._track_remote_engine_replacement(eid, host, port)
+                     except Exception as e:
+@@ -2915,9 +2914,25 @@
+                 req_id = self._failed_recv_reqs.get_nowait()
+             except queue.Empty:
+                 break
++            meta = self._pending_read_lease_acks.get(req_id)
++            if meta is None:
++                meta = self._recving_metadata.get(req_id)
++            if meta is not None:
++                meta.read_submission_closed = True
++                if req_id not in self._pending_recv_notifs:
++                    # No read plan exists before handshake success. An incompatible
++                    # peer must not receive this version's completion queries.
++                    self._end_read_lease_confirmation(req_id)
+             self._handle_failed_transfer(
+                 req_id, None, self._recv_failures, record_failed_transfer=False
+             )
++            if req_id not in self._recving_metadata:
++                self._finished_receives.add(req_id)
++            if (
++                req_id in self._pending_read_lease_acks
++                and req_id not in self._recving_metadata
++            ):
++                self._send_pending_recv_notifs(req_id)
+ 
+         failed_recv_reqs: set[ReqId] = set()
+         if self._recv_failures:
+@@ -2943,14 +2958,19 @@
+         block_ids_for_blocksize_post_process = defaultdict(list)
+         block_ids_for_heterogeneous_attn_post_process = list[list[int]]()
+         direct_device_recving = set[str]()
++        self._finished_receives.update(done_recving)
+         for req_id in done_recving:
+             # clean up metadata for completed requests
+             meta = self._recving_metadata.pop(req_id, None)
+             assert meta is not None, f"{req_id} not found in recving_metadata list"
++            meta.read_submission_closed = True
+ 
+             # Skip KV sync and post-processing for failed requests
+             if req_id in failed_recv_reqs:
+-                self._pending_recv_notifs.pop(req_id, None)
++                if meta.remote is not None and meta.remote.read_lease is not None:
++                    self._send_pending_recv_notifs(req_id)
++                else:
++                    self._pending_recv_notifs.pop(req_id, None)
+                 # TODO (NickLucche) handle failed transfer for HMA.
+                 if not self._is_hma_required:
+                     self._invalid_block_ids.put(set(meta.local_block_ids[0]))
+@@ -3023,10 +3043,16 @@
+ 
+         self._sync_device_after_direct_recv(direct_device_recving)
+ 
++        # Retire replaced peers before retrying completed-read confirmations.
++        self._cleanup_replaced_remote_engines()
++        self._poll_read_lease_confirmations()
++        for req_id in tuple(self._ready_read_lease_releases):
++            if req_id not in done_recving:
++                self._send_pending_recv_notifs(req_id)
++
+         # Handle timeout to avoid stranding blocks on remote.
+         self._reap_expired_send_leases(done_sending)
+ 
+-        self._cleanup_replaced_remote_engines()
+         return KVConnectorTransferResults(
+             finished_sending=done_sending,
+             finished_recving=done_recving,
+@@ -3052,6 +3078,30 @@
+         Subclasses must implement this to handle mode-specific notifications.
+         """
+         raise NotImplementedError
++
++    def get_pending_transfers(self) -> set[str]:
++        """Return worker-side transfers; the scheduler adds its retained sources."""
++        pending = (
++            self._recving_metadata.keys()
++            | self._recving_transfers.keys()
++            | self._pending_read_lease_acks.keys()
++        )
++        if self.kv_transfer_config.kv_role == "kv_producer":
++            pending.update(self._reqs_to_send)
++        return pending
++
++    def build_connector_worker_meta(self) -> NixlTransferWorkerMetadata:
++        """Publish pending requests and one-shot per-worker receive completions."""
++        result = NixlTransferWorkerMetadata(
++            pending_transfers=self.get_pending_transfers(),
++            finished_receives={req_id: 1 for req_id in self._finished_receives},
++            completed_source_reads=self._completed_source_reads,
++            source_heartbeats=self._source_heartbeats,
++        )
++        self._finished_receives = set()
++        self._completed_source_reads = set()
++        self._source_heartbeats = set()
++        return result
+ 
+     def _reap_expired_send_leases(self, done_sending: set[str]) -> None:
+         """Reclaim expired send-side KV leases into ``done_sending``.
+@@ -3115,38 +3165,53 @@
+             Requests with no outstanding handles and requests with observed
+             failures. Failed requests may still have outstanding handles.
+ 
++        Raises:
++            RuntimeError: Native completion cannot be observed; held buffers
++                require engine retirement.
++
+         """
+         done_req_ids: set[str] = set()
+         failed_req_ids: set[str] = set()
+         for req_id, handles in list(transfers.items()):
+             in_progress = []
+             for handle in handles:
++                # Status-query failures must escape failure bookkeeping: the SDK
++                # has not confirmed that DMA stopped, so the engine must retire.
+                 try:
+                     xfer_state = self.nixl_wrapper.check_xfer_state(handle)
+-                    if xfer_state == "DONE":
++                except Exception as error:
++                    raise RuntimeError(
++                        f"NIXL transfer status is unavailable for request {req_id}; "
++                        "engine buffers require retirement"
++                    ) from error
++                if xfer_state not in ("DONE", "ERR", "PROC", "PEND"):
++                    raise RuntimeError(
++                        f"NIXL transfer state {xfer_state!r} is unknown for request "
++                        f"{req_id}; engine buffers require retirement"
++                    )
++                if xfer_state in ("PROC", "PEND"):
++                    in_progress.append(handle)
++                    continue
++                if xfer_state == "DONE":
++                    try:
+                         res = self.nixl_wrapper.get_xfer_telemetry(handle)
+                         self.xfer_stats.record_transfer(res)
+                         self.nixl_wrapper.release_xfer_handle(handle)
+-                    elif xfer_state == "PROC":
+-                        in_progress.append(handle)
+-                    else:
++                        continue
++                    except Exception as error:
+                         self._log_failure(
+-                            failure_type="transfer_failed",
++                            failure_type="transfer_exception",
+                             req_id=req_id,
+-                            xfer_state=xfer_state,
++                            error=error,
+                         )
+-                        if not self._handle_failed_transfer(
+-                            req_id, handle, failed_req_ids
+-                        ):
+-                            in_progress.append(handle)
+-                except Exception as e:
++                else:
+                     self._log_failure(
+-                        failure_type="transfer_exception",
++                        failure_type="transfer_failed",
+                         req_id=req_id,
+-                        error=e,
++                        xfer_state=xfer_state,
+                     )
+-                    if not self._handle_failed_transfer(req_id, handle, failed_req_ids):
+-                        in_progress.append(handle)
++                if not self._handle_failed_transfer(req_id, handle, failed_req_ids):
++                    in_progress.append(handle)
+ 
+             if not in_progress:
+                 done_req_ids.add(req_id)
+@@ -3155,17 +3220,25 @@
+                 transfers[req_id] = in_progress
+         return done_req_ids, failed_req_ids
+ 
+-    def _try_release_xfer_handle(self, req_id: str, handle: int) -> bool:
+-        """Release a handle, returning False if the caller must retain it."""
++    def _try_release_xfer_handle(
++        self, req_id: str, handle: int, *, unsubmitted: bool = False
++    ) -> bool:
++        """Release stopped or never-submitted handles; retain others for polling."""
+         try:
++            if not unsubmitted:
++                # Releasing a UCX handle does not cancel an in-flight RMA.
++                state = self.nixl_wrapper.check_xfer_state(handle)
++                if state not in ("DONE", "ERR"):
++                    return False
+             self.nixl_wrapper.release_xfer_handle(handle)
+-        except Exception as e:
+-            # A status error does not guarantee that the backend stopped DMA.
++        except Exception as error:
++            # Preserve the handle until the primary completion poll can observe
++            # its native state or retire the engine with its buffers still held.
+             self._log_failure(
+                 failure_type="transfer_release_failed",
+-                msg="Retaining handle and blocks until release succeeds",
++                msg="Retaining handle and blocks for completion polling",
+                 req_id=req_id,
+-                error=e,
++                error=error,
+             )
+             return False
+         return True
+@@ -3197,20 +3270,92 @@
+         return handle is None or self._try_release_xfer_handle(req_id, handle)
+ 
+     def _send_pending_recv_notifs(self, req_id: str) -> None:
+-        """Send notifications deferred by split DRAM/VRAM reads."""
+-        for agent_name, notif_id in self._pending_recv_notifs.pop(req_id, []):
++        """Send idempotent completions after reads stop; confirm release off-thread."""
++        meta = self._pending_read_lease_acks.get(req_id)
++        if meta is not None:
++            if req_id not in self._ready_read_lease_releases:
++                self._finished_receives.add(req_id)
++                self._ready_read_lease_releases[req_id] = (
++                    time.perf_counter() + self._kv_lease_duration
++                )
++            if req_id in self._read_lease_ack_futures:
++                return
++        for agent_name, notif_id in self._pending_recv_notifs.get(req_id, []):
+             try:
+                 self.nixl_wrapper.send_notif(agent_name, notif_msg=notif_id)
+             except Exception as e:
+                 self._log_failure(
+                     failure_type="notification_failed",
+-                    msg="P worker blocks will be freed after timeout. "
++                    msg="Remote worker may retain KV blocks. "
+                     "This may indicate network issues.",
+                     req_id=req_id,
+                     error=e,
+                     remote_agent_name=agent_name,
+                 )
+                 self.xfer_stats.record_failed_notification()
++        if meta is not None:
++            self._read_lease_ack_futures[req_id] = (
++                self._handshake_initiation_executor.submit(
++                    self._query_read_lease_release, meta
++                )
++            )
++        else:
++            self._pending_recv_notifs.pop(req_id, None)
++
++    def _end_read_lease_confirmation(self, req_id: str) -> None:
++        """Discard local confirmation state without declaring the source released."""
++        self._pending_read_lease_acks.pop(req_id, None)
++        self._pending_recv_notifs.pop(req_id, None)
++        self._ready_read_lease_releases.pop(req_id, None)
++        future = self._read_lease_ack_futures.pop(req_id, None)
++        if future is not None:
++            future.cancel()
++
++    def _query_read_lease_release(self, meta: ReqMeta) -> bool:
++        """Observe source release on the existing I/O executor."""
++        assert meta.remote is not None
++        path = make_zmq_path("tcp", meta.remote.host, meta.remote.port)
++        with zmq_ctx(zmq.REQ, path) as sock:
++            sock.setsockopt(zmq.RCVTIMEO, 5000)
++            sock.send(
++                msgspec.msgpack.encode(
++                    (
++                        READ_LEASE_STATE_MSG,
++                        meta.remote.request_id,
++                        meta.remote.read_lease,
++                        meta.remote.consumer_id,
++                    )
++                )
++            )
++            return msgspec.msgpack.decode(sock.recv()) is True
++
++    def _poll_read_lease_confirmations(self) -> None:
++        """Consume completed I/O results and expire local confirmation waits."""
++        for req_id, future in tuple(self._read_lease_ack_futures.items()):
++            if not future.done():
++                continue
++            del self._read_lease_ack_futures[req_id]
++            try:
++                released = future.result()
++            except zmq.ZMQError as error:
++                self._log_failure(
++                    failure_type="lease_confirmation_failed",
++                    msg="Retaining completion until source confirms release",
++                    req_id=req_id,
++                    error=error,
++                )
++                continue
++            if released:
++                self._end_read_lease_confirmation(req_id)
++        now = time.perf_counter()
++        for req_id, expiry in tuple(self._ready_read_lease_releases.items()):
++            if now >= expiry:
++                logger.warning(
++                    "NIXL local completion confirmation ended after kv_lease_duration "
++                    "for request %s; source release remains unconfirmed",
++                    req_id,
++                )
++                self._end_read_lease_confirmation(req_id)
+ 
+     def _send_heartbeats(self, metadata: NixlConnectorMetadata) -> None:
+         """Send heartbeats to remote engines, extending the lease on KV blocks."""
+@@ -3231,8 +3376,13 @@
+             ):
+                 continue  # handshake is still pending
+ 
+-            # Build the heartbeat message: "HB:req1,req2,..."
+-            hb_msg = ("HB:" + ",".join(hb_info.req_ids)).encode()
++            if self._TRANSFER_MODE == "pull":
++                # Each authorized reader must remain observable independently of TP peers.
++                hb_msg = b"HB:" + msgspec.msgpack.encode(
++                    (self.tp_rank, hb_info.consumer_by_request)
++                )
++            else:
++                hb_msg = ("HB:" + ",".join(hb_info.consumer_by_request)).encode()
+             for agent_name in self._remote_agents[engine_id].values():
+                 try:
+                     self.nixl_wrapper.send_notif(agent_name, notif_msg=hb_msg)
+@@ -3610,9 +3760,11 @@
+         """
+         return {
+             meta.remote.engine_id
+-            for req_id in self._recving_transfers
+-            if (meta := self._recving_metadata.get(req_id)) is not None
+-            and meta.remote is not None
++            for meta in (
++                *self._recving_metadata.values(),
++                *self._pending_read_lease_acks.values(),
++            )
++            if meta.remote is not None
+         }
+ 
+     def _track_remote_engine_replacement(
+@@ -3644,12 +3796,22 @@
+             replaced = self._remote_agents.keys() - self._engine_by_address.values()
+         if not replaced:
+             return
++        for req_id in tuple(self._ready_read_lease_releases):
++            meta = self._pending_read_lease_acks[req_id]
++            assert meta.remote is not None
++            if (
++                meta.remote.engine_id in replaced
++                and req_id not in self._recving_metadata
++                and req_id not in self._recving_transfers
++            ):
++                logger.info(
++                    "NIXL source engine was replaced; ending local completion "
++                    "confirmation for request %s without claiming source release",
++                    req_id,
++                )
++                self._end_read_lease_confirmation(req_id)
+         # _recving_metadata is only accessed from this (main) thread.
+-        busy = {
+-            meta.remote.engine_id
+-            for meta in self._recving_metadata.values()
+-            if meta.remote is not None
+-        }
++        busy = self._engines_with_inflight_transfers()
+         for engine_id in replaced - busy:
+             self._cleanup_remote_engine(engine_id, log_eviction=False)
+             logger.info("Released NIXL state for replaced remote engine %s.", engine_id)
+@@ -3687,8 +3849,6 @@
+         if self.transfer_topo is not None:
+             self.transfer_topo.unregister_remote_engine(engine_id)
+ 
+-        # Drop the cached clock offset; it is re-measured on the next handshake.
+-        self._engine_clock_offset.pop(engine_id, None)
+         # A just-completed handshake may not have recorded activity yet, so
+         # tolerate a missing entry.
+         last_active = self._engine_last_active.pop(engine_id, None)
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/nixl/connector.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/nixl/connector.py
+@@ -37,6 +37,7 @@
+ )
+ from vllm.distributed.kv_transfer.kv_connector.v1.nixl.metadata import (
+     NixlConnectorMetadata,
++    NixlTransferWorkerMetadata,
+ )
+ from vllm.distributed.kv_transfer.kv_connector.v1.nixl.pull_scheduler import (
+     NixlPullConnectorScheduler,
+@@ -253,6 +254,11 @@
+             results.finished_sending.clear()
+         return results
+ 
++    def build_connector_worker_meta(self) -> NixlTransferWorkerMetadata:
++        """Publish native transfer state for scheduler drain accounting."""
++        assert self.connector_worker is not None
++        return self.connector_worker.build_connector_worker_meta()
++
+     def get_block_ids_with_load_errors(self) -> set[int]:
+         """Get block IDs that failed to load via NIXL."""
+         assert self.connector_worker is not None
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/nixl/metadata.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/nixl/metadata.py
+@@ -12,2 +12,3 @@
+     KVConnectorMetadata,
++    KVConnectorWorkerMetadata,
+ )
+@@ -20,3 +21,3 @@
+ 
+-GET_META_MSG = b"get_meta_msg"
++READ_LEASE_DONE_NOTIF = b"READ_LEASE_DONE:"
+ 
+@@ -55,2 +56,9 @@
+ 
++# Source authorization is a required native wire change on each supported ABI.
++NIXL_CONNECTOR_VERSION += 1
++GET_META_MSG = f"get_meta_msg:{NIXL_CONNECTOR_VERSION}".encode()
++BEGIN_READ_LEASE_MSG = f"begin_read_lease:{NIXL_CONNECTOR_VERSION}".encode()
++READ_LEASE_STATE_MSG = f"read_lease_state:{NIXL_CONNECTOR_VERSION}".encode()
++
++
+ @dataclass
+@@ -215,2 +223,41 @@
+ @dataclass
++class NixlSendLease:
++    """Keep source authorization and release decisions with the scheduler's KV owner."""
++
++    lease_id: str
++    idle_expiry: float
++    retained: bool
++    consumer_id: str | None = None
++    heartbeat_expiry: float | None = None
++    reader_count: int | None = None
++    reader_expiries: dict[int, float] = field(default_factory=dict)
++    completed_readers: set[int] = field(default_factory=set)
++    closing: bool = False
++
++
++@dataclass
++class NixlTransferWorkerMetadata(KVConnectorWorkerMetadata):
++    """Aggregate pending transfers and receive completions for the scheduler."""
++
++    pending_transfers: set[str] = field(default_factory=set)
++    finished_receives: dict[str, int] = field(default_factory=dict)
++    # A reader reports only after every attempted handle is terminal, or no READ ran.
++    completed_source_reads: set[tuple[ReqId, str, str, int, int]] = field(
++        default_factory=set
++    )
++    source_heartbeats: set[tuple[ReqId, str, int]] = field(default_factory=set)
++
++    def aggregate(self, other: KVConnectorWorkerMetadata):
++        assert isinstance(other, NixlTransferWorkerMetadata)
++        self.pending_transfers.update(other.pending_transfers)
++        self.completed_source_reads.update(other.completed_source_reads)
++        self.source_heartbeats.update(other.source_heartbeats)
++        for req_id, count in other.finished_receives.items():
++            self.finished_receives[req_id] = (
++                self.finished_receives.get(req_id, 0) + count
++            )
++        return self
++
++
++@dataclass
+ class HeartbeatInfo:
+@@ -218,3 +265,3 @@
+ 
+-    req_ids: set[ReqId]
++    consumer_by_request: dict[ReqId, str]
+     host: str
+@@ -233,4 +280,5 @@
+     request_id: str
+-    blocks_expiry_time: float | None = None
+     num_tokens: int | None = None
++    read_lease: str | None = None
++    consumer_id: str | None = None
+ 
+@@ -257,2 +305,6 @@
+     awaiting_kvs: bool = False
++    # Shared by the worker's ready queue and authorization futures. These flags
++    # outlive tracking-map cleanup and never represent native I/O completion.
++    read_cancelled: bool = False
++    read_submission_closed: bool = False
+     # Worker-only, per-region physical pages to zero after a successful pull.
+@@ -267,2 +319,4 @@
+         self.reqs_to_send: dict[ReqId, float] = {}
++        # Pull workers return only sources whose scheduler has closed authorization.
++        self.send_leases_to_release: set[ReqId] = set()
+         # The scheduler process's time.perf_counter() when this metadata was
+@@ -333,4 +387,5 @@
+             port=kv_transfer_params["remote_port"],
+-            blocks_expiry_time=kv_transfer_params.get("remote_blocks_expiry_time"),
+             num_tokens=kv_transfer_params.get("remote_num_tokens"),
++            read_lease=kv_transfer_params.get("remote_read_lease"),
++            consumer_id=kv_transfer_params.get("remote_consumer_id"),
+         )
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/nixl/pull_scheduler.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/nixl/pull_scheduler.py
+@@ -2,19 +2,27 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ """Pull-specific scheduler-side logic for the NIXL connector."""
+ 
++import threading
+ import time
++import uuid
+ from typing import TYPE_CHECKING, Any
+ 
+ from vllm.distributed.kv_transfer.kv_connector.utils import BlockIds
+ from vllm.distributed.kv_transfer.kv_connector.v1.nixl.base_scheduler import (
+     NixlBaseConnectorScheduler,
+ )
++from vllm.distributed.kv_transfer.kv_connector.v1.nixl.metadata import (
++    NixlSendLease,
++    NixlTransferWorkerMetadata,
++)
+ from vllm.logger import init_logger
+ 
+ if TYPE_CHECKING:
+     from vllm.config import VllmConfig
+     from vllm.v1.core.kv_cache_manager import KVCacheBlocks
++    from vllm.v1.core.sched.output import SchedulerOutput
+     from vllm.v1.kv_cache_interface import KVCacheConfig
++    from vllm.v1.outputs import KVConnectorOutput
+     from vllm.v1.request import Request
+ 
+ logger = init_logger(__name__)
+@@ -30,6 +38,210 @@
+         kv_cache_config: "KVCacheConfig",
+     ):
+         super().__init__(vllm_config, engine_id, kv_cache_config)
++        # The scheduler retains allocator references until all source workers
++        # acknowledge a release. The listener never calls the worker executor.
++        self._source_lock = threading.Lock()
++        self._source_leases: dict[str, NixlSendLease] = {}
++        self.read_lease_handler = self._authorize_read
++        self.read_lease_state_handler = self._read_lease_released
++
++    def _open_source(
++        self, req_id: str, lease_id: str, now: float
++    ) -> NixlSendLease | None:
++        """Look up a source under its lock, closing expired unstarted leases."""
++        source = self._source_leases.get(req_id)
++        if source is None or source.lease_id != lease_id or source.closing:
++            return None
++        if any(
++            now >= source.reader_expiries[rank]
++            for rank in source.reader_expiries.keys() - source.completed_readers
++        ):
++            return None
++        expiry = (
++            source.idle_expiry
++            if source.consumer_id is None
++            else source.heartbeat_expiry
++        )
++        assert expiry is not None
++        if now >= expiry:
++            if source.reader_expiries.keys() <= source.completed_readers:
++                source.closing = True
++            return None
++        return source
++
++    def claim_send_lease(self, req_id: str, lease_id: str, consumer_id: str) -> bool:
++        """Claim a retained source without transferring allocator ownership."""
++        with self._source_lock:
++            now = time.perf_counter()
++            source = self._open_source(req_id, lease_id, now)
++            if source is None or source.consumer_id not in (None, consumer_id):
++                return False
++            source.consumer_id = consumer_id
++            source.heartbeat_expiry = now + self._kv_lease_duration
++            return True
++
++    def cancel_send_lease(self, req_id: str, lease_id: str, consumer_id: str) -> bool:
++        """Close authorization only when every admitted reader has stopped."""
++        with self._source_lock:
++            source = self._source_leases.get(req_id)
++            if source is None or source.lease_id != lease_id:
++                return True
++            if source.consumer_id not in (None, consumer_id):
++                return False
++            if source.reader_expiries.keys() - source.completed_readers:
++                return False
++            source.closing = True
++            return True
++
++    def _authorize_read(
++        self,
++        req_id: str,
++        lease_id: str,
++        consumer_id: str,
++        reader_rank: int,
++        reader_count: int,
++    ) -> bool:
++        """Serialize READ grants with expiry, cancellation and reader terminals."""
++        with self._source_lock:
++            now = time.perf_counter()
++            source = self._open_source(req_id, lease_id, now)
++            if source is None or not 0 <= reader_rank < reader_count:
++                return False
++            if source.retained and source.consumer_id is None:
++                return False
++            if source.consumer_id not in (None, consumer_id):
++                return False
++            if source.reader_count not in (None, reader_count):
++                return False
++            if reader_rank in source.completed_readers:
++                return False
++            source.consumer_id = consumer_id
++            source.reader_count = reader_count
++            source.reader_expiries.setdefault(
++                reader_rank, now + self._kv_lease_duration
++            )
++            if source.heartbeat_expiry is None:
++                source.heartbeat_expiry = source.reader_expiries[reader_rank]
++            else:
++                source.heartbeat_expiry = max(
++                    source.heartbeat_expiry, source.reader_expiries[reader_rank]
++                )
++            return True
++
++    def _read_lease_released(
++        self, req_id: str, lease_id: str, consumer_id: str
++    ) -> bool:
++        """Confirm source retirement only after its native release barrier."""
++        with self._source_lock:
++            source = self._source_leases.get(req_id)
++            return source is None or source.lease_id != lease_id
++
++    def build_connector_meta(self, scheduler_output: "SchedulerOutput"):
++        """Close expired sources before broadcasting their release to every worker."""
++        with self._source_lock:
++            now = time.perf_counter()
++            for req_id, source in self._source_leases.items():
++                if source.closing:
++                    continue
++                active_readers = (
++                    source.reader_expiries.keys() - source.completed_readers
++                )
++                for reader_rank in active_readers:
++                    if now >= source.reader_expiries[reader_rank]:
++                        raise RuntimeError(
++                            f"NIXL reader {reader_rank} heartbeat expired during "
++                            f"authorized READ for request {req_id}; "
++                            "engine buffers require retirement"
++                        )
++                expiry = (
++                    source.idle_expiry
++                    if source.consumer_id is None
++                    else source.heartbeat_expiry
++                )
++                assert expiry is not None
++                if not active_readers and now >= expiry:
++                    source.closing = True
++            meta = super().build_connector_meta(scheduler_output)
++            meta.send_leases_to_release = {
++                req_id
++                for req_id, source in self._source_leases.items()
++                if source.closing
++            }
++            return meta
++
++    def update_connector_output(self, connector_output: "KVConnectorOutput") -> None:
++        """Apply terminal reader evidence before allowing source blocks to be freed."""
++        super().update_connector_output(connector_output)
++        worker_meta = connector_output.kv_connector_worker_meta
++        with self._source_lock:
++            if isinstance(worker_meta, NixlTransferWorkerMetadata):
++                for (
++                    req_id,
++                    lease_id,
++                    consumer_id,
++                    reader_rank,
++                    reader_count,
++                ) in worker_meta.completed_source_reads:
++                    source = self._source_leases.get(req_id)
++                    if (
++                        source is None
++                        or source.lease_id != lease_id
++                        or source.closing
++                        or source.consumer_id not in (None, consumer_id)
++                        or (source.retained and source.consumer_id is None)
++                        or source.reader_count not in (None, reader_count)
++                        or not 0 <= reader_rank < reader_count
++                    ):
++                        continue
++                    # A no-READ acknowledgement can overtake a grant response;
++                    # remembering it prevents a delayed authorization from reopening it.
++                    source.consumer_id = consumer_id
++                    source.reader_count = reader_count
++                    source.completed_readers.add(reader_rank)
++                    if source.heartbeat_expiry is None:
++                        source.heartbeat_expiry = (
++                            time.perf_counter() + self._kv_lease_duration
++                        )
++                    if len(source.completed_readers) == reader_count:
++                        source.closing = True
++                new_expiry = time.perf_counter() + self._kv_lease_duration * 2 // 3
++                for req_id, consumer_id, reader_rank in worker_meta.source_heartbeats:
++                    source = self._source_leases.get(req_id)
++                    if (
++                        source is None
++                        or source.closing
++                        or source.consumer_id not in (None, consumer_id)
++                    ):
++                        continue
++                    if source.consumer_id is None:
++                        source.idle_expiry = max(source.idle_expiry, new_expiry)
++                    else:
++                        assert source.heartbeat_expiry is not None
++                        source.heartbeat_expiry = max(
++                            source.heartbeat_expiry, new_expiry
++                        )
++                        if reader_rank in source.reader_expiries:
++                            source.reader_expiries[reader_rank] = max(
++                                source.reader_expiries[reader_rank], new_expiry
++                            )
++            for req_id in connector_output.finished_sending or ():
++                source = self._source_leases[req_id]
++                if not source.closing:
++                    raise RuntimeError(
++                        f"NIXL worker released request {req_id} before source authorization closed"
++                    )
++                del self._source_leases[req_id]
++
++    def get_pending_transfers(self) -> set[str]:
++        """Include claimed sources in drain accounting, excluding idle decoder KV."""
++        pending = super().get_pending_transfers()
++        with self._source_lock:
++            pending.update(
++                req_id
++                for req_id, source in self._source_leases.items()
++                if not source.retained or source.consumer_id is not None
++            )
++        return pending
+ 
+     def get_num_new_matched_tokens(
+         self, request: "Request", num_computed_tokens: int
+@@ -119,10 +331,6 @@
+         if not params:
+             return
+ 
+-        if params.get("do_remote_decode") or (
+-            params.get("do_remote_prefill") and self.is_bidirectional_kv_xfer_enabled
+-        ):
+-            self._reqs_in_batch.add(request.request_id)
+         if self.use_host_buffer and params.get("do_remote_decode"):
+             # NOTE: when accelerator is not directly supported by Nixl,
+             # prefilled blocks need to be saved to host memory before transfer.
+@@ -212,9 +420,12 @@
+         is_p_node = bool(params.get("do_remote_decode"))
+         is_d_node = not is_p_node
+ 
+-        # Stop heartbeating for aborted requests that never reached finished_recving:
+-        # normal path cleans up in update_connector_output.
+-        self._stop_heartbeat(request.request_id)
++        # Allocated reads outlive generation; unallocated reads can stop renewal now.
++        if params.get("do_remote_prefill") or (
++            params.get("remote_read_lease")
++            and not params.get("_remote_blocks_processed")
++        ):
++            self._stop_heartbeat(request.request_id)
+ 
+         if params.get("do_remote_prefill"):
+             # If do_remote_prefill is still True when the request is finished,
+@@ -229,9 +440,6 @@
+             params["do_remote_prefill"] = False
+             return False, None
+ 
+-        if is_d_node and not self.is_bidirectional_kv_xfer_enabled:
+-            return False, None
+-
+         if request.status not in (
+             RequestStatus.FINISHED_LENGTH_CAPPED,
+             RequestStatus.FINISHED_STOPPED,
+@@ -243,17 +451,20 @@
+             self._reqs_need_save.pop(request.request_id, None)
+             return False, None
+ 
++        if is_d_node and not self.is_bidirectional_kv_xfer_enabled:
++            return False, None
++
+         # TODO: check whether block_ids actually ever be 0. If not we could
+         # remove the conditional below
+         delay_free_blocks = any(len(group) > 0 for group in block_ids)
+         remote_num_tokens = 0
+         blocks_expiry_time = None
++        read_lease = None
+         if delay_free_blocks:
+-            # Prefill request on remote. It will be read from D upon completion
++            # Publish a native lease while the scheduler retains the source blocks.
+             request_kv_blocks_ttl = self._kv_lease_duration
+             if is_d_node:
+-                # For blocks pinned on D, use a simpler timeout for now instead of a
+-                # lease mechanism as turn2 request is client-driven.
++                # Decoder offers keep their configured idle window until claimed.
+                 request_kv_blocks_ttl = self.decoder_kv_blocks_ttl
+             logger.debug(
+                 "NIXLConnector request_finished(%s) waiting for %d seconds "
+@@ -261,9 +472,13 @@
+                 request.request_id,
+                 request_kv_blocks_ttl,
+             )
+-            self._reqs_need_send[request.request_id] = (
+-                time.perf_counter() + request_kv_blocks_ttl
+-            )
++            expiry = time.perf_counter() + request_kv_blocks_ttl
++            self._reqs_need_send[request.request_id] = expiry
++            read_lease = uuid.uuid4().hex
++            with self._source_lock:
++                self._source_leases[request.request_id] = NixlSendLease(
++                    lease_id=read_lease, idle_expiry=expiry, retained=is_d_node
++                )
+             if is_d_node:
+                 # D blocks expiry time exported for the turn-2 readback.
+                 blocks_expiry_time = self._reqs_need_send[request.request_id]
+@@ -288,5 +503,6 @@
+             pp_size=self.vllm_config.parallel_config.pipeline_parallel_size,
+             remote_num_tokens=remote_num_tokens,
+             remote_blocks_expiry_time=blocks_expiry_time,
++            remote_read_lease=read_lease,
+             transfer_mode=self._TRANSFER_MODE,
+         )
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/nixl/pull_worker.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/nixl/pull_worker.py
+@@ -3,15 +3,20 @@
+ """Pull-specific (READ) worker-side logic for the NIXL connector."""
+ 
+ import time
++from concurrent.futures import Future
+ from typing import TYPE_CHECKING
+ 
++import msgspec
+ import numpy as np
++import zmq
+ 
+ from vllm.distributed.kv_transfer.kv_connector.utils import BlockIds
+ from vllm.distributed.kv_transfer.kv_connector.v1.nixl.base_worker import (
+     NixlBaseConnectorWorker,
+ )
+ from vllm.distributed.kv_transfer.kv_connector.v1.nixl.metadata import (
++    BEGIN_READ_LEASE_MSG,
++    READ_LEASE_DONE_NOTIF,
+     NixlConnectorMetadata,
+     ReqMeta,
+ )
+@@ -19,18 +24,16 @@
+     ReadSpec,
+     _is_attention_spec,
+ )
++from vllm.distributed.kv_transfer.kv_connector.v1.nixl.utils import zmq_ctx
+ from vllm.logger import init_logger
+ from vllm.utils.math_utils import cdiv
++from vllm.utils.network_utils import make_zmq_path
+ 
+ if TYPE_CHECKING:
+     from vllm.config import VllmConfig
+     from vllm.v1.kv_cache_interface import KVCacheConfig
+ 
+ logger = init_logger(__name__)
+-
+-# Slack (seconds) subtracted from D's exported block-expiry deadline on the turn-2
+-# readback, absorbing clock-offset error and read latency.
+-_KV_BLOCKS_EXPIRY_SAFETY_MARGIN = 5.0
+ 
+ 
+ class NixlPullConnectorWorker(NixlBaseConnectorWorker):
+@@ -43,16 +46,31 @@
+         kv_cache_config: "KVCacheConfig",
+     ):
+         super().__init__(vllm_config, engine_id, kv_cache_config)
++        self._read_lease_auth_futures: dict[
++            str, tuple[ReqMeta, list[ReadSpec], Future[bool]]
++        ] = {}
++        self._source_releases: set[str] = set()
+ 
+     def start_load_kv(self, metadata: NixlConnectorMetadata):
+         """Start loading by triggering non-blocking nixl_xfer.
+         We check for these trnxs to complete in each step().
+         """
++        for req_id in metadata.reqs_not_processed:
++            meta = self._pending_read_lease_acks.get(req_id)
++            if meta is None:
++                meta = metadata.reqs_to_recv.get(req_id)
++            if meta is not None:
++                meta.read_cancelled = True
+         for req_id, meta in metadata.reqs_to_recv.items():
+             meta.local_physical_block_ids = self._logical_to_kernel_block_ids(
+                 meta.local_block_ids, self._physical_blocks_per_logical_kv_block
+             )
+             assert meta.remote is not None
++            if meta.remote.read_lease is None:
++                raise RuntimeError("NIXL READ requires a native source lease")
++            if meta.remote.consumer_id is None:
++                meta.remote.consumer_id = req_id
++            self._pending_read_lease_acks[req_id] = meta
+             # Remote block IDs are kept logical here; expanded in
+             # _read_blocks_for_req using the remote engine's phys ratio.
+             remote_engine_id = meta.remote.engine_id
+@@ -85,6 +103,8 @@
+         # Start transfers for requests whose handshakes have now finished.
+         while not self._ready_requests.empty():
+             req_id, meta = self._ready_requests.get_nowait()
++            if meta.read_submission_closed:
++                continue
+             assert meta.remote is not None
+             if meta.remote.engine_id not in self._remote_agents:
+                 # The engine was released after its handshake completed, so
+@@ -93,89 +113,48 @@
+                 continue
+             self._read_blocks_for_req(req_id, meta)
+ 
+-        if self.pcp_rank > 0 and not self.pcp_dcp_sharded:
+-            # Replicated-KV PCP: only PCP rank 0 serves the KV, so this rank
+-            # has nothing to send. Report the requests as sent right away so
+-            # the scheduler-side aggregation (world_size workers, and any
+-            # sibling connector inside a MultiConnector) still completes.
+-            self._replicated_pcp_done_sending.update(metadata.reqs_to_send)
+-            return
+-
+-        # Keep around the requests that have been part of a batch. This is
+-        # needed because async scheduling pushes the misalignment between the
+-        # moment in which requests expiration is set (P side) and the moment in
+-        # which blocks are read from D. As P can now more easily lag behind D
+-        # while processing the next batch, we make sure to only set an
+-        # expiration for requests that have not been read from D yet.
+-        for req_id in metadata.reqs_in_batch:
+-            self._reqs_to_process.add(req_id)
+-
+-        # Remove all requests that are not to be processed (eg aborted).
+-        for req_id in metadata.reqs_not_processed:
+-            self._reqs_to_process.discard(req_id)
+-            # We should never get an abort after setting an expiry timer
+-            assert req_id not in self._reqs_to_send
+-
+-        # Add to requests that are waiting to be read and track expiration.
+-        # Deadlines are stamped with the scheduler process's perf_counter,
+-        # which is not comparable to ours when the worker runs in another
+-        # process on another node (perf_counter epochs differ by boot time).
+-        # Rebase the remaining TTL onto our clock; broadcast latency only
+-        # lengthens the lease, which is the safe direction. A cross-node
+-        # epoch gap larger than the TTL otherwise expires the lease on
+-        # arrival and the blocks are freed before D reads them.
+-        now_local = time.perf_counter()
+-        for req_id, expiration_time in metadata.reqs_to_send.items():
+-            if req_id in self._reqs_to_process:
+-                if metadata.scheduler_clock:
+-                    expiration_time = now_local + (
+-                        expiration_time - metadata.scheduler_clock
+-                    )
+-                self._reqs_to_send[req_id] = expiration_time
++        self._complete_read_lease_authorizations()
++
++        # Source readiness is broadcast once after scheduler retention. Workers
++        # never expire it: only a later closed-authorization release can finish it.
++        self._reqs_to_process.update(metadata.reqs_to_send)
++        self._source_releases.update(
++            metadata.send_leases_to_release & self._reqs_to_process
++        )
+ 
+         # Send heartbeats to P-side engines to keep KV blocks alive while
+         # requests sit in the D scheduler WAITING queue.
+         self._send_heartbeats(metadata)
+ 
+-    def _is_turn2_read_expired(self, meta: ReqMeta) -> bool:
+-        """Whether D's cached blocks for this turn-2 readback have (nearly) expired."""
++    def _begin_read_lease(self, meta: ReqMeta) -> bool:
++        """Authorize this reader before READ submission, preventing early revocation."""
+         assert meta.remote is not None
+-        blocks_expiry_time = meta.remote.blocks_expiry_time
+-        # Deadline may be absent (router may not forward it) -> read as usual.
+-        if blocks_expiry_time is None or not meta.local_physical_block_ids:
+-            return False
+-        clock_offset = self._engine_clock_offset[meta.remote.engine_id]
+-        deadline = blocks_expiry_time - clock_offset
+-        return time.perf_counter() + _KV_BLOCKS_EXPIRY_SAFETY_MARGIN >= deadline
++        remote = meta.remote
++        path = make_zmq_path("tcp", remote.host, remote.port)
++        with zmq_ctx(zmq.REQ, path) as sock:
++            sock.setsockopt(zmq.RCVTIMEO, 5000)
++            sock.send(
++                msgspec.msgpack.encode(
++                    (
++                        BEGIN_READ_LEASE_MSG,
++                        remote.request_id,
++                        remote.read_lease,
++                        remote.consumer_id,
++                        self.tp_rank,
++                        self.world_size,
++                    )
++                )
++            )
++            return msgspec.msgpack.decode(sock.recv()) is True
+ 
+     def _read_blocks_for_req(self, req_id: str, meta: ReqMeta):
++        if meta.read_submission_closed or req_id in self._read_lease_auth_futures:
++            return
+         assert meta.remote is not None and self.transfer_topo is not None
+         engine_id = meta.remote.engine_id
+         # Update last activity from this remote. Mind that cleanup is done on main
+         # thread (this one), so we don't race on this structure.
+         self._engine_last_active[engine_id] = time.perf_counter()
+-
+-        if self._bidirectional_kv_xfer_enabled and self._is_turn2_read_expired(meta):
+-            logger.warning(
+-                "Declining expired remote read for %s from engine %s.",
+-                req_id,
+-                engine_id,
+-            )
+-            self.xfer_stats.record_kv_expired_req()
+-            # KV expiry is reported separately from transport failures, so only
+-            # the state cleanup side of _handle_failed_transfer runs here.
+-            self._handle_failed_transfer(
+-                req_id, None, self._recv_failures, record_failed_transfer=False
+-            )
+-            return
+-
+-        if any(len(group) > 0 for group in meta.local_block_ids):
+-            # The scheduler waits for finished_recving from *every* worker.
+-            # Under DCP a rank's slice can legitimately come out empty when its
+-            # interleaved positions fall past the end of the sequence. _read_blocks
+-            # then takes the notify-only path without registering a transfer.
+-            # Seed the entry so this rank still reports completion.
+-            self._recving_transfers.setdefault(req_id, [])
+ 
+         plan = self.tp_mappings[engine_id]
+         remote_info = self.transfer_topo.get_engine_info(engine_id)
+@@ -187,7 +166,7 @@
+         local_region_groups = self.region_group_ids or remote_region_groups
+         if not local_block_ids:
+             # Region expansion cannot index empty groups. Pass empty specs to
+-            # _read_blocks so its existing cache-hit notification path runs.
++            # _read_blocks so its no-READ completion path runs.
+             read_specs = [
+                 ReadSpec(remote_rank=rank, local_block_ids=[], remote_block_ids=[])
+                 for rank in plan.all_source_ranks
+@@ -318,6 +297,74 @@
+         if self.use_mla and tp_ratio < 0 and not self._has_mamba and not dcp_active:
+             assert len(read_specs) == 1
+ 
++        # Each acknowledgement covers this reader's entire native handle set,
++        # including notify-only peers. Ordinary and retained reads share the gate.
++        ranks_to_notify = {(0, spec.remote_rank) for spec in read_specs}
++        if self.use_mla and tp_ratio < 0 and len(read_specs) == 1:
++            ranks_to_notify.update(self._remote_agents[engine_id])
++        notif = READ_LEASE_DONE_NOTIF + msgspec.msgpack.encode(
++            (
++                meta.remote.request_id,
++                meta.remote.read_lease,
++                meta.remote.consumer_id,
++                self.tp_rank,
++                self.world_size,
++            )
++        )
++        self._pending_recv_notifs[req_id] = [
++            (self._remote_agents[engine_id][rank], notif)
++            for rank in sorted(ranks_to_notify)
++        ]
++        if meta.read_cancelled:
++            self._finish_unsubmitted_read(req_id, meta)
++            return
++        self._read_lease_auth_futures[req_id] = (
++            meta,
++            read_specs,
++            self._handshake_initiation_executor.submit(self._begin_read_lease, meta),
++        )
++
++    def _complete_read_lease_authorizations(self) -> None:
++        """Consume completed authorizations and submit reads on the worker thread."""
++        for req_id, (meta, read_specs, future) in tuple(
++            self._read_lease_auth_futures.items()
++        ):
++            if not future.done():
++                continue
++            del self._read_lease_auth_futures[req_id]
++            try:
++                granted = future.result()
++            except zmq.ZMQError:
++                granted = False
++            if meta.read_submission_closed:
++                continue
++            if granted and not meta.read_cancelled:
++                self._post_read_specs(req_id, meta, read_specs)
++            else:
++                self._finish_unsubmitted_read(req_id, meta)
++
++    def _finish_unsubmitted_read(self, req_id: str, meta: ReqMeta) -> None:
++        """Close a cancelled or declined reader without allowing a late READ."""
++        if meta.read_submission_closed:
++            return
++        meta.read_submission_closed = True
++        if meta.awaiting_kvs:
++            self._handle_failed_transfer(req_id, None, self._recv_failures)
++        else:
++            self._send_pending_recv_notifs(req_id)
++
++    def _post_read_specs(self, req_id: str, meta: ReqMeta, read_specs: list[ReadSpec]):
++        """Submit a source-authorized read plan on the worker thread."""
++        if meta.read_submission_closed:
++            return
++        meta.read_submission_closed = True
++        assert meta.remote is not None and self.transfer_topo is not None
++        remote_info = self.transfer_topo.get_engine_info(meta.remote.engine_id)
++        tp_ratio = self.transfer_topo.tp_ratio(remote_info.remote_tp_size)
++        if any(meta.local_block_ids):
++            # Delay tracking until authorization to avoid false receive completion.
++            self._recving_transfers.setdefault(req_id, [])
++
+         for i, spec in enumerate(read_specs):
+             remote_block_size = remote_info.remote_block_size
+             logger.debug(
+@@ -356,56 +403,30 @@
+                 spec.remote_rank
+             ]
+ 
+-            # Once a read routes the request to failure reporting, the
+-            # scheduler may free and reuse its blocks, so no sibling READs
+-            # may be posted (and P must not be notified).
++            # Stop posting siblings after a failure. Completion polling must join
++            # any handles already attempted before acknowledging this reader.
+             if not self._read_blocks(
+                 read_spec=spec,
+                 request_id=req_id,
+                 dst_engine_id=meta.remote.engine_id,
+-                remote_request_id=meta.remote.request_id,
+                 local_xfer_side_handle=local_xfer_side_handle,
+                 local_dram_handle=local_dram_handle,
+                 remote_xfer_side_handle=remote_xfer_side_handle,
+-                expected_consumers=plan.local_consumers,
+                 awaiting_kvs=meta.awaiting_kvs,
+             ):
+                 return
+ 
+-        if self.use_mla and tp_ratio < 0 and len(read_specs) == 1:
+-            # ..but we still need to notify the other remote ranks that we
+-            # have the blocks we need so they can update the request state.
+-            # Same thing for DCP (tp_size == dcp_size), so the raw tp_ratio already
+-            # reflects whether any remote replica is left unchosen.
+-            notif_id = f"{meta.remote.request_id}:{plan.local_consumers}".encode()
+-            remote_agents = self._remote_agents[meta.remote.engine_id]
+-            for rank_to_notify, agent in remote_agents.items():
+-                if rank_to_notify != (0, read_specs[0].remote_rank):
+-                    try:
+-                        self.nixl_wrapper.send_notif(agent, notif_msg=notif_id)
+-                    except Exception as e:
+-                        self._log_failure(
+-                            failure_type="notification_failed",
+-                            msg="Remote rank will not update request state. "
+-                            "This may indicate network issues.",
+-                            req_id=req_id,
+-                            error=e,
+-                            dst_engine_id=meta.remote.engine_id,
+-                            remote_rank=rank_to_notify[1],
+-                            remote_agent_name=agent,
+-                        )
+-                        self.xfer_stats.record_failed_notification()
++        if not meta.awaiting_kvs and not any(meta.local_block_ids):
++            self._send_pending_recv_notifs(req_id)
+ 
+     def _read_blocks(
+         self,
+         read_spec: ReadSpec,
+         dst_engine_id: str,
+         request_id: str,
+-        remote_request_id: str,
+         local_xfer_side_handle: int,
+         local_dram_handle: int | None,
+         remote_xfer_side_handle: int,
+-        expected_consumers: int,
+         awaiting_kvs: bool,
+     ) -> bool:
+         """Post a READ point-to-point xfer request from a single local worker to
+@@ -443,32 +464,8 @@
+         # NOTE(rob): according to nvidia the staging blocks are used to
+         # saturate IB with heterogeneous TP sizes.
+ 
+-        # Number of local workers that will notify this producer worker.
+-        # Propagate on notification so dst worker can wait before freeing.
+-        notif_id = f"{remote_request_id}:{expected_consumers}".encode()
+-
+-        # Full prefix cache hit: do not need to read remote blocks,
+-        # just notify P worker that we have the blocks we need.
++        # No-read completions use the same terminal acknowledgement as READs.
+         if not any(len(group) > 0 for group in local_block_ids):
+-            # A full prefix cache hit is indicated with an empty list.
+-            agent_name = self._remote_agents[dst_engine_id][(0, remote_rank)]
+-            try:
+-                self.nixl_wrapper.send_notif(agent_name, notif_msg=notif_id)
+-            except Exception as e:
+-                self._log_failure(
+-                    failure_type="notification_failed",
+-                    msg="P worker blocks will be freed after timeout. "
+-                    "This may indicate network issues.",
+-                    req_id=request_id,
+-                    error=e,
+-                    dst_engine_id=dst_engine_id,
+-                    remote_rank=remote_rank,
+-                    remote_agent_name=agent_name,
+-                )
+-                self.xfer_stats.record_failed_notification()
+-            # Report even on notification failure: the KV is already local, and
+-            # an unreported parked request would hold its blocks forever.
+-            # Notify-only recvs must stay unreported (scheduler asserts).
+             if awaiting_kvs:
+                 self._recving_transfers.setdefault(request_id, [])
+             return True
+@@ -545,8 +542,6 @@
+                     remote_xfer_side_handle=remote_xfer_side_handle,
+                     local_block_descs_ids=local_block_descs_ids,
+                     remote_block_descs_ids=remote_block_descs_ids,
+-                    notif_agent=self._remote_agents[dst_engine_id][(0, remote_rank)],
+-                    notif_id=notif_id,
+                 )
+                 return True
+             handle = self.nixl_wrapper.make_prepped_xfer(
+@@ -555,7 +550,6 @@
+                 local_block_descs_ids,
+                 remote_xfer_side_handle,
+                 remote_block_descs_ids,
+-                notif_msg=notif_id,
+             )
+ 
+             # Begin async xfer.
+@@ -589,8 +583,6 @@
+         remote_xfer_side_handle: int,
+         local_block_descs_ids: np.ndarray,
+         remote_block_descs_ids: np.ndarray,
+-        notif_agent: str,
+-        notif_id: bytes,
+     ) -> None:
+         """Split a READ across the local DRAM and device descriptor lists."""
+         desc_is_dram = self._desc_is_dram_by_block_size[local_block_size_key]
+@@ -619,71 +611,51 @@
+                     )
+         except Exception:
+             for handle in handles:
+-                if not self._try_release_xfer_handle(request_id, handle):
++                if not self._try_release_xfer_handle(
++                    request_id, handle, unsubmitted=True
++                ):
+                     self._recving_transfers[request_id].append(handle)
+             raise
+ 
+-        self._pending_recv_notifs.setdefault(request_id, []).append(
+-            (notif_agent, notif_id)
+-        )
+         for i, handle in enumerate(handles):
+             try:
+                 self.nixl_wrapper.transfer(handle)
+             except Exception:
+-                for unstarted in handles[i:]:
+-                    if not self._try_release_xfer_handle(request_id, unstarted):
+-                        self._recving_transfers[request_id].append(unstarted)
++                for j in range(i, len(handles)):
++                    if not self._try_release_xfer_handle(
++                        request_id, handles[j], unsubmitted=j > i
++                    ):
++                        self._recving_transfers[request_id].append(handles[j])
+                 raise
+             self._recving_transfers[request_id].append(handle)
+ 
++    def get_pending_transfers(self) -> set[str]:
++        """Drain control futures even after a no-READ receive has finished locally."""
++        return super().get_pending_transfers() | self._read_lease_auth_futures.keys()
++
+     def _get_new_notifs(self) -> set[str]:
+-        """Get req_ids which got a remote xfer message. When multiple consumers
+-        are reading from the same producer (heterogeneous TP or DCP
+-        scenario), wait for all consumers to be done pulling.
+-
+-        Also handles heartbeat notifications ("HB:req1,req2,...") by
+-        extending the lease on the referenced requests.
+-        """
+-        assert self.transfer_topo is not None
+-        notified_req_ids: set[str] = set()
++        """Forward terminal reader evidence to the source scheduler, never free KV."""
+         for notifs in self.nixl_wrapper.get_new_notifs().values():
+             for notif in notifs:
+-                msg = notif.decode("utf-8")
+-
+-                # Handle heartbeat messages from D-side.
+-                if msg.startswith("HB:"):
+-                    self._handle_heartbeat(msg[3:])
+-                    continue
+-
+-                req_id, expected_consumers = msg.rsplit(":", 1)
+-                if (
+-                    req_id not in self._reqs_to_send
+-                    and req_id not in self._reqs_to_process
+-                ):
+-                    logger.error(
+-                        "Potentially invalid KV blocks for "
+-                        "unrecognized request %s were retrieved by "
+-                        "a decode worker. They may have expired.",
+-                        req_id,
++                if notif.startswith(READ_LEASE_DONE_NOTIF):
++                    self._completed_source_reads.add(
++                        tuple(
++                            msgspec.msgpack.decode(notif[len(READ_LEASE_DONE_NOTIF) :])
++                        )
+                     )
+-                    continue
+-
+-                # Every reader of this req_id reports the same count (it's
+-                # derived from aggregate topology, not the specific rank),
+-                # so repeated notifications never disagree on it.
+-                self.expected_consumer_notifications_by_req[req_id] = int(
+-                    expected_consumers
+-                )
+-
+-                self.consumer_notification_counts_by_req[req_id] += 1
+-                # Wait all consumers (D) to be done reading before freeing.
+-                if (
+-                    self.consumer_notification_counts_by_req[req_id]
+-                    == self.expected_consumer_notifications_by_req[req_id]
+-                ):
+-                    notified_req_ids.add(req_id)
+-                    del self.consumer_notification_counts_by_req[req_id]
+-                    del self.expected_consumer_notifications_by_req[req_id]
+-                    self._reqs_to_process.remove(req_id)
+-                    self._reqs_to_send.pop(req_id, None)
+-        return notified_req_ids
++                elif notif.startswith(b"HB:"):
++                    reader_rank, consumer_ids = msgspec.msgpack.decode(notif[3:])
++                    self._source_heartbeats.update(
++                        (req_id, consumer_id, reader_rank)
++                        for req_id, consumer_id in consumer_ids.items()
++                    )
++                else:
++                    raise RuntimeError("NIXL received an unleased READ completion")
++        return set()
++
++    def _reap_expired_send_leases(self, done_sending: set[str]) -> None:
++        """Acknowledge only releases that the scheduler has already authorized."""
++        for req_id in self._source_releases:
++            self._reqs_to_process.remove(req_id)
++            done_sending.add(req_id)
++        self._source_releases.clear()
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/nixl/push_worker.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/nixl/push_worker.py
+@@ -341,7 +341,7 @@
+             return
+ 
+         def _on_handshake(
+-            f: Future[tuple[dict[tuple[int, int], str], float]],
++            f: Future[dict[tuple[int, int], str]],
+             rid: str = req_id,
+             rd: dict[str, Any] = reg_data,
+         ) -> None:
+@@ -463,7 +463,7 @@
+         if fut is not None:
+ 
+             def _on_handshake(
+-                f: Future[tuple[dict[tuple[int, int], str], float]],
++                f: Future[dict[tuple[int, int], str]],
+                 rid: str = request_id,
+                 blocks: BlockIds = local_block_ids,
+                 rd: dict[str, Any] = registration_data,

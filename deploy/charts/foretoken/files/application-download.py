@@ -4,6 +4,7 @@
 """Install one published application directory before its Pod starts."""
 
 import json
+import logging
 import os
 import shutil
 import sys
@@ -12,6 +13,8 @@ import time
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 from urllib.request import urlopen
+
+logger = logging.getLogger(__name__)
 
 # Init containers have no serving probe. Fail an idle transfer so kubelet can retry it.
 _HTTP_IDLE_TIMEOUT = 30
@@ -54,7 +57,7 @@ def install(reference: str, destination: Path) -> None:
         entries = {_relative_path(entry["path"]): entry for entry in manifest["files"]}
         if "archive" in manifest:
             archive = _relative_path(manifest["archive"])
-            print("Downloading application archive", flush=True)
+            logger.info("Downloading application archive")
             remaining = set(entries)
             with (
                 urlopen(origin + "/" + quote(archive.as_posix(), safe="/"), timeout=_HTTP_IDLE_TIMEOUT) as response,
@@ -74,7 +77,7 @@ def install(reference: str, destination: Path) -> None:
                 raise OSError("application archive omitted files: " + ", ".join(map(str, sorted(remaining))))
         else:
             # Installed releases retain their immutable per-file publications.
-            print("Downloading application files", flush=True)
+            logger.info("Downloading application files")
             for relative, entry in entries.items():
                 url = origin + "/" + quote(relative.as_posix(), safe="/")
                 with urlopen(url, timeout=_HTTP_IDLE_TIMEOUT) as response:
@@ -83,11 +86,17 @@ def install(reference: str, destination: Path) -> None:
         if selected.exists():
             shutil.rmtree(selected)
         os.rename(staging, selected)
-        print(f"Application files ready: {len(entries)} files in {time.monotonic() - started:.1f}s", flush=True)
+        logger.info("Application files ready: %s files in %.1fs", len(entries), time.monotonic() - started)
     finally:
         if staging.exists():
             shutil.rmtree(staging)
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Install the application's selected files for its init container."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr, force=True)
     install(sys.argv[1], Path(sys.argv[2]))
+
+
+if __name__ == "__main__":
+    main()

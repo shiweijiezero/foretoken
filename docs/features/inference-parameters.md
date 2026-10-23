@@ -75,6 +75,23 @@ spec:
 
 `ModelService.spec.nodeSelector` selects the default Pool. `modelPools[].nodeSelector` selects a different group for one Pool. The cluster scheduler places serving and runtime-preparation Pods on nodes carrying the selected label.
 
+## Schedule multi-node replicas
+
+A platform administrator can select [Volcano](https://github.com/kubernetes-sigs/lws/tree/main/docs/examples/sample/gang-scheduling) for complete-group placement, [Kueue](https://kueue.sigs.k8s.io/docs/tasks/run/leaderworkerset/) for quota admission, or both. Foretoken continues to own model capacity, readiness and request draining. Single-node replicas and CPU-only model preparation keep their ordinary scheduling path.
+
+The native controllers and queues must already exist. For the combined example, prepare Volcano Queue `inference`, enable Kueue's LeaderWorkerSet integration and create LocalQueue `inference` in each service namespace. Save this platform selection in `deploy/platform-values.yaml`:
+
+```yaml
+workload:
+  leaderWorkerScheduling:
+    volcanoQueueName: inference
+    kueueLocalQueueName: inference
+```
+
+Omit either field to use only the other integration. Run `foretoken install --values deploy/platform-values.yaml`, retaining the original source or registry options, then redeploy the instances that should adopt the queues. Foretoken enables Volcano support in its managed LeaderWorkerSet controller; an independently installed controller remains under its administrator's control.
+
+Platform updates do not change existing or stopped instances. Their selected queues remain fixed until the next explicit `foretoken deploy`. Use `leaderWorkerScheduling: null` to clear the selection for new deployments.
+
 ## Instance concurrency
 
 To bound accepted, unfinished work at each text model-server instance, including its engine queue, add this setting to the model YAML:
@@ -138,6 +155,56 @@ P/D and E/P/D Pools can select their own parallelism settings within the model a
 
 Expert parallelism (EP) keeps each DP rank's KV cache separate. Single-node EP requests RDMA devices only when its active communication backend requires them.
 
+## Prefill/decode separation and KV reuse
+
+Prefill processes the input; Decode generates the answer. Mooncake and NIXL can also reuse a previous Decode instance's retained KV cache for a later Prefill. Requests may reach different frontends and Prefill instances; reuse depends on matching input tokens and cache isolation, not a session identifier.
+
+For a service with `prefill` and `decode` entries in `modelPools`, Mooncake is the default connector. Foretoken uses RDMA when both stages can use a compatible device allocation and network; otherwise it selects TCP. Network preparation is part of [platform installation](../deployment/kubernetes.md#rdma-networking), so model configuration needs no NIC or port settings.
+
+The native transport uses GPUDirect RDMA—direct NIC access to GPU memory—when supported by the cluster's GPU and NIC drivers, without a model-level switch.
+
+To use NIXL, select only the connector:
+
+```yaml
+spec:
+  kvTransfer:
+    connector: nixl
+```
+
+Set `kvTransfer.protocol` to `tcp` or `rdma` only when overriding automatic selection. Apply changes with `foretoken deploy <directory>`; this replaces the model's P/D instances while other services keep their own transport choices.
+
+Reuse is enabled automatically for full-attention text models without LoRA in the Foretoken vLLM 0.31 and supplied MetaX environments. These environments include the required transport dependencies.
+
+Reuse requires one node per model replica, compatible P/D KV layouts, and PP/PCP/DCP of 1. NIXL also requires matching P/D TP sizes. Other supported configurations retain ordinary P/D behavior. Encoder separation and Mooncake Store use Mooncake.
+
+The NIXL example declares `Qwen/Qwen2.5-0.5B-Instruct` and its P/D Pools directly in [`model.yaml`](../../examples/feature/nixl-prefix-reuse/model.yaml), leaving network transport selection automatic. It requests one GPU per stage and two frontend replicas, using the [platform's default storage](model-storage.md). On a prepared Foretoken cluster, run from the repository root:
+
+```bash
+foretoken deploy examples/feature/nixl-prefix-reuse --timeout 20m
+FRONTEND_URL="$(foretoken endpoint qwen-nixl)"
+FRONTEND_HOST="$(foretoken endpoint qwen-nixl --host)"
+
+curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $FRONTEND_HOST" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "messages": [{"role": "user", "content": "Explain how prompt caching reduces latency."}],
+    "temperature": 0,
+    "max_tokens": 256
+  }'
+```
+
+For subsequent turns, send the complete conversation history through the same API. Chat templates that remove earlier reasoning change the token prefix and require recomputation. A matching retained prefix extends Prefill's local cache when the engine finds the transfer worthwhile; otherwise Prefill computes normally. Load-based routing also uses this reuse path. [Routing weights](../../data-plane/frontend/src/router/README.md) control target preference, not whether reuse is available.
+
+Use [`foretoken perf`](../../benchmarks/docs/perf/README.md) to measure performance, including [multi-turn conversation workloads](../../benchmarks/docs/perf/conversations.md).
+
+Remove the example when finished:
+
+```bash
+foretoken delete qwen-nixl
+```
+
 ## Speculative decoding
 
 Keep the complete native dictionary together:
@@ -157,6 +224,6 @@ Methods and child fields follow vLLM. For methods using draft weights, `model` a
 
 ## Platform-managed options
 
-Use `spec.model`, `spec.tokenizer`, `nodes`, `kvCache` and `ecProfile` for model selection, placement and cache transfer. Foretoken supplies the corresponding startup settings. Profiling owns its native configuration when a runtime cache is enabled; mcTracer also selects its worker class. Multi-node replicas use the `mp` executor.
+Use `spec.model`, `spec.tokenizer`, `nodes`, `kvCache`, `kvTransfer` and `ecProfile` for model selection, placement, cache storage and transfer. Foretoken supplies the corresponding startup settings. Profiling owns its native configuration when a runtime cache is enabled; mcTracer also selects its worker class. Multi-node replicas use the `mp` executor.
 
 Other native options, including `ec-manager-config` and custom workers outside mcTracer, are passed to vLLM. See the [vLLM argument reference](https://docs.vllm.ai/en/latest/configuration/engine_args/).

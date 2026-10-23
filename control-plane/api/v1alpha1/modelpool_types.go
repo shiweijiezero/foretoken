@@ -6,7 +6,10 @@
 package v1alpha1
 
 import (
+	"fmt"
+
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -51,10 +54,24 @@ type NormalizedMooncakeStore struct {
 	ManagedBinding *ManagedMooncakeStoreBinding `json:"managedBinding,omitempty"`
 }
 
+// NormalizedKVOffload retains parsed capacity while preserving the Pool's quantity wire format.
+type NormalizedKVOffload struct {
+	// CPUCacheSize is the CPU tier capacity available to the inference engine.
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:XValidation:rule="isQuantity(self) && quantity(self).compareTo(quantity('0')) >= 0",message="must be a valid non-negative Kubernetes resource quantity"
+	CPUCacheSize resource.Quantity `json:"cpuCacheSize"`
+
+	// +optional
+	Filesystem bool `json:"filesystem,omitempty"`
+}
+
 // NormalizedKVCache is the controller-owned cache configuration attached to ModelPool.
 // +kubebuilder:validation:XValidation:rule="(has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload) && has(self.mooncakeStore))",message="kvCache must select exactly one storage mode"
 type NormalizedKVCache struct {
-	Offload       *KVOffload               `json:"offload,omitempty"`
+	Offload       *NormalizedKVOffload     `json:"offload,omitempty"`
 	MooncakeStore *NormalizedMooncakeStore `json:"mooncakeStore,omitempty"`
 }
 
@@ -68,6 +85,11 @@ type RuntimeCacheBinding struct {
 	// +kubebuilder:validation:MaxLength=1024
 	// +kubebuilder:validation:Pattern="^/"
 	MountPath string `json:"mountPath"`
+
+	// Directory identifies the authorized data directory retained by this execution cohort.
+	// Shared-cache lifecycle consumers use it independently of namespace-local claim names.
+	// +optional
+	Directory string `json:"directory,omitempty"`
 
 	// DirectoryOwner preserves the discovered directory identity across cache consumers.
 	// +optional
@@ -87,6 +109,22 @@ type HuggingFaceAccess struct {
 	TokenSecretKey string `json:"tokenSecretKey,omitempty"`
 }
 
+// LeaderWorkerScheduling selects native placement and quota admission for distributed execution.
+// The platform freezes these independent choices before model workloads are created.
+type LeaderWorkerScheduling struct {
+	// VolcanoQueueName selects Volcano group placement; omission keeps the ordinary scheduler.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern="^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+	VolcanoQueueName string `json:"volcanoQueueName,omitempty"`
+
+	// KueueLocalQueueName selects quota admission in the workload's namespace.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern="^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+	KueueLocalQueueName string `json:"kueueLocalQueueName,omitempty"`
+}
+
 // ApplicationSelection pins trusted platform execution settings until an explicit deployment.
 // Controllers persist it before creating consumers so recovery never reselects platform defaults.
 type ApplicationSelection struct {
@@ -94,6 +132,10 @@ type ApplicationSelection struct {
 	// ImageProfile distinguishes serving, Omni and diagnostic environments during selection.
 	// +optional
 	ImageProfile string `json:"imageProfile,omitempty"`
+	// PreparationVersion pins the selected executable's artifact acquisition and cache contract.
+	// Absence retains the backend's earlier acquisition protocol.
+	// +optional
+	PreparationVersion *int32 `json:"preparationVersion,omitempty"`
 	// SourceRevision retains the admitted source intent independently of source-mode defaults.
 	// +optional
 	SourceRevision string `json:"sourceRevision,omitempty"`
@@ -103,12 +145,20 @@ type ApplicationSelection struct {
 	DeploymentRevision string `json:"deploymentRevision,omitempty"`
 	// AdmissionStore retains the ledger connection selected with this executable application.
 	// +optional
-	AdmissionStore *AdmissionStoreConnection `json:"admissionStore,omitempty"`
+	AdmissionStore *RedisConnection `json:"admissionStore,omitempty"`
 	// InstanceAdmissionProtocol pins the instance configuration interface of this executable.
 	// Zero retains startup-only limits; one selects live file configuration.
 	// +optional
 	// +kubebuilder:validation:Maximum=1
 	InstanceAdmissionProtocol uint32 `json:"instanceAdmissionProtocol,omitempty"`
+}
+
+// ModelApplicationSelection retains model execution and distributed queue choices until redeployment.
+type ModelApplicationSelection struct {
+	ApplicationSelection `json:",inline"`
+	// LeaderWorkerScheduling retains placement and quota queues when platform defaults change.
+	// +optional
+	LeaderWorkerScheduling *LeaderWorkerScheduling `json:"leaderWorkerScheduling,omitempty"`
 }
 
 // NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
@@ -142,7 +192,7 @@ type NormalizedPoolTemplate struct {
 
 	// Application is selected by the ModelService controller, not by user model intent.
 	// +optional
-	Application *ApplicationSelection `json:"application,omitempty"`
+	Application *ModelApplicationSelection `json:"application,omitempty"`
 
 	// RuntimeCache is set by the ModelService controller when persistent runtime caching is enabled.
 	// +optional
@@ -196,6 +246,15 @@ type NormalizedPoolTemplate struct {
 	// KVCache is immutable resolved cache-placement intent.
 	// +optional
 	KVCache *NormalizedKVCache `json:"kvCache,omitempty"`
+
+	// KVTransfer carries the service's transport selection for prefill and decode Pools.
+	// +optional
+	KVTransfer *KVTransfer `json:"kvTransfer,omitempty"`
+
+	// RDMA is the advertised allocation selected for this Pool's nodes.
+	// Runtime resolution requests it only when the engine or transfer needs it.
+	// +optional
+	RDMA *RDMAAllocation `json:"rdma,omitempty"`
 
 	// Features is the normalized explicit capabilities for this Pool.
 	Features ModelFeatures `json:"features"`
@@ -259,6 +318,11 @@ type ModelPoolStatus struct {
 	// +kubebuilder:validation:MaxLength=63
 	PreparedRevision string `json:"preparedRevision,omitempty"`
 
+	// ArtifactSource retains the selected source record, including a pending publication, while stopped.
+	// Superseded cohorts retain their own records until their workloads finish draining.
+	// +optional
+	ArtifactSource *LocalObjectReference `json:"artifactSource,omitempty"`
+
 	// InstanceAdmissionVersion is reserved before publishing an instance configuration.
 	// It prevents ConfigMap restoration from rolling the publication version backward.
 	// +optional
@@ -295,6 +359,15 @@ type ModelPoolList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []ModelPool `json:"items"`
+}
+
+// Bytes returns exact positive byte capacity for compiler validation and runtime projection.
+func (offload NormalizedKVOffload) Bytes() (int64, error) {
+	bytes := offload.CPUCacheSize.Value()
+	if bytes <= 0 || offload.CPUCacheSize.CmpInt64(bytes) != 0 {
+		return 0, fmt.Errorf("kvCache.offload.cpuCacheSize must be a positive integer number of bytes")
+	}
+	return bytes, nil
 }
 
 func init() {

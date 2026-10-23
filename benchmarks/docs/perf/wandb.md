@@ -12,7 +12,7 @@ foretoken perf examples/quickstart/qwen3-0.6b \
   --wandb-run-name quickstart
 ```
 
-Open the run link printed by the command; it also appears in quiet mode. Use `--wandb-entity` to select an account or team. Set the same `--wandb-group` for runs you want to compare in a group's Workspace. Sweeps and multi-dataset runs generate a group when none is supplied; single runs are ungrouped by default.
+The command prints the result directory and, for online uploads, the `wandb-sync.log` path, including in quiet mode. This log contains the run link, upload progress, and any recovery instructions; upload continues after the measurement command exits. Use `--wandb-entity` to select an account or team. Set the same `--wandb-group` for runs you want to compare in a group's Workspace. Sweeps and multi-dataset runs generate a group when none is supplied; single runs are ungrouped by default.
 
 ## Follow progress and compare results
 

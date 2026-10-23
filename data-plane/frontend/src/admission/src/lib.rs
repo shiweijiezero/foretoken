@@ -12,11 +12,11 @@ mod telemetry;
 use thiserror::Error;
 
 pub use config::{AdmissionConfig, AdmissionConfigError, CallerCapacity, RoleRule};
-pub use foretoken_request_ledger::{RequestLedger, ReservationRef};
-pub use permit::{AdmissionPermit, DispatchRules};
+pub use foretoken_request_ledger::{LedgerError, RequestLedger, ReservationRef};
+pub use permit::{AdmissionPermit, DispatchRules, ExecutionReservation};
 pub use registry::{Admission, AdmissionRegistry, PreparedAdmissions};
 pub use request::{AdmissionRequest, CallerIdentity, with_caller};
-pub use telemetry::{AdmissionAttempt, mark_request_deadline, observe_http, render_metrics};
+pub use telemetry::{AdmissionAttempt, encode_metrics, mark_request_deadline, observe_http};
 
 /// Admission outcomes translated into each external protocol's existing error envelope.
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
@@ -42,7 +42,6 @@ impl From<foretoken_request_ledger::LedgerError> for AdmissionError {
         if matches!(&error, foretoken_request_ledger::LedgerError::OwnerClosed) {
             return Self::Closed;
         }
-        tracing::warn!(error = %error, "request capacity operation failed");
         Self::StoreUnavailable
     }
 }

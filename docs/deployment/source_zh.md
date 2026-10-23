@@ -5,25 +5,27 @@
 
 [English](source.md) | [中文](source_zh.md)
 
-从本地源码构建 Foretoken，并将源码改动部署到 Kubernetes 集群。
+从本地源码目录构建 Foretoken，并将改动部署到 Kubernetes 集群。普通文件夹、clone 和 worktree 使用相同命令，构建依赖按源码中声明的版本自动准备。
 
 ## 从源码安装
 
-准备 Python 3.11+、Git、kubectl 和 [Helm 4](../../cli/README_zh.md#开始前)，并选择具备 GPU 的 Kubernetes 集群。集群需要允许运行源码构建任务，并为应用文件提供默认存储类（StorageClass）。
+准备 kubectl 和 [Helm 4](../../cli/README_zh.md#开始前)，选择有 GPU 和默认存储类（StorageClass）的 Kubernetes 集群。共享集群的[源码构建权限](../../cli/README_zh.md#为成员准备命名空间)由管理员分配。
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 kubectl config current-context
+
+uv venv --python 3.12 --seed  # 使用 pip 时：python3 -m venv .venv（Python 3.11+）
+source .venv/bin/activate
+uv pip install -e .  # 或 pip install -e .
 ```
 
-从当前源码安装 CLI：
+后续命令在已激活的环境中执行。
 
-```bash
-pip install -e .
-```
+集群只需安装一次源码版平台。平台已经从源码安装时，可直接进入[部署步骤](#部署模型服务)；另一台工作站只需安装 CLI 并准备源码目录。
 
-本地 kind 或 k3d 集群无需镜像仓库，可直接构建并安装：
+首次在本地 kind 或 k3d 集群安装时，无需镜像仓库，可直接构建并安装：
 
 ```bash
 foretoken install -e .
@@ -31,85 +33,77 @@ foretoken install -e .
 
 这会安装共享的 Foretoken 平台，构建在集群中进行；也可替换已通过 CLI 安装的发布版平台。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d_zh.md)。其他 Kubernetes 集群需要构建任务和节点都能访问的镜像仓库，安装命令及仓库认证见[Kubernetes 部署指南](kubernetes_zh.md#2-从源码安装-foretoken)。
 
-源码构建自动复用节点本地的持久编译缓存。需要将构建产物存入其他存储类时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName`，通过 `--values` 传入；执行和编译缓存仍由框架自动安排在本地存储。支持动态供卷的原生 NFS 和 `nfs.csi.k8s.io`。应用文件使用集群默认存储类，也可通过 `applicationFiles.storageClassName` 指定。已有卷保留其存储类。
+不同源码目录会复用已有工具链、运行环境、依赖下载和兼容的编译缓存；每个目录保留自己的增量构建状态。
+
+需要将构建产物存入其他存储类时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName`，通过 `--values` 传入；执行和编译缓存仍由框架自动安排在本地存储。支持动态供卷的原生 NFS 和 `nfs.csi.k8s.io`。应用文件使用集群默认存储类，也可通过 `applicationFiles.storageClassName` 指定。已有卷保留其存储类。
 
 ## 部署模型服务
 
-在 Foretoken 仓库根目录部署快速开始示例，使用当前目录的代码：
+在 Foretoken 仓库根目录部署快速开始示例，使用当前目录的代码。平台尚未准备默认模型存储时，先[选择存储](kubernetes_zh.md#3-部署与更新代码)：
 
 ```bash
-foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 ```
 
-这会在 `foretoken-demo` 命名空间中创建前端和 `Qwen/Qwen3-0.6B` 模型服务，使用一张 GPU。部署完成后，发送请求：
+不传 `--name` 时，实例名取自 [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `qwen3-0-6b`。添加 `--name candidate-a` 则使用 `candidate-a`，后续操作也用这个名字。
+
+实例在当前 kubeconfig 的命名空间中运行，包含前端和 `Qwen/Qwen3-0.6B` 模型服务，使用一张 GPU。部署完成后，发送请求：
 
 ```bash
-FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-修改控制器、前端或模型服务代码后，重新执行 `foretoken deploy`，即可构建改动并更新该部署命名空间。共享 CRD 或平台配置的变更仍通过 `foretoken install -e .` 应用。服务代码更新时会重启相应进程，并可能重新加载模型权重。
+修改控制器、前端或模型服务代码后，重新执行上面的部署命令，即可构建改动并只更新该实例，不影响同一命名空间中的其他实例。共享 CRD 或平台配置的变更仍通过 `foretoken install -e .` 应用。服务代码更新时会重启相应进程，并可能重新加载模型权重。
 
 从其他目录执行时，可用 `-e` 指定 Foretoken 目录。例如，在仓库的父目录中执行 `foretoken deploy foretoken/examples/quickstart/qwen3-0.6b -e foretoken --timeout 20m`。部署配置的路径始终相对于执行命令的目录。
 
-CLI 代码使用执行 `pip install -e .` 时的目录；修改其 Python 依赖后，需要重新安装 CLI。
+CLI 使用 editable 安装时选定的源码目录；修改其 Python 依赖后，需要重新安装 CLI。
 
 示例使用完后删除：
 
 ```bash
-foretoken delete examples/quickstart/qwen3-0.6b
+foretoken delete qwen3-0-6b
 ```
 
 ### 并行运行候选方案
 
-每个候选使用独立的 Foretoken 源码目录和 Kubernetes 命名空间，即可并行构建、部署不同改动。可以分别克隆仓库，也可以用 Git worktree 从同一仓库创建独立工作目录。候选共用已安装的 CLI 和集群平台，各命名空间独立运行自己的控制器和服务代码。
+为每个候选使用独立的源码目录和实例名，即可在同一个 Kubernetes 命名空间中并行运行不同代码版本。候选共用已安装的平台，各自更新自己的控制器和服务代码，默认通过同一个 Gateway 提供 HTTP 访问。
 
-从仓库根目录创建候选，并通过 Kustomize 配置复用快速开始示例：
+从仓库根目录执行：
 
 ```bash
 git worktree add ../candidate-a -b experiment/candidate-a
-cd ../candidate-a
-mkdir -p examples/candidate
-cat > examples/candidate/kustomization.yaml <<'EOF'
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-namespace: candidate-a
-resources:
-  - ../quickstart/qwen3-0.6b
-patches:
-  - target:
-      kind: RuntimeCache
-    patch: |-
-      - op: replace
-        path: /spec
-        value:
-          initialSize: 20Gi
-          accessMode: ReadWriteOnce
-          retentionPolicy: Delete
-EOF
+git worktree add ../candidate-b -b experiment/candidate-b
 
-foretoken deploy examples/candidate --timeout 20m
-foretoken perf examples/candidate --num-prompts 20 \
+foretoken deploy ../candidate-a/examples/quickstart/qwen3-0.6b \
+  --name candidate-a -e ../candidate-a --timeout 20m
+foretoken deploy ../candidate-b/examples/quickstart/qwen3-0.6b \
+  --name candidate-b -e ../candidate-b --timeout 20m
+
+foretoken perf ../candidate-a/examples/quickstart/qwen3-0.6b \
+  --name candidate-a --num-prompts 20 \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-候选沿用快速开始的单卡配置，模型文件使用集群提供的 20 GiB 存储，无需挂载宿主机目录。若要共用已有模型目录，按[模型存储指南](../features/model-storage_zh.md)配置。
+候选沿用快速开始的单卡配置。平台已准备默认模型存储时，普通文件夹、clone 和 worktree 都会复用该存储，运行状态仍按实例隔离。自定义目录或独立动态存储见[模型存储](../features/model-storage_zh.md)。
 
-其他候选使用独立的源码目录、命名空间和 iteration 名称，并分别预留 GPU、CPU 和内存。限定节点可添加 `spec.nodeSelector`，但它不指定 GPU 编号。
+每个候选分别需要 GPU、CPU 和内存。限定节点可添加 `spec.nodeSelector`，但它不指定 GPU 编号。
 
-结果保存在各自源码目录中。[实验记录手册](../../rsi-playbooks/experiment-records_zh.md#分析结果)说明了比较候选时应查看哪些文件。共享 CPU、存储和网络的活动仍可能影响测量。GPU 全部占用时，替换服务可能需要短暂停止旧服务，释放设备。
+上述评测将结果保存在 `results/candidates` 下。[实验记录手册](../../rsi-playbooks/experiment-records_zh.md#分析结果)说明了比较候选时应查看哪些文件。共享 CPU、存储和网络的活动仍可能影响测量。GPU 全部占用时，替换服务可能需要短暂停止旧服务，释放设备。
 
 候选结束后删除部署：
 
 ```bash
-foretoken delete examples/candidate
+foretoken delete candidate-a
+foretoken delete candidate-b
 ```
 
-删除命令先等待候选服务完成清理，再移除其控制器和命名空间，同时回收不再使用的构建资源。源码目录、实验结果和源码归档会保留。
-
-所有候选结束后，再统一卸载平台。
+删除一个候选只移除该实例及其控制器，不影响旁边的候选或 Kubernetes 命名空间。源码目录、增量构建状态、实验结果和管理员提供的存储保留；模型缓存与动态卷的清理规则见 [CLI 指南](../../cli/README_zh.md#清理)。
 
 ## 修改推理引擎
 
@@ -119,7 +113,9 @@ foretoken delete examples/candidate
 foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeout 20m
 ```
 
-后续从这个 Foretoken 目录部署时，会沿用选定的 vLLM 目录。修改 Python、Triton 或 NVIDIA CUDA/C++ 代码后，重新执行 `foretoken deploy`，所需编译会自动完成。每个 Foretoken 源码目录的引擎目录需分别指定。
+后续从这个 Foretoken 目录部署时，会沿用选定的 vLLM 目录。修改 Python、Triton 或 NVIDIA CUDA/C++ 代码后，部署时添加 `-e .`，即可自动构建并应用改动。每个 Foretoken 源码目录的引擎目录需分别指定。
+
+需要指定构建并发时，在源码安装或部署命令前加 `BUILD_JOBS=4`，各 Go、Rust、引擎原生编译和 Python 字节码准备任务分别使用四个并发作业。
 
 修改沐曦原生 kernel 时，还需同时指定插件目录及与其匹配的 vLLM 目录：
 
@@ -139,7 +135,7 @@ foretoken deploy examples/quickstart/qwen3-0.6b \
 {"baseImage": "ghcr.io/example/custom-vllm:latest"}
 ```
 
-源码安装、`make image-model-server`、`deploy/dev-build` 和发布构建都会使用这个设置。镜像必须与 Foretoken 的 vLLM 适配器兼容，并且构建器可以访问。已有源码安装修改后，重新执行 `foretoken deploy`。
+源码安装、`make image-model-server`、`deploy/dev-build` 和发布构建都会使用这个设置。镜像必须与 Foretoken 的 vLLM 适配器兼容，并且构建器可以访问。已有源码安装修改后，部署时添加 `-e .`。
 
 只为某次安装指定不同基础镜像时，在 `deploy/platform-values.yaml` 中设置 `runtime.vllm.image`：
 
@@ -155,7 +151,7 @@ runtime:
 
 ### vLLM-Omni 运行时
 
-vLLM-Omni 使用独立的模型服务镜像。在具备 Docker BuildKit、Make 和 rustup 管理的 Rust 工具链的机器上，从仓库根目录构建：
+vLLM-Omni 使用独立的模型服务镜像。在具备 Docker BuildKit 和 Make 的机器上，从仓库根目录构建：
 
 ```bash
 make image-vllm-omni VLLM_OMNI_IMAGE=foretoken-vllm-omni:latest

@@ -150,8 +150,7 @@ spec:
                             x-kubernetes-map-type: atomic
                         type: object
                         x-kubernetes-validations:
-                        - message: exactly one admission store URL or Secret reference
-                            is required
+                        - message: exactly one Redis URL or Secret reference is required
                           rule: has(self.url) != has(self.urlSecretRef)
                       applicationURL:
                         type: string
@@ -169,6 +168,29 @@ spec:
                           Zero retains startup-only limits; one selects live file configuration.
                         format: int32
                         maximum: 1
+                        type: integer
+                      leaderWorkerScheduling:
+                        description: LeaderWorkerScheduling retains placement and
+                          quota queues when platform defaults change.
+                        properties:
+                          kueueLocalQueueName:
+                            description: KueueLocalQueueName selects quota admission
+                              in the workload's namespace.
+                            maxLength: 63
+                            pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                            type: string
+                          volcanoQueueName:
+                            description: VolcanoQueueName selects Volcano group placement;
+                              omission keeps the ordinary scheduler.
+                            maxLength: 253
+                            pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                            type: string
+                        type: object
+                      preparationVersion:
+                        description: |-
+                          PreparationVersion pins the selected executable's artifact acquisition and cache contract.
+                          Absence retains the backend's earlier acquisition protocol.
+                        format: int32
                         type: integer
                       sourceRevision:
                         description: SourceRevision retains the admitted source intent
@@ -468,16 +490,14 @@ spec:
                         - message: exactly one Store source is required
                           rule: has(self.profile) != has(self.managedBinding)
                       offload:
-                        description: KVOffload defines local CPU and optionally filesystem-backed
-                          KV offload.
+                        description: NormalizedKVOffload retains parsed capacity while
+                          preserving the Pool's quantity wire format.
                         properties:
                           cpuCacheSize:
-                            allOf:
-                            - minLength: 1
-                            - minLength: 1
                             description: CPUCacheSize is the CPU tier capacity available
-                              to vLLM.
+                              to the inference engine.
                             maxLength: 64
+                            minLength: 1
                             type: string
                             x-kubernetes-validations:
                             - message: must be a valid non-negative Kubernetes resource
@@ -494,6 +514,25 @@ spec:
                     - message: kvCache must select exactly one storage mode
                       rule: (has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload)
                         && has(self.mooncakeStore))
+                  kvTransfer:
+                    description: KVTransfer carries the service's transport selection
+                      for prefill and decode Pools.
+                    properties:
+                      connector:
+                        description: Connector defaults to mooncake when omitted.
+                        enum:
+                        - mooncake
+                        - nixl
+                        type: string
+                      protocol:
+                        description: |-
+                          Protocol is selected automatically when omitted: RDMA when both stages can request
+                          the platform's advertised devices, otherwise TCP. Set it to override that choice.
+                        enum:
+                        - tcp
+                        - rdma
+                        type: string
+                    type: object
                   memberCount:
                     format: int32
                     minimum: 1
@@ -539,6 +578,132 @@ spec:
                     required:
                     - engine
                     type: object
+                  rdma:
+                    description: |-
+                      RDMA is the advertised allocation selected for this Pool's nodes.
+                      Runtime resolution requests it only when the engine or transfer needs it.
+                    properties:
+                      networks:
+                        description: Networks are the Multus attachments selected
+                          with these device requests.
+                        items:
+                          type: string
+                        type: array
+                      requiredNodeAffinity:
+                        description: RequiredNodeAffinity constrains members to nodes
+                          providing the selected network binding.
+                        properties:
+                          nodeSelectorTerms:
+                            description: Required. A list of node selector terms.
+                              The terms are ORed.
+                            items:
+                              description: |-
+                                A null or empty node selector term matches no objects. The requirements of
+                                them are ANDed.
+                                The TopologySelectorTerm type implements a subset of the NodeSelectorTerm.
+                              properties:
+                                matchExpressions:
+                                  description: A list of node selector requirements
+                                    by node's labels.
+                                  items:
+                                    description: |-
+                                      A node selector requirement is a selector that contains values, a key, and an operator
+                                      that relates the key and values.
+                                    properties:
+                                      key:
+                                        description: The label key that the selector
+                                          applies to.
+                                        type: string
+                                      operator:
+                                        description: |-
+                                          Represents a key's relationship to a set of values.
+                                          Valid operators are In, NotIn, Exists, DoesNotExist. Gt, and Lt.
+                                        type: string
+                                      values:
+                                        description: |-
+                                          An array of string values. If the operator is In or NotIn,
+                                          the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                          the values array must be empty. If the operator is Gt or Lt, the values
+                                          array must have a single element, which will be interpreted as an integer.
+                                          This array is replaced during a strategic merge patch.
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
+                                    required:
+                                    - key
+                                    - operator
+                                    type: object
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                matchFields:
+                                  description: A list of node selector requirements
+                                    by node's fields.
+                                  items:
+                                    description: |-
+                                      A node selector requirement is a selector that contains values, a key, and an operator
+                                      that relates the key and values.
+                                    properties:
+                                      key:
+                                        description: The label key that the selector
+                                          applies to.
+                                        type: string
+                                      operator:
+                                        description: |-
+                                          Represents a key's relationship to a set of values.
+                                          Valid operators are In, NotIn, Exists, DoesNotExist. Gt, and Lt.
+                                        type: string
+                                      values:
+                                        description: |-
+                                          An array of string values. If the operator is In or NotIn,
+                                          the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                          the values array must be empty. If the operator is Gt or Lt, the values
+                                          array must have a single element, which will be interpreted as an integer.
+                                          This array is replaced during a strategic merge patch.
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
+                                    required:
+                                    - key
+                                    - operator
+                                    type: object
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            type: array
+                            x-kubernetes-list-type: atomic
+                        required:
+                        - nodeSelectorTerms
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      resourceCount:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      resourceName:
+                        description: |-
+                          ResourceName and ResourceCount retain allocations written by older controllers.
+                          New allocations use Resources exclusively.
+                        minLength: 1
+                        type: string
+                      resources:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: Resources are requested together by each runtime
+                          member Pod.
+                        type: object
+                    type: object
+                    x-kubernetes-validations:
+                    - message: RDMA requires resources or a retained single-resource
+                        allocation
+                      rule: 'has(self.resources) ? size(self.resources) > 0 && !has(self.resourceName)
+                        && !has(self.resourceCount) : has(self.resourceName) && has(self.resourceCount)'
                   resources:
                     description: ModelResources defines resources for one runtime
                       member Pod.
@@ -637,6 +802,11 @@ spec:
                         maxLength: 253
                         minLength: 1
                         type: string
+                      directory:
+                        description: |-
+                          Directory identifies the authorized data directory retained by this execution cohort.
+                          Shared-cache lifecycle consumers use it independently of namespace-local claim names.
+                        type: string
                       directoryOwner:
                         description: DirectoryOwner preserves the discovered directory
                           identity across cache consumers.
@@ -731,6 +901,21 @@ spec:
           status:
             description: ModelPoolStatus defines the observed state of a ModelPool.
             properties:
+              artifactSource:
+                description: |-
+                  ArtifactSource retains the selected source record, including a pending publication, while stopped.
+                  Superseded cohorts retain their own records until their workloads finish draining.
+                properties:
+                  name:
+                    minLength: 1
+                    type: string
+                  uid:
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current

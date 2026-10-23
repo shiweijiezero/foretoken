@@ -193,18 +193,6 @@ pub(super) enum Effort {
     Max,
 }
 
-impl From<Effort> for ReasoningEffort {
-    fn from(effort: Effort) -> Self {
-        match effort {
-            Effort::Low => Self::Low,
-            Effort::Medium => Self::Medium,
-            Effort::High => Self::High,
-            Effort::XHigh => Self::XHigh,
-            Effort::Max => Self::Max,
-        }
-    }
-}
-
 /// Thinking mode; a separate numeric budget needs backend enforcement.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -274,4 +262,16 @@ pub(super) enum StopReason {
     MaxTokens,
     StopSequence,
     ToolUse,
+}
+
+impl From<Effort> for ReasoningEffort {
+    fn from(effort: Effort) -> Self {
+        match effort {
+            Effort::Low => Self::Low,
+            Effort::Medium => Self::Medium,
+            Effort::High => Self::High,
+            Effort::XHigh => Self::XHigh,
+            Effort::Max => Self::Max,
+        }
+    }
 }

@@ -7,8 +7,9 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use foretoken_request_ledger::{Outcome, RequestLedger, ReservationRef};
+use foretoken_request_ledger::{LedgerError, Outcome, RequestLedger, ReservationRef};
 use tokio::time::Instant;
+use tracing::Instrument;
 
 use crate::telemetry::AdmissionAttempt;
 use crate::{Admission, AdmissionError};
@@ -26,18 +27,63 @@ struct DispatchState {
     accepted: bool,
 }
 
-struct SharedReservation {
+/// Explicit cancellation and retained completion observation, independent of output ownership.
+/// Dropping this handle neither cancels execution nor acknowledges its terminal evidence.
+#[derive(Clone)]
+pub struct ExecutionReservation {
     ledger: Arc<RequestLedger>,
     reference: ReservationRef,
 }
 
 pub(crate) struct BatchReservation {
     model: Arc<Admission>,
-    shared: Option<SharedReservation>,
+    shared: Option<ExecutionReservation>,
     expires: Instant,
     deadline: Instant,
     dispatch: tokio::sync::Mutex<DispatchState>,
     observation: Mutex<Option<AdmissionAttempt>>,
+}
+
+/// Transferable ownership of candidate slots. Accepted slots remain charged after consumer drop;
+/// only the model-server's engine-completion path can release their execution capacity.
+#[derive(Default)]
+pub struct AdmissionPermit {
+    batch: Option<Arc<BatchReservation>>,
+    slots: Range<u32>,
+}
+
+impl ExecutionReservation {
+    /// Reconstructs execution observation from a stored reference without taking over inference.
+    pub fn new(ledger: Arc<RequestLedger>, reference: ReservationRef) -> Self {
+        Self { ledger, reference }
+    }
+
+    /// Returns the credential-free execution reference that a state owner can record for recovery.
+    pub fn reference(&self) -> &ReservationRef {
+        &self.reference
+    }
+
+    /// Retains evidence for the state owner's opaque, credential-free consumer before preparation starts.
+    pub async fn retain_completion(&self, consumer: &str) -> Result<(), LedgerError> {
+        self.ledger
+            .retain_completion(&self.reference, consumer)
+            .await
+    }
+
+    /// Cancels retired-owner or unstarted work; accepted execution remains charged until termination.
+    pub async fn request_cancel(&self) -> Result<(), LedgerError> {
+        self.ledger.cancel(&self.reference).await
+    }
+
+    /// Waits for every candidate and stage to terminate; absent retained evidence is an error.
+    pub async fn wait_finished(&self) -> Result<(), LedgerError> {
+        self.ledger.wait_finished(&self.reference).await
+    }
+
+    /// Removes evidence after its consumer commits the final state or confirms its record is absent.
+    pub async fn acknowledge(&self) -> Result<(), LedgerError> {
+        self.ledger.acknowledge(&self.reference).await
+    }
 }
 
 impl BatchReservation {
@@ -50,7 +96,7 @@ impl BatchReservation {
     ) -> Self {
         Self {
             model,
-            shared: Some(SharedReservation { ledger, reference }),
+            shared: Some(ExecutionReservation::new(ledger, reference)),
             expires,
             deadline,
             dispatch: tokio::sync::Mutex::new(DispatchState::default()),
@@ -116,14 +162,6 @@ impl Drop for BatchReservation {
             self.model.remove(&shared.reference.request);
         }
     }
-}
-
-/// Transferable ownership of candidate slots. Accepted slots remain charged after consumer drop;
-/// only the model-server's engine-completion path can release their execution capacity.
-#[derive(Default)]
-pub struct AdmissionPermit {
-    batch: Option<Arc<BatchReservation>>,
-    slots: Range<u32>,
 }
 
 impl AdmissionPermit {
@@ -243,6 +281,19 @@ impl AdmissionPermit {
             })
     }
 
+    /// Clones execution observation for a ledger-backed candidate without transferring its permit.
+    /// Completion evidence must be explicitly retained before generation starts.
+    pub fn execution(&self) -> Option<ExecutionReservation> {
+        self.batch
+            .as_ref()
+            .and_then(|batch| batch.shared.as_ref())
+            .map(|shared| {
+                let mut execution = shared.clone();
+                execution.reference.slot = self.slots.start;
+                execution
+            })
+    }
+
     /// Advances local rotation after explicit backend acceptance, leaving capacity with the engine owner.
     pub async fn accepted(&self) {
         if let Some(batch) = &self.batch {
@@ -269,7 +320,10 @@ impl AdmissionPermit {
         if state.accepted {
             return Ok(false);
         }
-        match shared.ledger.retry(&shared.reference).await? {
+        match batch.model.ledger_result(
+            "retry_dispatch",
+            shared.ledger.retry(&shared.reference).await,
+        )? {
             Outcome::Applied => {
                 state.rules = None;
                 batch.model.defer(&shared.reference.request);
@@ -307,16 +361,16 @@ impl Drop for AdmissionPermit {
                     ..shared.reference.clone()
                 };
                 loop {
-                    match shared.ledger.cancel(&reference).await {
+                    match batch.model.ledger_result("cancel", shared.ledger.cancel(&reference).await) {
                         Ok(()) => break,
                         Err(error) => {
-                            tracing::warn!(error = %error, "request reservation cleanup will retry");
+                            tracing::debug!(model = %reference.model, reservation = %reference.request, slot, %error, "request reservation cleanup will retry");
                             tokio::time::sleep(Duration::from_secs(1)).await;
                         }
                     }
                 }
             }
             batch.model.changed.notify_waiters();
-        });
+        }.in_current_span());
     }
 }

@@ -23,4 +23,5 @@ foretoken-text = { path = "../text" }
 foretoken-tracing = { path = "../tracing" }
 serde_json.workspace = true
 tokio.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
 tracing.workspace = true

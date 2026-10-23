@@ -6,10 +6,11 @@
 use foretoken_admission::AdmissionPermit;
 use foretoken_llm_facade::{
     LlmFacadeResolver, MultiStageCleanup, RouteStage, TokenStream, consume_encoder,
-    consume_prefill, encoder_stage_request, inject_ec_transfer_params, pd_stage_requests,
+    encoder_stage_request, inject_ec_transfer_params, pd_stage_requests,
 };
 use foretoken_model_protocol::ModelServerRole;
 use foretoken_router::RouteDecision;
+use futures::StreamExt;
 
 use super::{GenerationError, before_waiting_deadline};
 
@@ -24,7 +25,7 @@ pub(crate) async fn execute_workflow(
     admission: &AdmissionPermit,
     role_priority: Option<i32>,
 ) -> Result<(RouteDecision, TokenStream), GenerationError> {
-    match initial.role {
+    let (decision, stream) = match initial.role {
         ModelServerRole::Aggregate => {
             execute_aggregate(resolver, initial, request, admission, role_priority).await
         }
@@ -62,11 +63,20 @@ pub(crate) async fn execute_workflow(
             .map_err(after_acceptance)
         }
         ModelServerRole::Decode => Err(GenerationError::Internal),
-    }
+    }?;
+    // Strip connector handoff metadata before public responses or API session storage.
+    let output = stream.map(|event| {
+        event.map(|mut output| {
+            output.kv_transfer_params = None;
+            output.ec_transfer_params = None;
+            output
+        })
+    });
+    Ok((decision, Box::pin(output)))
 }
 
-// Accepted stage ownership is never reset by a later busy response. The caller cancels the
-// complete workflow on error; the model server reports confirmed termination to the ledger.
+/// Prevents a later Busy response from resetting ownership of an accepted workflow.
+/// The caller cancels the workflow; model-server reports confirmed termination to the ledger.
 fn after_acceptance(error: GenerationError) -> GenerationError {
     match error {
         GenerationError::BackendBusy => GenerationError::Unavailable,
@@ -119,6 +129,7 @@ async fn admitted_generate(
     Ok(stream)
 }
 
+/// Submits one Aggregate stage and transfers its abort guard to the returned stream.
 async fn execute_aggregate(
     resolver: &dyn LlmFacadeResolver,
     decision: RouteDecision,
@@ -143,8 +154,8 @@ async fn execute_aggregate(
     Ok((decision, cleanup.with_stream(stream)))
 }
 
-// Encoder is a completion barrier. Its guard survives descriptor extraction so a failed
-// downstream handoff still cleans up backend-owned intermediate resources.
+/// Completes Encoder while retaining its cleanup guard with the returned descriptor.
+/// A failed downstream handoff still cleans up backend-owned intermediate resources.
 async fn execute_encoder(
     resolver: &dyn LlmFacadeResolver,
     decision: RouteDecision,
@@ -173,8 +184,8 @@ async fn execute_encoder(
     Ok((descriptor, cleanup))
 }
 
-// Prefill completes before fresh Decode selection. All stages share one caller reservation;
-// intermediate terminal output does not release that reservation before the final stage.
+/// Completes Prefill before fresh Decode selection, retaining one caller reservation across stages.
+/// Intermediate terminal output does not release that reservation before the final stage.
 async fn execute_pd(
     resolver: &dyn LlmFacadeResolver,
     session: &mut dyn foretoken_router::RouteSession,
@@ -187,20 +198,26 @@ async fn execute_pd(
     let facade = resolver
         .resolve_stage(&prefill_decision, RouteStage::Prefill)
         .ok_or(GenerationError::Internal)?;
-    let bootstrap = resolver
-        .bootstrap_endpoint(&prefill_decision)
+    let connector = resolver
+        .pd_connector(&prefill_decision)
         .ok_or(GenerationError::Internal)?;
+    let bootstrap = resolver.bootstrap_endpoint(&prefill_decision);
     let initial_stage = encoder.is_none();
     let (descriptor, mut cleanup) = match encoder {
         Some((descriptor, cleanup)) => (Some(descriptor), cleanup),
         None => (None, MultiStageCleanup::new()),
     };
     let shape = async {
-        pd_stage_requests(request, &bootstrap, prefill_decision.data_parallel_rank)
-            .await
-            .map_err(GenerationError::from)
+        pd_stage_requests(
+            request,
+            connector,
+            bootstrap.as_deref(),
+            prefill_decision.data_parallel_rank,
+        )
+        .await
+        .map_err(GenerationError::from)
     };
-    let (mut prefill_request, decode_request) = if initial_stage {
+    let (mut prefill_request, decode_handoff) = if initial_stage {
         before_waiting_deadline(admission.waiting_deadline(), shape).await?
     } else {
         shape.await?
@@ -218,7 +235,8 @@ async fn execute_pd(
         &mut cleanup,
     )
     .await?;
-    consume_prefill(stream)
+    let decode_request = decode_handoff
+        .complete_prefill(stream)
         .await
         .map_err(GenerationError::from)?;
 

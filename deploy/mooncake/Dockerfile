@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+# Builds the non-root Mooncake Store master and client runtime with its native transport libraries.
+
 ARG BASE_IMAGE_REGISTRY=docker.io
 ARG BUILD_IMAGE=${BASE_IMAGE_REGISTRY}/library/ubuntu:24.04
 ARG RUNTIME_IMAGE=${BASE_IMAGE_REGISTRY}/library/ubuntu:24.04
@@ -16,14 +18,21 @@ ARG GOSUMDB
 COPY --from=go /usr/local/go /usr/local/go
 ENV PATH=/usr/local/go/bin:${PATH}
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential ca-certificates cmake ninja-build pkg-config python3-dev \
+    build-essential ca-certificates cmake git ninja-build pkg-config python3-dev \
     libasio-dev libboost-dev libcurl4-openssl-dev libgflags-dev \
     libgoogle-glog-dev libibverbs-dev libjsoncpp-dev libmsgpack-dev libnuma-dev \
     libssl-dev liburing-dev libxxhash-dev libyaml-cpp-dev libzstd-dev \
     && rm -rf /var/lib/apt/lists/*
 
+ARG MOONCAKE_VERSION
+ARG FORETOKEN_GITHUB_MIRROR
+RUN --mount=type=bind,target=/input \
+    --mount=type=cache,id=foretoken-mooncake-source,target=/var/cache/foretoken/mooncake \
+    mkdir -p /src \
+    && if test -d /input/third_party/mooncake; then cp -R /input/third_party/mooncake /src/mooncake; fi \
+    && python3 -I /input/deploy/mooncake/prepare-source \
+      --destination /src/mooncake --cache /var/cache/foretoken/mooncake
 WORKDIR /src/mooncake
-COPY third_party/mooncake/ ./
 
 # Older supported releases vendor the RPC dependency as a submodule. Newer
 # releases fetch their pinned source during the main CMake configuration.

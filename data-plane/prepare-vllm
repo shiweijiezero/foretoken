@@ -1,0 +1,145 @@
+#!/usr/bin/env -S python3 -I
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+"""Prepare the data-plane workspace's upstream source before Cargo resolves its dependencies."""
+
+from __future__ import annotations
+
+import argparse
+import errno
+import fcntl
+import json
+import os
+import shutil
+import sys
+import tarfile
+import tempfile
+import tomllib
+from contextlib import ExitStack
+from pathlib import Path
+from urllib.parse import quote
+from urllib.request import urlopen
+
+
+def _main() -> None:
+    """Describe or prepare upstream inputs for build entrypoints without requiring a Git checkout."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--describe", action="store_true", help="print the workspace's source recipe as JSON without preparing files")
+    parser.add_argument("--destination", type=Path, help="prepare another build workspace instead of the declared source directory")
+    parser.add_argument("--cache", type=Path, help="reuse a caller-owned upstream download cache")
+    arguments = parser.parse_args()
+    recipe = _source_recipe()
+    if arguments.describe:
+        print(json.dumps(recipe))
+        return
+    destination = (
+        arguments.destination.expanduser().resolve()
+        if arguments.destination is not None
+        else Path(__file__).resolve().parent / recipe["path"]
+    )
+    cache = arguments.cache.expanduser().resolve() if arguments.cache is not None else None
+    _prepare_source(recipe, destination, cache)
+    print(f"vLLM source: {destination}")
+
+
+def _source_recipe() -> dict[str, str]:
+    """Read the workspace-owned upstream recipe for repository and container builds."""
+    manifest = Path(__file__).resolve().parent / "Cargo.toml"
+    with manifest.open("rb") as stream:
+        metadata = tomllib.load(stream)["workspace"]["metadata"]["foretoken"]
+    return {
+        "repository": metadata["vllm_repository"],
+        "revision": metadata["vllm_revision"],
+        "path": metadata["vllm_source"],
+    }
+
+
+def _cached_source(recipe: dict[str, str], cache: Path) -> Path:
+    """Prepare one upstream revision under its download lock and return the completed cache tree."""
+    repository, revision = recipe["repository"], recipe["revision"]
+    destination = (
+        cache / ("repository-" + quote(repository, safe=""))
+        / ("revision-" + quote(revision, safe=""))
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Release the revision lock before callers copy sources or start compilation.
+    with destination.with_name(destination.name + ".lock").open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not destination.exists():
+            with tempfile.TemporaryDirectory(prefix=".download-", dir=destination.parent) as temporary:
+                staging = Path(temporary)
+                archive = staging / "source.tar.gz"
+                mirror = (os.environ.get("FORETOKEN_GITHUB_MIRROR") or "https://github.com").rstrip("/")
+                url = f"{mirror}/{repository}/archive/{quote(revision, safe='')}.tar.gz"
+                with urlopen(url) as response, archive.open("wb") as stream:
+                    shutil.copyfileobj(response, stream)
+                extracted = staging / "extracted"
+                extracted.mkdir()
+                with tarfile.open(archive, "r:gz") as package:
+                    package.extractall(extracted, filter="data")
+                roots = list(extracted.iterdir())
+                if len(roots) != 1 or not roots[0].is_dir():
+                    raise ValueError("vLLM source archive must contain one project directory")
+                source = roots[0]
+                if not (source / "rust/Cargo.toml").is_file() or not (source / "pyproject.toml").is_file():
+                    raise ValueError("vLLM source archive is missing its Rust or Python project manifest")
+                source.rename(destination)
+        if not (destination / "rust/Cargo.toml").is_file() or not (destination / "pyproject.toml").is_file():
+            raise ValueError(f"cached vLLM source is missing its project manifests: {destination}")
+        return destination
+
+
+def _publish_source_entry(source: Path, destination: Path) -> None:
+    """Publish one complete upstream entry without replacing existing local source files."""
+    if destination.exists() or destination.is_symlink():
+        return
+    with tempfile.TemporaryDirectory(prefix=".foretoken-vllm-", dir=destination.parent) as temporary:
+        staged = Path(temporary) / source.name
+        if source.is_dir() and not source.is_symlink():
+            shutil.copytree(source, staged, symlinks=True)
+            try:
+                staged.rename(destination)
+            except OSError as error:
+                if error.errno not in {errno.EEXIST, errno.ENOTEMPTY}:
+                    raise
+        else:
+            shutil.copy2(source, staged, follow_symlinks=False)
+            try:
+                os.link(staged, destination, follow_symlinks=False)
+            except FileExistsError:
+                pass
+
+
+def _prepare_source(recipe: dict[str, str], destination: Path, cache: Path | None) -> None:
+    """Complete absent or Rust-only inputs while leaving complete local source trees unchanged."""
+    rust_manifest = destination / "rust/Cargo.toml"
+    if rust_manifest.is_file() and (destination / "pyproject.toml").is_file():
+        return
+    if (
+        destination.exists() and not rust_manifest.is_file()
+        and any(path.name != ".git" for path in destination.iterdir())
+    ):
+        raise ValueError(f"vLLM source is missing rust/Cargo.toml: {destination}")
+    with ExitStack() as resources:
+        if cache is None:
+            cache = Path(resources.enter_context(tempfile.TemporaryDirectory(prefix="foretoken-vllm-")))
+        upstream = _cached_source(recipe, cache)
+        destination.mkdir(parents=True, exist_ok=True)
+        # Rust is published first, and the upstream project manifest last. A retry
+        # can complete an interrupted copy without replacing the captured Rust tree.
+        entries = [
+            upstream / "rust",
+            *sorted(path for path in upstream.iterdir() if path.name not in {"rust", "pyproject.toml", ".git"}),
+            upstream / "pyproject.toml",
+        ]
+        for entry in entries:
+            _publish_source_entry(entry, destination / entry.name)
+
+
+if __name__ == "__main__":
+    try:
+        _main()
+    except (OSError, ValueError, tarfile.TarError) as error:
+        print(f"prepare-vllm: {error}", file=sys.stderr)
+        raise SystemExit(1) from None

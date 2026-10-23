@@ -29,7 +29,7 @@ Patch paths are relative to this directory. Patches use `-p1` against the upstre
 
 Edit upstream source and regenerate unified diffs. Keep shared behavior in `common/` and interface-specific changes in `compatibility/`. Check the selected patch stack against each affected source version and exercise the changed runtime behavior.
 
-The model-server image uses `apply.py`; engine-source builds use `engine_patches()` from `vllm_patches.py`. Both select Python rules from the catalog. Rust source preparation selects its `rust` entries. Repeat preparation or image construction to verify reuse of an already-patched tree.
+The model-server image uses `apply.py`; engine-source builds use `engine_patches()` from `vllm_patches.py`. Both select Python rules from the catalog. Rust builds and source maintenance use `source.rs` to prepare the catalog's `rust` entries. Repeat preparation or image construction to verify reuse of an already-patched tree.
 
 Image and source builds share dependency adaptation in `vllm_patches.py`. Preserve the engine image's NCCL override and packages required by other consumers when updating dependencies.
 
@@ -44,3 +44,18 @@ Patches for another library belong in a separate directory alongside `vllm/`.
 `common/engine-abort-completion.patch` makes Python EngineCore publish scheduler-confirmed aborted request IDs on every transport, including eager aborts. Keep both patches aligned when upstream request registration, scheduler termination, or output delivery changes.
 Completion marks the end of request scheduling, not GPU synchronization or connector KV release.
 When changing this contract, exercise normal completion, cancellation, and output-consumer drop on the affected transports, checking the independent completion signal as well as the returned output.
+
+## Retained device prefixes
+
+The [retained-prefix directory](../../model-server/python/connectors/retained.py) lets Prefill find and acquire KV held by Decode. Native connectors own the cache references until transfer completion; keep that ownership when adapting a new vLLM version.
+
+- `common/nixl-retained-prefix.patch` uses one source lifecycle for ordinary P→D and retained D→P reads. Cancellation closes new authorization, and blocks remain held until every tensor-parallel worker confirms completion. Each reader renews its heartbeat; a lost reader or unknown transfer status retires the engine with buffers held. Preserve the native handshake's lifecycle-version check.
+- `common/mooncake-retained-prefix.patch` keeps acquisition, revocation and WRITE submission in the native sender loop. Release requires a completed WRITE or confirmed no-WRITE from every admitted reader, followed by all workers completing. Unknown I/O completion retires the worker. Idle retention uses `kv_lease_duration`, separately from the send timeout.
+
+Select version-specific patches through `catalog.json`; `common/kv-connector-utility.patch` provides the shared EngineCore directory access. Use the [P/D configuration](../../../docs/features/inference-parameters.md#prefilldecode-separation-and-kv-reuse) to validate two-turn requests through different frontends. Compare reused and recomputed output tokens, then check allocator references during cancellation, expiry, peer exit and tensor-parallel completion.
+
+## Chat token metadata
+
+`rust/chat-token-metadata.patch` builds on upstream [decoder attribution](https://github.com/vllm-project/vllm/commit/b911fe85c42ae984f27d183a0b1de309adab9bf2) and [reasoning attribution](https://github.com/vllm-project/vllm/commit/21a22110404d98dcab5f51cd90e9acb0acc15e47). It carries sampled positions and complete decoded spans through parser buffering, including tokens that jointly produce one UTF-8 fragment.
+
+`ChatTokenMetadataMode::Sampled` preserves raw metadata and its update cadence. `VisibleContent` releases metadata only after the complete token span is classified as parser-visible content; a token crossing hidden content or excluded stop text is omitted as a whole. Keep usage independent of this filtering. When updating the patch, exercise stop buffering, truncation, and parser recovery in both modes, using the real tokenizer and output processors.

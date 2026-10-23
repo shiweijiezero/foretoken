@@ -102,6 +102,11 @@ spec:
                         maxLength: 253
                         minLength: 1
                         type: string
+                      directory:
+                        description: |-
+                          Directory identifies the authorized data directory retained by this execution cohort.
+                          Shared-cache lifecycle consumers use it independently of namespace-local claim names.
+                        type: string
                       directoryOwner:
                         description: DirectoryOwner preserves the discovered directory
                           identity across cache consumers.
@@ -439,10 +444,16 @@ spec:
                 description: PDRuntime is the controller-owned P/D transport configuration.
                 properties:
                   abortRequestTimeoutSeconds:
+                    description: |-
+                      AbortRequestTimeoutSeconds retains an explicit Mooncake timeout for this cohort.
+                      Omission uses the native connector default.
                     format: int32
                     minimum: 1
                     type: integer
                   bootstrapPort:
+                    description: |-
+                      BootstrapPort is the Mooncake bootstrap port or the NIXL side-channel base.
+                      NIXL allocates one listener per DP rank at base + rank.
                     format: int32
                     maximum: 65535
                     minimum: 1
@@ -450,10 +461,12 @@ spec:
                   connector:
                     enum:
                     - MooncakeConnector
+                    - NixlConnector
                     type: string
                   profileName:
-                    description: ProfileName and ProfileRevision are opaque platform-owned
-                      identifiers.
+                    description: |-
+                      ProfileName and ProfileRevision preserve existing cohorts for older namespace controllers.
+                      New cohorts use Connector and Protocol directly.
                     maxLength: 256
                     minLength: 1
                     type: string
@@ -468,8 +481,9 @@ spec:
                     type: string
                   rdmaDeviceName:
                     description: |-
-                      RDMADeviceName optionally limits Mooncake to a comma-separated HCA list.
-                      When omitted, Mooncake selects from the devices allocated to the Pod.
+                      RDMADeviceName optionally selects a comma-separated connector-native device list.
+                      Mooncake uses HCA names; NIXL uses UCX device:port identifiers such as mlx5_0:1.
+                      When omitted, the connector selects from the devices allocated to the Pod.
                     type: string
                   serviceUID:
                     description: ServiceUID bounds transfer side channels to Pools
@@ -477,28 +491,134 @@ spec:
                     minLength: 1
                     type: string
                 required:
-                - abortRequestTimeoutSeconds
                 - bootstrapPort
                 - connector
-                - profileName
-                - profileRevision
                 - protocol
                 - serviceUID
                 type: object
               rdma:
                 description: RDMA is shared by engine collectives and transfer connectors.
                 properties:
+                  networks:
+                    description: Networks are the Multus attachments selected with
+                      these device requests.
+                    items:
+                      type: string
+                    type: array
+                  requiredNodeAffinity:
+                    description: RequiredNodeAffinity constrains members to nodes
+                      providing the selected network binding.
+                    properties:
+                      nodeSelectorTerms:
+                        description: Required. A list of node selector terms. The
+                          terms are ORed.
+                        items:
+                          description: |-
+                            A null or empty node selector term matches no objects. The requirements of
+                            them are ANDed.
+                            The TopologySelectorTerm type implements a subset of the NodeSelectorTerm.
+                          properties:
+                            matchExpressions:
+                              description: A list of node selector requirements by
+                                node's labels.
+                              items:
+                                description: |-
+                                  A node selector requirement is a selector that contains values, a key, and an operator
+                                  that relates the key and values.
+                                properties:
+                                  key:
+                                    description: The label key that the selector applies
+                                      to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      Represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists, DoesNotExist. Gt, and Lt.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      An array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. If the operator is Gt or Lt, the values
+                                      array must have a single element, which will be interpreted as an integer.
+                                      This array is replaced during a strategic merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchFields:
+                              description: A list of node selector requirements by
+                                node's fields.
+                              items:
+                                description: |-
+                                  A node selector requirement is a selector that contains values, a key, and an operator
+                                  that relates the key and values.
+                                properties:
+                                  key:
+                                    description: The label key that the selector applies
+                                      to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      Represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists, DoesNotExist. Gt, and Lt.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      An array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. If the operator is Gt or Lt, the values
+                                      array must have a single element, which will be interpreted as an integer.
+                                      This array is replaced during a strategic merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        type: array
+                        x-kubernetes-list-type: atomic
+                    required:
+                    - nodeSelectorTerms
+                    type: object
+                    x-kubernetes-map-type: atomic
                   resourceCount:
                     format: int32
                     minimum: 1
                     type: integer
                   resourceName:
+                    description: |-
+                      ResourceName and ResourceCount retain allocations written by older controllers.
+                      New allocations use Resources exclusively.
                     minLength: 1
                     type: string
-                required:
-                - resourceCount
-                - resourceName
+                  resources:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: Resources are requested together by each runtime
+                      member Pod.
+                    type: object
                 type: object
+                x-kubernetes-validations:
+                - message: RDMA requires resources or a retained single-resource allocation
+                  rule: 'has(self.resources) ? size(self.resources) > 0 && !has(self.resourceName)
+                    && !has(self.resourceCount) : has(self.resourceName) && has(self.resourceCount)'
               resources:
                 description: ModelResources defines resources for one runtime member
                   Pod.
@@ -633,8 +753,7 @@ spec:
                         x-kubernetes-map-type: atomic
                     type: object
                     x-kubernetes-validations:
-                    - message: exactly one admission store URL or Secret reference
-                        is required
+                    - message: exactly one Redis URL or Secret reference is required
                       rule: has(self.url) != has(self.urlSecretRef)
                   applicationURL:
                     description: ApplicationURL pins the controller-selected executable
@@ -844,6 +963,23 @@ spec:
                     maximum: 268435456
                     minimum: 1048576
                     type: integer
+                  leaderWorkerScheduling:
+                    description: LeaderWorkerScheduling fixes native placement and
+                      quota admission across platform updates.
+                    properties:
+                      kueueLocalQueueName:
+                        description: KueueLocalQueueName selects quota admission in
+                          the workload's namespace.
+                        maxLength: 63
+                        pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                        type: string
+                      volcanoQueueName:
+                        description: VolcanoQueueName selects Volcano group placement;
+                          omission keeps the ordinary scheduler.
+                        maxLength: 253
+                        pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                        type: string
+                    type: object
                   port:
                     description: Port is the internal Foretoken model-server transport
                       port.
@@ -856,11 +992,10 @@ spec:
                       request policy for this instance.
                     type: boolean
                   preparationVersion:
-                    description: |-
-                      PreparationVersion selects the source-publication contract for this immutable cohort.
-                      Omitted on cohorts created before source preparation was introduced.
+                    description: PreparationVersion selects native acquisition (0),
+                      vLLM preparation (1), or shared-cache preparation (2).
                     format: int32
-                    maximum: 1
+                    maximum: 2
                     minimum: 0
                     type: integer
                   profiling:

@@ -10,9 +10,10 @@ use std::time::Duration;
 
 use foretoken_engine_core_client::protocol::dtype::ModelDtype;
 use foretoken_llm_facade::{HttpFacade, LlmFacade, LlmFacadeResolver, RouteStage};
-use foretoken_model_protocol::{PreparedTokenizer, RuntimeMetadataResponse, TelemetryResponse};
-
-use foretoken_model_protocol::ModelServerRole;
+use foretoken_model_protocol::{
+    KvConnector, KvReuseSource, ModelServerRole, PreparedTokenizer, RuntimeKvTransferMetadata,
+    RuntimeMetadataResponse, TelemetryResponse,
+};
 use foretoken_router::{
     ModelRouteTable, RouteDecision, RouteInventory, RouteTargetId, RouteTargetStats,
     RouteTargetStatsReader,
@@ -48,10 +49,12 @@ pub(crate) enum Component {
     },
     Prefill {
         endpoint: String,
-        bootstrap: String,
+        bootstrap: Option<String>,
+        connector: KvConnector,
     },
     Decode {
         endpoint: String,
+        connector: KvConnector,
     },
 }
 
@@ -67,8 +70,19 @@ impl Component {
 
     fn bootstrap(&self) -> Option<&str> {
         match self {
-            Self::Prefill { bootstrap, .. } => Some(bootstrap),
-            Self::Aggregate { .. } | Self::Encoder { .. } | Self::Decode { .. } => None,
+            Self::Prefill {
+                bootstrap,
+                connector: KvConnector::Mooncake,
+                ..
+            } => bootstrap.as_deref(),
+            _ => None,
+        }
+    }
+
+    fn connector(&self) -> Option<KvConnector> {
+        match self {
+            Self::Prefill { connector, .. } | Self::Decode { connector, .. } => Some(*connector),
+            Self::Aggregate { .. } | Self::Encoder { .. } => None,
         }
     }
 }
@@ -136,11 +150,22 @@ impl BackendRegistry {
         id: &RouteTargetId,
         metadata: &RuntimeMetadataResponse,
     ) -> bool {
-        self.model_routes.routes().iter().any(|route| {
-            route.route_target_id == *id
-                && metadata.model.model == route.model
-                && metadata.model.revision == route.revision
-        })
+        let configured_connector = self.components.get(id).and_then(Component::connector);
+        let observed_connector = metadata.kv_transfer().map(|transfer| transfer.connector);
+        // Mooncake may omit KV transfer metadata; NIXL must match discovery.
+        let transport_matches = if configured_connector == Some(KvConnector::Nixl)
+            || observed_connector == Some(KvConnector::Nixl)
+        {
+            configured_connector == observed_connector
+        } else {
+            true
+        };
+        transport_matches
+            && self.model_routes.routes().iter().any(|route| {
+                route.route_target_id == *id
+                    && metadata.model.model == route.model
+                    && metadata.model.revision == route.revision
+            })
     }
 
     /// Returns the safe effective context limit across healthy components for a model.
@@ -291,6 +316,43 @@ impl BackendRegistry {
         }
         models.into_iter().collect()
     }
+    /// Returns an eligible Decode source for Prefill while preserving its instance endpoint.
+    fn resolve_kv_source(
+        &self,
+        prefill: &RouteDecision,
+        source: &KvReuseSource,
+    ) -> Option<KvReuseSource> {
+        let receiver = self.model_routes.routes().iter().find(|route| {
+            route.route_target_id == prefill.route_target_id
+                && route.role == ModelServerRole::Prefill
+                && route.model == prefill.model
+                && route.revision == prefill.revision
+                && prefill.data_parallel_rank < route.data_parallel_size
+        })?;
+        let sender = self.model_routes.routes().iter().find(|route| {
+            route.route_target_id.as_str() == source.route_target_id
+                && route.role == ModelServerRole::Decode
+                && route.model == receiver.model
+                && route.revision == receiver.revision
+                && route.target.service_uid == receiver.target.service_uid
+                && receiver.pipeline_scope_id.is_some()
+                && route.pipeline_scope_id == receiver.pipeline_scope_id
+                && source.dp_rank < route.data_parallel_size
+        })?;
+        if !self.is_route_target_healthy(&sender.route_target_id) {
+            return None;
+        }
+        let receiver_transfer = self.kv_transfer(&receiver.route_target_id)?;
+        let sender_transfer = self.kv_transfer(&sender.route_target_id)?;
+        if !receiver_transfer.bidirectional_kv_xfer
+            || !sender_transfer.bidirectional_kv_xfer
+            || receiver_transfer.connector != sender_transfer.connector
+        {
+            return None;
+        }
+        Some(source.clone())
+    }
+
     /// Health, runtime metadata, and telemetry are per physical component.
     pub async fn refresh_backend_readiness(&self) {
         // Probe components concurrently, but retain metadata and telemetry only for components
@@ -358,12 +420,27 @@ impl LlmFacadeResolver for BackendRegistry {
         match (stage, component) {
             (RouteStage::Aggregate, Component::Aggregate { facade, .. }) => Some(facade.clone()),
             (RouteStage::Encoder, Component::Encoder { endpoint, .. })
-            | (RouteStage::Prefill, Component::Prefill { endpoint, .. })
             | (RouteStage::Decode, Component::Decode { endpoint, .. }) => {
                 Some(Arc::new(HttpFacade::new(endpoint.clone()).ok()?))
             }
+            (RouteStage::Prefill, Component::Prefill { endpoint, .. }) => {
+                let mut facade = HttpFacade::new(endpoint.clone()).ok()?;
+                // Source retirement is a cache miss, not a Prefill failure.
+                if let Some(source) = decision
+                    .kv_source
+                    .as_ref()
+                    .and_then(|source| self.resolve_kv_source(decision, source))
+                {
+                    facade = facade.with_kv_reuse(source);
+                }
+                Some(Arc::new(facade))
+            }
             _ => None,
         }
+    }
+
+    fn pd_connector(&self, decision: &RouteDecision) -> Option<KvConnector> {
+        self.components.get(&decision.route_target_id)?.connector()
     }
 
     fn bootstrap_endpoint(&self, prefill: &RouteDecision) -> Option<String> {
@@ -391,6 +468,10 @@ impl RouteInventory for BackendRegistry {
         self.health
             .get(id)
             .is_some_and(|v| v.load(Ordering::Acquire))
+    }
+
+    fn kv_transfer(&self, id: &RouteTargetId) -> Option<RuntimeKvTransferMetadata> {
+        self.metadata.lock().ok()?.get(id)?.kv_transfer()
     }
 
     fn effective_capabilities(&self, id: &RouteTargetId) -> BTreeSet<String> {

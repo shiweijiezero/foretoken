@@ -63,6 +63,13 @@ impl<'a> KvPrefixLookup<'a> {
     }
 }
 
+/// Prefill and Decode routes permitted to share retained KV for one routing request.
+#[derive(Debug)]
+pub struct KvPrefixReuseScope<'a> {
+    pub prefill_route_target_ids: Vec<&'a str>,
+    pub decode_route_target_ids: Vec<&'a str>,
+}
+
 /// Route-local prefix observations; an unavailable result is distinct from a confirmed miss.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KvPrefixQueryResult {
@@ -80,11 +87,13 @@ pub enum KvPrefixUnavailableReason {
 }
 #[async_trait::async_trait]
 pub trait KvPrefixIndexer: Send + Sync {
-    /// Prepares request-local observations from engines and connectors before synchronous scoring.
-    /// Event-only implementations may retain their existing reader.
+    /// Prepares request-local cache facts and eligible Decode sources before selection.
+    /// The returned reader belongs to this request; `None` keeps the current reader.
+    /// Observation does not acquire source read leases.
     async fn prepare(
         &self,
         _lookups: &[KvPrefixLookup<'_>],
+        _reuse_scopes: &[KvPrefixReuseScope<'_>],
     ) -> Option<std::sync::Arc<dyn KvPrefixIndexer>> {
         None
     }

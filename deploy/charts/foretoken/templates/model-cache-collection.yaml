@@ -1,0 +1,186 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Keep cache collection in the platform without granting cluster permissions to namespace members.
+{{- $name := include "foretoken.compactName" (printf "%s-model-cache-collection" .Release.Name) }}
+{{- $worker := include "foretoken.compactName" (printf "%s-worker" $name) }}
+{{- $cluster := include "foretoken.compactName" (printf "%s-%s" .Release.Namespace $name) }}
+{{- $reader := include "foretoken.compactName" (printf "%s-reader" $cluster) }}
+{{- $applications := include "foretoken.applications" . | fromJson }}
+{{- $applicationMount := include "foretoken.applicationMount" . }}
+{{- $applicationClient := include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.applicationFiles.clientImage) }}
+{{- $arguments := list "maintain-model-cache"
+    (printf "--namespace=%s" .Release.Namespace)
+    (printf "--service-account=%s" $worker)
+    (printf "--device-resource-name=%s" .Values.runtime.vllm.gpu.resourceName)
+    (printf "--worker-image=%s" (include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" (include "foretoken.runtimeVllmImage" .))))
+    (printf "--application-files=%s" (dict "origin" (include "foretoken.applicationFilesOrigin" .) "image" $applicationClient "mountPath" $applicationMount "script" (.Files.Get "files/application-download.py") | toJson))
+    "--health-probe-bind-address=:8081" }}
+{{- with (index $applications "model-server") }}
+{{- $arguments = append $arguments (printf "--worker-application-url=%s" .) }}
+{{- end }}
+{{- $pullSecrets := dict }}
+{{- range concat .Values.imagePullSecrets .Values.workload.imagePullSecrets }}
+{{- if not (hasKey $pullSecrets .name) }}
+{{- $arguments = append $arguments (printf "--workload-image-pull-secret=%s" .name) }}
+{{- $_ := set $pullSecrets .name true }}
+{{- end }}
+{{- end }}
+{{- $pod := include "foretoken.platformJobPod" (dict "root" . "binary" "manager" "args" $arguments) | fromYaml }}
+{{- $_ := set $pod "serviceAccountName" $name }}
+{{- $_ := set $pod "restartPolicy" "Always" }}
+{{- $container := first $pod.containers }}
+{{- $_ := set $container "name" "manager" }}
+{{- $_ := set $container "ports" (list (dict "name" "healthz" "containerPort" 8081 "protocol" "TCP")) }}
+{{- $_ := set $container "livenessProbe" (dict "httpGet" (dict "path" "/healthz" "port" "healthz") "initialDelaySeconds" 15 "periodSeconds" 20) }}
+{{- $_ := set $container "readinessProbe" (dict "httpGet" (dict "path" "/readyz" "port" "healthz") "periodSeconds" 2) }}
+{{- with .Values.resources }}
+{{- $_ := set $container "resources" . }}
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $worker }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $reader }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, namespaces, persistentvolumeclaims, persistentvolumes, pods]
+    verbs: [get, list]
+  - apiGroups: [inference.foretoken.io]
+    resources: [modelpools, modelgroups]
+    verbs: [get, list]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $reader }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $reader }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+  - kind: ServiceAccount
+    name: {{ $worker }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $cluster }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [watch, patch]
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [watch, create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $cluster }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $cluster }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [watch, create, delete]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [watch, create, delete]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: foretoken-model-cache-collection
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: foretoken-model-cache-collection
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      annotations:
+        inference.foretoken.io/chart-version: {{ .Chart.Version | quote }}
+        {{- with (index $applications "control-plane") }}
+        inference.foretoken.io/application-url: {{ . | quote }}
+        {{- end }}
+      labels:
+        app.kubernetes.io/name: foretoken-model-cache-collection
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- if (index $applications "control-plane") }}
+        foretoken.io/application-files: consumer
+        {{- end }}
+    spec:
+      {{- toYaml $pod | nindent 6 }}

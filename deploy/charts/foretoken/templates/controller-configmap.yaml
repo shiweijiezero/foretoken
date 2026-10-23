@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Project deployment collection settings without changing the controller workload.
-{{- if eq .Values.scope "deployment" }}
+{{/* Compile namespace-local controller settings; bootstrap publishes instance access separately. */}}
+{{- define "foretoken.deploymentConfiguration" }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -1,5 +1,29 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "rdmaBinding": {
+      "type": "object",
+      "required": ["allocation"],
+      "properties": {
+        "namespace": {"type": "string"},
+        "allocation": {
+          "type": "object",
+          "required": ["resources"],
+          "properties": {
+            "resources": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {"type": ["string", "integer"]}
+            },
+            "networks": {"type": "array", "items": {"type": "string", "minLength": 1}},
+            "requiredNodeAffinity": {"type": "object"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
   "type": "object",
   "required": [
     "global",
@@ -7,6 +31,7 @@
     "imagePullSecrets",
     "controller",
     "admissionStore",
+    "responseStore",
     "workload",
     "modelDistribution",
     "loadBalancer",
@@ -16,7 +41,6 @@
     "runtime"
   ],
   "properties": {
-    "scope": {"type": "string", "enum": ["platform", "deployment"]},
     "admissionStore": {
       "type": "object",
       "required": ["image", "storageClass", "storageSize", "externalURL", "externalURLSecret"],
@@ -28,6 +52,28 @@
           "type": "string",
           "description": "Credential-free endpoint; authenticated URLs use externalURLSecret."
         },
+        "externalURLSecret": {
+          "type": "object",
+          "required": ["name", "key"],
+          "properties": {
+            "name": {"type": "string"},
+            "key": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "responseStore": {
+      "type": "object",
+      "required": ["retention", "replayRetention", "externalURL", "externalURLSecret"],
+      "properties": {
+        "externalURL": {
+          "type": "string",
+          "description": "Credential-free Redis-compatible endpoint; authenticated URLs use externalURLSecret."
+        },
+        "retention": {"type": "string", "pattern": "^([0-9]+(y|w|d|h|m|s|ms))+$"},
+        "replayRetention": {"type": "string", "pattern": "^([0-9]+(y|w|d|h|m|s|ms))+$"},
         "externalURLSecret": {
           "type": "object",
           "required": ["name", "key"],
@@ -91,11 +137,42 @@
       "properties": {
         "resourceName": {"type": "string"},
         "resourceCount": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+        "bindings": {"type": ["array", "null"], "items": {"$ref": "#/definitions/rdmaBinding"}},
+        "preparedBindings": {"type": "array", "items": {"$ref": "#/definitions/rdmaBinding"}},
         "managed": {"type": "boolean"},
+        "ipamConfigFile": {"type": "string"},
         "image": {"type": "string", "minLength": 1},
         "nodeNames": {
           "type": "array",
           "items": {"type": "string", "minLength": 1}
+        },
+        "networks": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "namespace": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          }
+        },
+        "preparedNetworks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "namespace": {"type": "string", "minLength": 1},
+              "master": {"type": "string", "minLength": 1},
+              "subnet": {"type": "string", "minLength": 1},
+              "active": {"type": "boolean"}
+            },
+            "dependencies": {"master": ["subnet"], "subnet": ["master"]},
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false
@@ -218,6 +295,20 @@
             "additionalProperties": false
           }
         },
+        "leaderWorkerScheduling": {
+          "type": ["object", "null"],
+          "properties": {
+            "volcanoQueueName": {
+              "type": ["string", "null"], "maxLength": 253,
+              "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+            },
+            "kueueLocalQueueName": {
+              "type": ["string", "null"], "maxLength": 63,
+              "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+            }
+          },
+          "additionalProperties": false
+        },
         "cache": {
           "type": "object",
           "required": [
@@ -232,6 +323,28 @@
               "type": "string",
               "pattern": "^/",
               "minLength": 2
+            },
+            "directories": {
+              "type": "object",
+              "propertyNames": {"maxLength": 63, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"},
+              "additionalProperties": {
+                "type": "object",
+                "required": ["directory"],
+                "properties": {
+                  "directory": {"type": "string", "minLength": 1},
+                  "existingClaim": {"type": "boolean"},
+                  "sourceClaim": {"type": "string", "pattern": "^[^/]+/[^/]+$"},
+                  "server": {"type": "string", "minLength": 1},
+                  "path": {"type": "string", "pattern": "^/"},
+                  "hostPath": {"type": "string", "pattern": "^/"},
+                  "hostnames": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                  "nodeAffinity": {"type": "object"},
+                  "capacity": {"type": "string", "minLength": 1},
+                  "directoryOwner": {"type": "string"},
+                  "mountOptions": {"type": "array", "items": {"type": "string", "minLength": 1}}
+                },
+                "additionalProperties": false
+              }
             }
           },
           "additionalProperties": false
@@ -241,37 +354,10 @@
     },
     "modelDistribution": {
       "type": "object",
-      "required": ["dragonfly", "modelexpress"],
+      "required": ["proxyURL"],
       "additionalProperties": false,
       "properties": {
-        "modelexpress": {
-          "type": "object",
-          "required": ["enabled"],
-          "additionalProperties": false,
-          "properties": {"enabled": {"type": "boolean"}}
-        },
-        "dragonfly": {
-          "type": "object",
-          "required": ["enabled", "existingRelease", "socketPath"],
-          "additionalProperties": false,
-          "properties": {
-            "enabled": {"type": "boolean"},
-            "existingRelease": {
-              "type": "object",
-              "required": ["name", "namespace"],
-              "additionalProperties": false,
-              "properties": {
-                "name": {"type": "string"},
-                "namespace": {"type": "string"}
-              }
-            },
-            "socketPath": {"type": "string"}
-          },
-          "allOf": [{
-            "if": {"properties": {"enabled": {"const": true}}},
-            "then": {"properties": {"socketPath": {"minLength": 1, "pattern": "^/"}}}
-          }]
-        }
+        "proxyURL": {"type": "string"}
       }
     },
     "loadBalancer": {
@@ -324,6 +410,7 @@
           "type": "object",
           "required": [
             "create",
+            "port",
             "controllerName",
             "name",
             "namespace",
@@ -332,6 +419,11 @@
           "properties": {
             "create": {
               "type": "boolean"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
             },
             "controllerName": {
               "type": "string"
@@ -565,38 +657,6 @@
                   }
                 }
               ]
-            },
-            "pd": {
-              "type": "object",
-              "required": [
-                "protocol",
-                "bootstrapPort",
-                "abortRequestTimeoutSeconds",
-                "rdmaDeviceName"
-              ],
-              "properties": {
-                "protocol": {
-                  "type": "string",
-                  "enum": [
-                    "rdma",
-                    "tcp"
-                  ]
-                },
-                "bootstrapPort": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 65535
-                },
-                "abortRequestTimeoutSeconds": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 2147483647
-                },
-                "rdmaDeviceName": {
-                  "type": "string"
-                }
-              },
-              "additionalProperties": false
             },
             "mooncakeStore": {
               "type": "object",

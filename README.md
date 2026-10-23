@@ -48,11 +48,15 @@ The steps below use k3d as the example.
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-pip install -e .
+uv venv --python 3.12 --seed  # With pip: python3 -m venv .venv (Python 3.11+)
+source .venv/bin/activate
+uv pip install -e .  # Or: pip install -e .
 
 # For the published CLI instead:
-# pip install foretoken
+# uv pip install foretoken  # Or: pip install foretoken
 ```
+
+Keep this environment active for the commands below.
 
 ### 2. Install the Kubernetes platform
 
@@ -69,7 +73,7 @@ foretoken install -e .
 # foretoken install
 ```
 
-Installation prepares the shared cluster APIs and dependencies. The deployment command creates a controller for each service namespace.
+Install the platform once for the cluster. Each deployment instance has its own controller and services, with a shared Gateway for HTTP access by default.
 
 The host must have Docker, NVIDIA Container Toolkit, k3d, kubectl, and [Helm 4](cli/README.md#before-you-start), and your user must be able to run `docker info` without `sudo`. Install host dependencies separately when needed. For kind or an existing Kubernetes cluster, use the corresponding guide in the table above.
 
@@ -79,17 +83,23 @@ The host must have Docker, NVIDIA Container Toolkit, k3d, kubectl, and [Helm 4](
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
-This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica. The model requests 1 GPU, 4 CPU, and 48 GiB memory, with limits of 8 CPU and 64 GiB. The example uses the repository-root `./data` directory for model files and runtime cache. More deployments are available in [`examples/`](examples/).
+Without `--name`, the instance name comes from `metadata.name` of the `FrontendService` in [`frontend.yaml`](examples/quickstart/qwen3-0.6b/frontend.yaml): `qwen3-0-6b` in this example.
+
+The instance contains one frontend service and one `Qwen/Qwen3-0.6B` model replica. The model requests 1 GPU, 4 CPU, and 48 GiB memory, with limits of 8 CPU and 64 GiB. Model files and runtime cache use the platform's default storage, backed by `./data` in this local setup. More deployments are available in [`examples/`](examples/).
 
 To try different code changes side by side, see [parallel candidates](docs/deployment/source.md#run-candidates-in-parallel); to modify vLLM, see [local engine source](docs/deployment/source.md#edit-an-inference-engine).
 
 ### 4. Send a test request
 
+The Host header selects this instance at the shared Gateway.
+
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $FORETOKEN_REQUEST_HOST" \
   -H "Content-Type: application/json" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
@@ -148,47 +158,22 @@ The command opens an interactive session and submits the optimization task. To p
 
 ## Gateway Mode
 
-Gateway mode provides a shared entry point through Kubernetes Gateway and a hostname. It suits clusters that already use Gateway or manage external traffic centrally.
+To reuse an existing Gateway or select one of its listeners, see the [installation options](cli/README.md#install).
 
-Add the public hostname under `spec` in `examples/quickstart/qwen3-0.6b/frontend.yaml`:
+For a custom domain, HTTPS or a hostname-restricted listener, set the accepted hostname in `examples/quickstart/qwen3-0.6b/frontend.yaml` and redeploy. HTTPS also needs matching DNS and a Gateway certificate:
 
 ```yaml
 spec:
   hostname: foretoken.example.com
 ```
 
-Then run:
-
-```bash
-# Enable Gateway mode for the source installation above.
-foretoken install -e . --frontend-mode gateway
-# For a published platform installation:
-# foretoken install --frontend-mode gateway
-
-# Deploy the Quick Start
-foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
-
-# Resolve the Gateway address and request hostname
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
-
-# Send a test request
-curl --fail-with-body --no-buffer \
-  "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
-  -H "Host: $FORETOKEN_REQUEST_HOST" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
-```
-
-The command installs Envoy Gateway when needed. See the [command-line tool guide](cli/README.md) to reuse an existing Gateway or select a listener.
-
 ## Stop and Uninstall
 
 ```bash
-# Delete the Quick Start resources, including its namespace and runtime cache PVC
-foretoken delete examples/quickstart/qwen3-0.6b
+# Delete only the Quick Start instance
+foretoken delete qwen3-0-6b
 
-# Uninstall the Foretoken platform
+# Platform administrator: uninstall when no deployments need the platform
 foretoken uninstall
 ```
 

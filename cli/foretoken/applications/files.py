@@ -10,152 +10,64 @@ import math
 import sys
 import time
 import uuid
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import copy_context
+from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, unquote, urlsplit
 
-from foretoken.processes.execution import CommandExecution, cleanup_commands
+from loguru import logger
+
+from foretoken.build.records import (
+    SOURCE_BUILD_KEY,
+    WORKSPACE_LABEL,
+    WORKSPACE_SELECTION_KEY,
+)
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
+from foretoken.processes.execution import CommandExecution, cleanup_commands
 
 if TYPE_CHECKING:
-    from foretoken.build.cluster import ClusterBuilder
+    from foretoken.build.cluster.compiler import CompilerWorkspace
 
 SOURCE_REVISION = "inference.foretoken.io/source-revision"
 SERVICE_COMPONENTS = {"ModelService": "model-server", "FrontendService": "frontend"}
-_BINDING_LABEL = "inference.foretoken.io/application-publisher-binding"
+APPLICATION_PUBLISHER_BINDING_LABEL = "inference.foretoken.io/application-publisher-binding"
 _SOURCE_CONSUMER_LABEL = "foretoken.io/application-source-consumer"
 _SOURCE_ARCHIVE = "/source-evidence/inputs.tar.gz"
 
 
-def application_references(objects: Iterable[dict[str, Any]]) -> set[str]:
-    """Read retained application identities from service state and workload projections."""
-    references: set[str] = set()
-    for obj in objects:
-        spec = obj.get("spec", {})
-        template = spec.get("template", {})
-        metadata = obj["metadata"]
-        template_metadata = template.get("metadata", {})
-        if metadata.get("labels", {}).get("foretoken.io/platform") == "configuration":
-            values = json.loads(obj["data"]["deploymentValues"])
-            references.update(filter(None, (
-                values["controller"]["applicationURL"],
-                values["frontend"]["applicationURL"],
-                values["runtime"]["vllm"]["applicationURL"],
-            )))
-        references.update(
-            selection["applicationURL"]
-            for selection in obj.get("status", {}).get("poolApplications", {}).values()
-            if selection.get("applicationURL")
-        )
-        references.update(
-            filter(
-                None,
-                (
-                    metadata.get("annotations", {}).get(SOURCE_REVISION),
-                    template_metadata.get("annotations", {}).get(SOURCE_REVISION),
-                    metadata.get("annotations", {}).get(
-                        "inference.foretoken.io/application-url"
-                    ),
-                    template_metadata.get("annotations", {}).get(
-                        "inference.foretoken.io/application-url"
-                    ),
-                    template.get("sourceRevision"),
-                    template.get("application", {}).get("applicationURL"),
-                    spec.get("runtime", {}).get("applicationURL"),
-                    obj.get("status", {}).get("application", {}).get("applicationURL"),
-                    spec.get("runtime", {}).get("sourceRevision"),
-                    obj.get("status", {}).get("plan", {}).get("workerApplicationURL"),
-                ),
-            )
-        )
-        # Platform defaults remain consumers even before a model service uses them.
-        for container in template.get("spec", spec).get("containers", []):
-            for argument in container.get("args", []):
-                for prefix in (
-                    "--frontend-application-url=",
-                    "--model-server-application-url=",
-                    "--video-worker-application-url=",
-                ):
-                    if argument.startswith(prefix):
-                        references.add(argument.removeprefix(prefix))
-    return references
+@dataclass(frozen=True)
+class ApplicationPublication:
+    """Describe one completed export selected by a source-build publication cohort."""
+
+    component: str
+    source: str
+    revision: str
+    previous: str
+    sources: dict[str, Any] | None
+    image: str | None
+    parts: list[str] | None
+    previous_image: str | None = None
 
 
-def application_consumers(kubectl: Kubectl) -> list[dict[str, Any]]:
-    """Read current service selections and present workloads, including terminating consumers."""
-    available = kubectl.api_resource_names("inference.foretoken.io")
-    kinds = tuple(
-        kind
-        for kind in (
-            "modelservices",
-            "frontendservices",
-            "modelpools",
-            "modelgroups",
-            "videotasks",
-        )
-        if kind + ".inference.foretoken.io" in available
-    )
-    # A failed reference read cancels sibling queries before their executor joins.
-    # The caller may defer collection, so this observation has its own failure scope.
-    parent = CommandExecution.current()
-    execution = CommandExecution(parent.control_timeout if parent is not None else None)
-    try:
-        if parent is not None:
-            parent.register(execution.cancel)
-        with ThreadPoolExecutor() as queries, execution:
-            pending = [queries.submit(copy_context().run, execution.run_stage, kubectl.list_all_resources, kinds)] if kinds else []
-            pending.append(queries.submit(
-                copy_context().run, execution.run_stage, kubectl.list_all_resources, ("configmaps",),
-                label_selector="foretoken.io/platform=configuration",
-            ))
-            pending.extend(
-                queries.submit(
-                    copy_context().run, execution.run_stage, kubectl.list_all_resources,
-                    ("pods", "jobs", "replicasets", "deployments"),
-                    label_selector=label,
-                )
-                for label in (
-                    "app.kubernetes.io/name=foretoken-control-plane",
-                    "inference.foretoken.io/model-group",
-                    "inference.foretoken.io/frontend-service",
-                    "inference.foretoken.io/model-preparation-group",
-                    "foretoken.io/application-files=consumer",
-                    _SOURCE_CONSUMER_LABEL + "=true",
-                )
-            )
-            return [obj for future in pending for obj in future.result()]
-    finally:
-        if parent is not None:
-            parent.unregister(execution.cancel)
+@dataclass(frozen=True)
+class PublishedApplications:
+    """Return completed application revisions and the optional portable build selected by their publisher."""
 
-
-def remove_application_jobs(kubectl: Kubectl, binding: str, timeout: str) -> None:
-    """Stop abandoned writers before their workstation reuses its compiler output."""
-    kubectl.run(
-        [
-            "delete",
-            "jobs",
-            "--all-namespaces",
-            "--selector",
-            f"foretoken.io/application-files=publisher,{_BINDING_LABEL}={binding}",
-            "--ignore-not-found",
-            "--cascade=foreground",
-            "--wait=true",
-            "--timeout=" + timeout,
-        ]
-    )
+    revisions: dict[str, str]
+    completed_build: dict[str, Any] | None
 
 
 class ApplicationFiles:
     """Resolve the installed file origin without taking ownership of model storage."""
 
     def __init__(self, kubectl: Kubectl, namespace: str) -> None:
+        """Resolve origin access for readers; prepare selects current storage before publisher operations."""
         self.kubectl = kubectl
         self.namespace = namespace
         configurations = kubectl.list_resources(
@@ -174,6 +86,190 @@ class ApplicationFiles:
         self.endpoint = data["endpoint"]
         self.client_image = data["clientImage"]
         self.mount = data["storageMount"]
+
+    def prepare(self, timeout: str) -> None:
+        """Wait for the file origin and select its volume's current publisher node."""
+        kubectl, namespace = self.kubectl, self.namespace
+        with kubectl.until(time.monotonic() + timeout_seconds(timeout)):
+            kubectl.rollout_status(ResourceRef("Deployment", self.name, namespace), timeout)
+            self.claim_uid = kubectl.get("pvc", self.claim, namespace)["metadata"]["uid"]
+            deployment = kubectl.get("deployment", self.name, namespace)
+            self.pull_secrets = tuple(
+                secret["name"]
+                for secret in deployment["spec"]["template"]["spec"].get(
+                    "imagePullSecrets", []
+                )
+            )
+            selector = ",".join(
+                f"{key}={value}"
+                for key, value in deployment["spec"]["selector"]["matchLabels"].items()
+            )
+            pods = kubectl.list_resources(("pods",), namespace, label_selector=selector)
+            ready = [
+                pod
+                for pod in pods
+                if not pod["metadata"].get("deletionTimestamp")
+                and any(
+                    condition["type"] == "Ready" and condition["status"] == "True"
+                    for condition in pod.get("status", {}).get("conditions", [])
+                )
+            ]
+            if len(ready) != 1:
+                raise DeploymentError(
+                    "application file server has no single ready publisher node"
+                )
+            self.node = ready[0]["spec"]["nodeName"]
+
+    def reference(self, component: str, revision: str) -> str:
+        """Return the immutable HTTP directory selected by an application consumer."""
+        return f"{self.endpoint}/{component}/{revision}"
+
+    def references(self, history: set[str] | None) -> set[str] | None:
+        """Retain Helm history, service intent and all current or terminating file consumers."""
+        if history is None:
+            return None
+        references = history.copy()
+        objects = application_consumers(self.kubectl)
+        references.update(application_references(objects))
+        return references
+
+    def publish_batch(
+        self,
+        builder: CompilerWorkspace,
+        publications: Sequence[ApplicationPublication],
+        references: set[str] | None,
+        *,
+        timeout: str,
+        build_record: dict[str, Any] | None = None,
+    ) -> PublishedApplications:
+        """Publish a build cohort with one input archive and Job, committing its build record last."""
+        started = time.monotonic()
+        logger.info("Publishing applications: {}", ", ".join(item.component for item in publications))
+        selected = []
+        borrowed = []
+        for publication in publications:
+            if publication.parts is not None and not publication.previous:
+                raise DeploymentError("partial publication requires a completed application")
+            component, revision = publication.component, publication.revision
+            if publication.parts is not None:
+                borrowed.append(self.reference(component, publication.previous))
+            selected.append({
+                "component": component,
+                "source": publication.source,
+                "destination": f"{self.mount}/{component}/{revision}",
+                "previous": f"{self.mount}/{component}/{publication.previous}" if publication.previous else None,
+                "sources": publication.sources,
+                "image": publication.image,
+                "parts": publication.parts,
+                "previous_image": publication.previous_image,
+                "archive_url": f"{self.endpoint}/sources/{component}/{revision}.tar.gz",
+            })
+        relative = None
+        if build_record is not None:
+            relative = "sources/builds/" + uuid.uuid4().hex
+            descriptor = builder.root + "/completed-build.json"
+            builder.run(
+                ["sh", "-ec", 'cat > "$1"', "record", descriptor],
+                container=builder.artifact_container, input_text=json.dumps(build_record),
+            )
+        selection = {
+            "applications": selected,
+            "binding": builder.binding,
+            "keep": self._retained_versions(references),
+            "source_archive": _SOURCE_ARCHIVE,
+            "build": {
+                "descriptor": descriptor,
+                "destination": self.mount + "/" + relative,
+                "url": self.endpoint + "/" + relative,
+            } if relative is not None else None,
+        }
+
+        def inputs() -> dict[str, str]:
+            """Retain partial-publication bases through the existing workspace reference protocol."""
+            data = {"input.json": json.dumps(selection)}
+            if borrowed:
+                data[WORKSPACE_SELECTION_KEY] = json.dumps({"applications": borrowed, "images": []})
+            return data
+
+        with builder.cancellation, self._publisher(
+            ["--batch", "/selection/input.json"], builder.binding, timeout,
+            builder=builder, inputs=inputs,
+        ) as (job, deadline), self.kubectl.until(deadline):
+            self._wait(job, deadline)
+            result = json.loads(self.kubectl.run(
+                ["logs", "job/" + job["name"], "-n", self.namespace, "-c", "publish"]
+            ).stdout)
+        logger.info("Applications published in {:.1f}s", time.monotonic() - started)
+        completed = {
+            "url": self.endpoint + "/" + relative + "/build.json",
+            "applications": {component: self.reference(component, revision) for component, revision in result.items()},
+            "images": build_record["build"]["images"],
+        } if relative is not None else None
+        return PublishedApplications(result, completed)
+
+    @contextmanager
+    def import_release(
+        self,
+        source: str,
+        revision: str,
+        references: Callable[[], set[str] | None],
+        previous: Callable[[], dict[str, str]],
+        *,
+        timeout: str,
+        credentials_secret: str = "",
+    ) -> Iterator[None]:
+        """Serialize release import and GC through the caller's Helm selection commit.
+
+        The input ConfigMap is created only after unique Job ownership, so a Pending
+        Pod cannot collect files using a snapshot taken before another installer commits.
+        """
+        binding = "release-" + uuid.uuid4().hex
+        arguments = [
+            "--release",
+            source,
+            self.mount,
+            revision,
+            binding,
+            "/selection/input.json",
+        ]
+        def inputs() -> dict[str, str]:
+            """Capture retained releases only after this installer owns the publication slot."""
+            return {
+                "input.json": json.dumps({
+                    "keep": self._retained_versions(references()),
+                    "previous": previous(),
+                }),
+            }
+
+        with self._publisher(
+            arguments,
+            binding,
+            timeout,
+            name="foretoken-release-" + self.claim_uid,
+            inputs=inputs,
+            credentials_secret=credentials_secret,
+        ) as (job, deadline):
+            with self.kubectl.until(deadline):
+                self._wait(job, deadline)
+                # Release the RWO mount without releasing this installer's operation name.
+                for pod in self.kubectl.list_resources(
+                    ("pods",),
+                    self.namespace,
+                    label_selector="batch.kubernetes.io/controller-uid=" + job["uid"],
+                ):
+                    if any(
+                        owner.get("kind") == "Job"
+                        and owner.get("uid") == job["uid"]
+                        and owner.get("controller") is True
+                        for owner in pod["metadata"].get("ownerReferences", [])
+                    ):
+                        self._delete_owned("pods", pod["metadata"], timeout)
+                current = self.kubectl.get_if_exists("job", job["name"], self.namespace)
+                if current is None or current["metadata"]["uid"] != job["uid"]:
+                    raise DeploymentError(
+                        "application release operation expired before Helm selection"
+                    )
+            yield
 
     def _manifest_path(self, application_url: str) -> str | None:
         prefix = self.endpoint.rstrip("/") + "/"
@@ -281,11 +377,15 @@ class ApplicationFiles:
         return destination
 
     def source_images(self, objects: Iterable[dict[str, Any]]) -> set[str]:
-        """Retain environments selected by service intent before controllers publish status."""
+        """Retain source environments selected by instance or service intent before materialization."""
         references = set()
         for obj in objects:
-            component = SERVICE_COMPONENTS.get(obj.get("kind"))
-            revision = obj["metadata"].get("annotations", {}).get(SOURCE_REVISION)
+            if obj.get("kind") == "InferenceDeployment":
+                component = "control-plane"
+                revision = obj.get("spec", {}).get("controllerSourceRevision")
+            else:
+                component = SERVICE_COMPONENTS.get(obj.get("kind"))
+                revision = obj["metadata"].get("annotations", {}).get(SOURCE_REVISION)
             if component is None or not revision:
                 continue
             if revision in {".", ".."} or any(char in revision for char in "/\\\\\x00"):
@@ -303,177 +403,6 @@ class ApplicationFiles:
                 raise DeploymentError("application manifest image must be a nonempty string")
             images.add(image)
         return images
-
-    def prepare(self, timeout: str) -> None:
-        """Wait for the file origin and select its volume's current publisher node."""
-        kubectl, namespace = self.kubectl, self.namespace
-        with kubectl.until(time.monotonic() + timeout_seconds(timeout)):
-            kubectl.rollout_status(ResourceRef("Deployment", self.name, namespace), timeout)
-            self.claim_uid = kubectl.get("pvc", self.claim, namespace)["metadata"]["uid"]
-            deployment = kubectl.get("deployment", self.name, namespace)
-            self.pull_secrets = tuple(
-                secret["name"]
-                for secret in deployment["spec"]["template"]["spec"].get(
-                    "imagePullSecrets", []
-                )
-            )
-            selector = ",".join(
-                f"{key}={value}"
-                for key, value in deployment["spec"]["selector"]["matchLabels"].items()
-            )
-            pods = kubectl.list_resources(("pods",), namespace, label_selector=selector)
-            ready = [
-                pod
-                for pod in pods
-                if not pod["metadata"].get("deletionTimestamp")
-                and any(
-                    condition["type"] == "Ready" and condition["status"] == "True"
-                    for condition in pod.get("status", {}).get("conditions", [])
-                )
-            ]
-            if len(ready) != 1:
-                raise DeploymentError(
-                    "application file server has no single ready publisher node"
-                )
-            self.node = ready[0]["spec"]["nodeName"]
-
-    def reference(self, component: str, revision: str) -> str:
-        """Return the immutable HTTP directory selected by an application consumer."""
-        return f"{self.endpoint}/{component}/{revision}"
-
-    def references(self, history: set[str] | None) -> set[str] | None:
-        """Retain Helm history, service intent and all current or terminating file consumers."""
-        if history is None:
-            return None
-        references = history.copy()
-        objects = application_consumers(self.kubectl)
-        references.update(application_references(objects))
-        return references
-
-    def publish(
-        self,
-        builder: ClusterBuilder,
-        source: str,
-        component: str,
-        revision: str,
-        previous: str,
-        references: set[str] | None,
-        *,
-        timeout: str,
-        reuse_previous: bool = False,
-        sources: dict[str, Any] | None = None,
-        image: str | None = None,
-        parts: list[str] | None = None,
-        previous_image: str | None = None,
-    ) -> str:
-        """Publish an export, checking the producer-selected base when reusing application parts."""
-        arguments = [
-            source,
-            f"{self.mount}/{component}/{revision}",
-            builder.binding,
-            json.dumps({
-                "previous": f"{self.mount}/{component}/{previous}" if previous else None,
-                "keep": self._retained_versions(references),
-                "reuse_previous": reuse_previous,
-                "sources": sources,
-                "image": image,
-                "parts": parts,
-                "previous_image": previous_image,
-                "source_archive": _SOURCE_ARCHIVE,
-                "archive_url": f"{self.endpoint}/sources/{component}/{revision}.tar.gz",
-            }),
-        ]
-        if parts is not None and not previous:
-            raise DeploymentError("partial publication requires a completed application")
-        with self._publisher(
-            arguments, builder.binding, timeout, builder=builder,
-            source_revision=previous if parts is not None else "",
-        ) as (job, deadline), self.kubectl.until(deadline):
-            self._wait(job, deadline)
-            result = self.kubectl.run(
-                ["logs", "job/" + job["name"], "-n", self.namespace, "-c", "publish"]
-            )
-            return json.loads(result.stdout)["revision"]
-
-    def retire_source(self, binding: str, references: set[str], *, timeout: str) -> bool:
-        """Collect a stopped binding's runtime files on the prepared origin; return whether none remain.
-
-        Published source archives and manifests remain available independently of runtime files.
-        """
-        arguments = [
-            "--retire-source", self.mount, binding,
-            json.dumps(self._retained_versions(references)),
-        ]
-        with self._publisher(arguments, binding, timeout) as (job, deadline), self.kubectl.until(deadline):
-            self._wait(job, deadline)
-            result = self.kubectl.run(
-                ["logs", "job/" + job["name"], "-n", self.namespace, "-c", "publish"]
-            )
-            return not json.loads(result.stdout)["retained"]
-
-    @contextmanager
-    def import_release(
-        self,
-        source: str,
-        revision: str,
-        references: Callable[[], set[str] | None],
-        previous: Callable[[], dict[str, str]],
-        *,
-        timeout: str,
-        credentials_secret: str = "",
-    ) -> Iterator[None]:
-        """Serialize release import and GC through the caller's Helm selection commit.
-
-        The input ConfigMap is created only after unique Job ownership, so a Pending
-        Pod cannot collect files using a snapshot taken before another installer commits.
-        """
-        binding = "release-" + uuid.uuid4().hex
-        arguments = [
-            "--release",
-            source,
-            self.mount,
-            revision,
-            binding,
-            "/selection/input.json",
-        ]
-        def inputs() -> dict[str, str]:
-            """Capture retained releases only after this installer owns the publication slot."""
-            return {
-                "input.json": json.dumps({
-                    "keep": self._retained_versions(references()),
-                    "previous": previous(),
-                }),
-            }
-
-        with self._publisher(
-            arguments,
-            binding,
-            timeout,
-            name="foretoken-release-" + self.claim_uid,
-            inputs=inputs,
-            credentials_secret=credentials_secret,
-        ) as (job, deadline):
-            with self.kubectl.until(deadline):
-                self._wait(job, deadline)
-                # Release the RWO mount without releasing this installer's operation name.
-                for pod in self.kubectl.list_resources(
-                    ("pods",),
-                    self.namespace,
-                    label_selector="batch.kubernetes.io/controller-uid=" + job["uid"],
-                ):
-                    if any(
-                        owner.get("kind") == "Job"
-                        and owner.get("uid") == job["uid"]
-                        and owner.get("controller") is True
-                        for owner in pod["metadata"].get("ownerReferences", [])
-                    ):
-                        self._delete_owned("pods", pod["metadata"], timeout)
-                current = self.kubectl.get_if_exists("job", job["name"], self.namespace)
-                if current is None or current["metadata"]["uid"] != job["uid"]:
-                    raise DeploymentError(
-                        "application release operation expired before Helm selection"
-                    )
-            yield
 
     @staticmethod
     def _retained_versions(references: set[str] | None) -> list[str] | None:
@@ -497,8 +426,7 @@ class ApplicationFiles:
         binding: str,
         timeout: str,
         *,
-        builder: ClusterBuilder | None = None,
-        source_revision: str = "",
+        builder: CompilerWorkspace | None = None,
         name: str = "",
         inputs: Callable[[], dict[str, str]] | None = None,
         credentials_secret: str = "",
@@ -509,9 +437,109 @@ class ApplicationFiles:
         input_name = "foretoken-publish-input-" + uuid.uuid4().hex[:12]
         seconds = math.ceil(timeout_seconds(timeout))
         execution = builder.cancellation if builder is not None else CommandExecution.current()
+        job = self._publisher_job(
+            arguments, binding, name=name, input_name=input_name, seconds=seconds,
+            builder=builder,
+            credentials_secret=credentials_secret,
+        )
+        deadline = time.monotonic() + seconds
+        metadata = None
+        uncertain_create = False
+
+        def stop() -> None:
+            """Recover a lost create response without claiming another release publisher."""
+            receipt = metadata
+            if receipt is None:
+                if not uncertain_create:
+                    return
+                current = self.kubectl.get_if_exists("job", name, self.namespace)
+                if current is None or current["metadata"].get("labels", {}).get(APPLICATION_PUBLISHER_BINDING_LABEL) != binding:
+                    return
+                if not any(
+                    owner["kind"] == "PersistentVolumeClaim" and owner["uid"] == self.claim_uid
+                    for owner in current["metadata"].get("ownerReferences", [])
+                ):
+                    return
+                receipt = current["metadata"]
+            self._delete_owned("jobs", receipt, timeout)
+
+        try:
+            if execution is not None:
+                execution.register(stop)
+            while True:
+                if execution is not None:
+                    execution.check()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise DeploymentError(f"application publication {self.namespace}/{name} exceeded its creation deadline")
+                try:
+                    uncertain_create = True
+                    created = self.kubectl.run(
+                        ["create", "-f", "-", "-o", "json"], input_text=json.dumps(job), timeout=remaining,
+                    )
+                    metadata = json.loads(created.stdout)["metadata"]
+                    uncertain_create = False
+                    break
+                except DeploymentError as exc:
+                    # An occupied name proves that this request created nothing.
+                    if "AlreadyExists" not in str(exc):
+                        raise
+                    uncertain_create = False
+                    if not wait_for_slot:
+                        raise
+                    if time.monotonic() >= deadline:
+                        raise DeploymentError(
+                            f"application release operation {self.namespace}/{name} is occupied after {timeout}"
+                        ) from None
+                    time.sleep(min(1, max(0.0, deadline - time.monotonic())))
+            if execution is not None:
+                execution.check()
+            # A create whose response was lost can still commit after cancellation.
+            # Without these UID-owned inputs, that Job cannot read exports or collect
+            # publications and expires through its native deadline and TTL.
+            with self.kubectl.until(deadline):
+                data = inputs() if inputs is not None else {}
+                data["publish.py"] = files("foretoken.applications").joinpath("publish.py").read_text()
+                selection = {
+                    "apiVersion": "v1", "kind": "ConfigMap",
+                    "metadata": {
+                        "name": input_name, "namespace": self.namespace,
+                        "labels": {WORKSPACE_LABEL: binding} if WORKSPACE_SELECTION_KEY in data else {},
+                        "ownerReferences": [{
+                            "apiVersion": "batch/v1", "kind": "Job",
+                            "name": metadata["name"], "uid": metadata["uid"],
+                        }],
+                    },
+                    "immutable": True,
+                    "data": data,
+                }
+                self.kubectl.run(["create", "-f", "-"], input_text=json.dumps(selection))
+            if execution is not None:
+                execution.check()
+            yield metadata, deadline
+        finally:
+            if execution is not None:
+                execution.unregister(stop)
+                execution.cleanup(stop, sys.exception())
+            else:
+                with cleanup_commands(timeout=seconds):
+                    stop()
+
+    def _publisher_job(
+        self,
+        arguments: list[str],
+        binding: str,
+        *,
+        name: str,
+        input_name: str,
+        seconds: int,
+        builder: CompilerWorkspace | None,
+        credentials_secret: str,
+    ) -> dict[str, Any]:
+        """Render publisher storage and identity without taking ownership of borrowed compiler files."""
         labels = {
             "foretoken.io/application-files": "publisher",
-            _BINDING_LABEL: binding,
+            APPLICATION_PUBLISHER_BINDING_LABEL: binding,
         }
         mounts = [{"name": "applications", "mountPath": self.mount}]
         volumes = [
@@ -649,13 +677,6 @@ class ApplicationFiles:
                     archive_mount,
                 ],
             }]
-        if source_revision:
-            # Keep publisher cleanup identity while exposing its borrowed files
-            # to the existing cross-binding application reference collection.
-            labels[_SOURCE_CONSUMER_LABEL] = "true"
-            annotations = {SOURCE_REVISION: source_revision}
-            job["metadata"]["annotations"] = annotations
-            job["spec"]["template"]["metadata"]["annotations"] = annotations
         if credentials_secret:
             job["spec"]["template"]["spec"]["containers"][0]["env"] = [
                 {
@@ -668,87 +689,7 @@ class ApplicationFiles:
                     },
                 }
             ]
-        deadline = time.monotonic() + seconds
-        metadata = None
-        uncertain_create = False
-
-        def stop() -> None:
-            """Recover a lost create response without claiming another release publisher."""
-            receipt = metadata
-            if receipt is None:
-                if not uncertain_create:
-                    return
-                current = self.kubectl.get_if_exists("job", name, self.namespace)
-                if current is None or current["metadata"].get("labels", {}).get(_BINDING_LABEL) != binding:
-                    return
-                if not any(
-                    owner["kind"] == "PersistentVolumeClaim" and owner["uid"] == self.claim_uid
-                    for owner in current["metadata"].get("ownerReferences", [])
-                ):
-                    return
-                receipt = current["metadata"]
-            self._delete_owned("jobs", receipt, timeout)
-
-        try:
-            if execution is not None:
-                execution.register(stop)
-            while True:
-                if execution is not None:
-                    execution.check()
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise DeploymentError(f"application publication {self.namespace}/{name} exceeded its creation deadline")
-                try:
-                    uncertain_create = True
-                    created = self.kubectl.run(
-                        ["create", "-f", "-", "-o", "json"], input_text=json.dumps(job), timeout=remaining,
-                    )
-                    metadata = json.loads(created.stdout)["metadata"]
-                    uncertain_create = False
-                    break
-                except DeploymentError as exc:
-                    # An occupied name proves that this request created nothing.
-                    if "AlreadyExists" not in str(exc):
-                        raise
-                    uncertain_create = False
-                    if not wait_for_slot:
-                        raise
-                    if time.monotonic() >= deadline:
-                        raise DeploymentError(
-                            f"application release operation {self.namespace}/{name} is occupied after {timeout}"
-                        ) from None
-                    time.sleep(min(1, max(0.0, deadline - time.monotonic())))
-            if execution is not None:
-                execution.check()
-            # A create whose response was lost can still commit after cancellation.
-            # Without these UID-owned inputs, that Job cannot read exports or collect
-            # publications and expires through its native deadline and TTL.
-            with self.kubectl.until(deadline):
-                data = inputs() if inputs is not None else {}
-                data["publish.py"] = files("foretoken.applications").joinpath("publish.py").read_text()
-                selection = {
-                    "apiVersion": "v1", "kind": "ConfigMap",
-                    "metadata": {
-                        "name": input_name, "namespace": self.namespace,
-                        "ownerReferences": [{
-                            "apiVersion": "batch/v1", "kind": "Job",
-                            "name": metadata["name"], "uid": metadata["uid"],
-                        }],
-                    },
-                    "immutable": True,
-                    "data": data,
-                }
-                self.kubectl.run(["create", "-f", "-"], input_text=json.dumps(selection))
-            if execution is not None:
-                execution.check()
-            yield metadata, deadline
-        finally:
-            if execution is not None:
-                execution.unregister(stop)
-                execution.cleanup(stop, sys.exception())
-            else:
-                with cleanup_commands(timeout=seconds):
-                    stop()
+        return job
 
     def _delete_owned(
         self, resource: str, metadata: dict[str, Any], timeout: str
@@ -835,3 +776,136 @@ class ApplicationFiles:
         raise DeploymentError(
             f"application publication {self.namespace}/{name} exceeded its publication deadline"
         )
+
+
+def application_references(objects: Iterable[dict[str, Any]]) -> set[str]:
+    """Read retained application identities from service state and workload projections."""
+    references: set[str] = set()
+    for obj in objects:
+        spec = obj.get("spec", {})
+        if obj.get("kind") == "InferenceDeployment" and spec.get("controllerSourceRevision"):
+            references.add(spec["controllerSourceRevision"])
+        if obj.get("kind") == "ConfigMap" and WORKSPACE_SELECTION_KEY in obj.get("data", {}):
+            references.update(json.loads(obj["data"][WORKSPACE_SELECTION_KEY])["applications"])
+        if obj.get("kind") == "ConfigMap" and "controller-selection.json" in obj.get("data", {}):
+            selection = json.loads(obj["data"]["controller-selection.json"])
+            references.update(application_references([selection["template"]["controller"]]))
+        template = spec.get("template", {})
+        metadata = obj["metadata"]
+        template_metadata = template.get("metadata", {})
+        if metadata.get("labels", {}).get("foretoken.io/platform") == "configuration":
+            values = json.loads(obj["data"]["deploymentValues"])
+            if source_build := obj["data"].get(SOURCE_BUILD_KEY):
+                references.update(json.loads(source_build).get("completedBuild", {}).get("applications", {}).values())
+            references.update(filter(None, (
+                values["controller"]["applicationURL"],
+                values["frontend"]["applicationURL"],
+                values["runtime"]["vllm"]["applicationURL"],
+            )))
+        references.update(
+            selection["applicationURL"]
+            for selection in obj.get("status", {}).get("poolApplications", {}).values()
+            if selection.get("applicationURL")
+        )
+        references.update(
+            filter(
+                None,
+                (
+                    metadata.get("annotations", {}).get(SOURCE_REVISION),
+                    template_metadata.get("annotations", {}).get(SOURCE_REVISION),
+                    metadata.get("annotations", {}).get(
+                        "inference.foretoken.io/application-url"
+                    ),
+                    template_metadata.get("annotations", {}).get(
+                        "inference.foretoken.io/application-url"
+                    ),
+                    template.get("sourceRevision"),
+                    template.get("application", {}).get("applicationURL"),
+                    spec.get("runtime", {}).get("applicationURL"),
+                    obj.get("status", {}).get("application", {}).get("applicationURL"),
+                    spec.get("runtime", {}).get("sourceRevision"),
+                    obj.get("status", {}).get("plan", {}).get("workerApplicationURL"),
+                ),
+            )
+        )
+        # Platform defaults remain consumers even before a model service uses them.
+        for container in template.get("spec", spec).get("containers", []):
+            for argument in container.get("args", []):
+                for prefix in (
+                    "--frontend-application-url=",
+                    "--model-server-application-url=",
+                    "--video-worker-application-url=",
+                ):
+                    if argument.startswith(prefix):
+                        references.add(argument.removeprefix(prefix))
+    return references
+
+
+def application_consumers(kubectl: Kubectl) -> list[dict[str, Any]]:
+    """Read current service selections and present workloads, including terminating consumers."""
+    available = kubectl.api_resource_names("inference.foretoken.io")
+    kinds = tuple(
+        kind
+        for kind in (
+            "inferencedeployments",
+            "modelservices",
+            "frontendservices",
+            "modelpools",
+            "modelgroups",
+            "videotasks",
+        )
+        if kind + ".inference.foretoken.io" in available
+    )
+    # A failed reference read cancels sibling queries before their executor joins.
+    # The caller may defer collection, so this observation has its own failure scope.
+    parent = CommandExecution.current()
+    execution = CommandExecution(parent.control_timeout if parent is not None else None)
+    try:
+        if parent is not None:
+            parent.register(execution.cancel)
+        with ThreadPoolExecutor() as queries, execution:
+            pending = [queries.submit(copy_context().run, execution.run_stage, kubectl.list_all_resources, kinds)] if kinds else []
+            pending.extend(queries.submit(
+                copy_context().run, execution.run_stage, kubectl.list_all_resources, ("configmaps",),
+                label_selector=selector,
+            ) for selector in (
+                "foretoken.io/platform=configuration",
+                "app.kubernetes.io/component=deployment-controller",
+                WORKSPACE_LABEL,
+            ))
+            pending.extend(
+                queries.submit(
+                    copy_context().run, execution.run_stage, kubectl.list_all_resources,
+                    ("pods", "jobs", "replicasets", "deployments"),
+                    label_selector=label,
+                )
+                for label in (
+                    "app.kubernetes.io/name=foretoken-control-plane",
+                    "inference.foretoken.io/model-group",
+                    "inference.foretoken.io/frontend-service",
+                    "inference.foretoken.io/model-preparation-group",
+                    "foretoken.io/application-files=consumer",
+                    _SOURCE_CONSUMER_LABEL + "=true",
+                )
+            )
+            return [obj for future in pending for obj in future.result()]
+    finally:
+        if parent is not None:
+            parent.unregister(execution.cancel)
+
+
+def remove_application_jobs(kubectl: Kubectl, binding: str, timeout: str) -> None:
+    """Stop abandoned writers before their workstation reuses its compiler output."""
+    kubectl.run(
+        [
+            "delete",
+            "jobs",
+            "--all-namespaces",
+            "--selector",
+            f"foretoken.io/application-files=publisher,{APPLICATION_PUBLISHER_BINDING_LABEL}={binding}",
+            "--ignore-not-found",
+            "--cascade=foreground",
+            "--wait=true",
+            "--timeout=" + timeout,
+        ]
+    )

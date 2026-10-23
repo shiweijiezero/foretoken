@@ -48,6 +48,7 @@ class HttpWorkload:
     """Own input preparation and restartable streams; each phase gets its own sampling state."""
 
     def __init__(self, benchmark: BenchmarkConfig, service: ModelService) -> None:
+        """Prepare restartable inputs and reference lengths before this point's phase clocks start."""
         self.benchmark = benchmark
         self.service = service
         self.builder = RequestBuilder(benchmark, service)
@@ -106,78 +107,6 @@ class HttpWorkload:
         )
         self._prepare_conversations()
 
-    def _prepare_conversations(self) -> None:
-        """Resolve scripts and reference output lengths once, outside all measurement clocks."""
-        if not self.benchmark.is_multi_turn:
-            return
-        tokenizers: dict[tuple[str, str], Any] = {}
-        for task in self.tasks:
-            if task.prompt_token_ids is not None:
-                continue
-            turns = split_chat_conversation(task.messages())
-            if self.dataset.max_turns is not None and self.dataset.max_turns > 0:
-                turns = turns[: self.dataset.max_turns]
-            self.scripts[task.id] = turns
-            if (
-                "output_length" in task.metadata
-                or self.benchmark.generation.min_output_length is not None
-            ):
-                continue
-            for index, (_, answer) in enumerate(turns):
-                if answer is None or answer.get("tool_calls"):
-                    continue
-                text = answer.get("content")
-                if isinstance(text, list) and all(
-                    part.get("type") == "text" for part in text
-                ):
-                    text = "".join(part["text"] for part in text)
-                if not isinstance(text, str) or not text:
-                    continue
-                identity = (
-                    ("hf", self.dataset.tokenizer)
-                    if self.dataset.tokenizer
-                    else replace(
-                        self.service, model=self.builder.model_for(task.metadata)
-                    ).tokenizer_identity
-                )
-                if identity not in tokenizers:
-                    from transformers import AutoTokenizer
-
-                    source, name = identity
-                    tokenizers[identity] = AutoTokenizer.from_pretrained(
-                        resolve_tokenizer_path(name, source=source)
-                    )
-                length = len(
-                    tokenizers[identity].encode(text, add_special_tokens=False)
-                )
-                if length:
-                    self.reference_lengths[task.id, index] = length
-
-    def _tasks(self, *, warmup: bool) -> Iterator[Task]:
-        """Restart a finite source or produce its duration-bounded continuation."""
-        if self.random_source is not None and not self.tasks:
-            return self.random_source.requests()
-        if not warmup and self.request_count is None and self.dataset_tasks is not None:
-            sources = [source for source, tasks in self.dataset_tasks.items() if tasks]
-            weights = self.dataset.dataset_weights
-            selected = self.dataset.dataset_selectors
-            relative = [
-                weights[selected.index(source)] if weights else 1.0
-                for source in sources
-            ]
-            rng = random.Random(self.dataset.random_seed)
-            cycles = {
-                source: itertools.cycle(self.dataset_tasks[source])
-                for source in sources
-            }
-            return (
-                next(cycles[rng.choices(sources, weights=relative)[0]])
-                for _ in itertools.count()
-            )
-        if warmup or self.request_count is None:
-            return itertools.cycle(self.tasks)
-        return iter(self.tasks)
-
     def episodes(self, *, warmup: bool = False) -> Iterator[RequestEpisode]:
         """Prepare request occurrences without consuming another phase's inputs or RNG."""
         remaining = (
@@ -215,6 +144,80 @@ class HttpWorkload:
                 else None
             )
             yield RequestEpisode(task, turns, conversation, event)
+
+    def _prepare_conversations(self) -> None:
+        """Resolve scripts and reference output lengths once, outside all measurement clocks."""
+        if not self.benchmark.is_multi_turn:
+            return
+        tokenizers: dict[tuple[str, str], Any] = {}
+        # Serving storage discovery is per model, not per recorded assistant answer.
+        tokenizer_identities: dict[str, tuple[str, str]] = {}
+        for task in self.tasks:
+            if task.prompt_token_ids is not None:
+                continue
+            turns = split_chat_conversation(task.messages())
+            if self.dataset.max_turns is not None and self.dataset.max_turns > 0:
+                turns = turns[: self.dataset.max_turns]
+            self.scripts[task.id] = turns
+            if (
+                "output_length" in task.metadata
+                or self.benchmark.generation.min_output_length is not None
+            ):
+                continue
+            for index, (_, answer) in enumerate(turns):
+                if answer is None or answer.get("tool_calls"):
+                    continue
+                text = answer.get("content")
+                if isinstance(text, list) and all(
+                    part.get("type") == "text" for part in text
+                ):
+                    text = "".join(part["text"] for part in text)
+                if not isinstance(text, str) or not text:
+                    continue
+                if self.dataset.tokenizer:
+                    identity = ("hf", self.dataset.tokenizer)
+                else:
+                    model = self.builder.model_for(task.metadata)
+                    if model not in tokenizer_identities:
+                        tokenizer_identities[model] = replace(self.service, model=model).tokenizer_identity
+                    identity = tokenizer_identities[model]
+                if identity not in tokenizers:
+                    from transformers import AutoTokenizer
+
+                    source, name = identity
+                    tokenizers[identity] = AutoTokenizer.from_pretrained(
+                        resolve_tokenizer_path(name, source=source)
+                    )
+                length = len(
+                    tokenizers[identity].encode(text, add_special_tokens=False)
+                )
+                if length:
+                    self.reference_lengths[task.id, index] = length
+
+    def _tasks(self, *, warmup: bool) -> Iterator[Task]:
+        """Restart a finite source or produce its duration-bounded continuation."""
+        if self.random_source is not None and not self.tasks:
+            return self.random_source.requests()
+        if not warmup and self.request_count is None and self.dataset_tasks is not None:
+            sources = [source for source, tasks in self.dataset_tasks.items() if tasks]
+            weights = self.dataset.dataset_weights
+            selected = self.dataset.dataset_selectors
+            relative = [
+                weights[selected.index(source)] if weights else 1.0
+                for source in sources
+            ]
+            rng = random.Random(self.dataset.random_seed)
+            cycles = {
+                source: itertools.cycle(self.dataset_tasks[source])
+                for source in sources
+            }
+            return (
+                next(cycles[rng.choices(sources, weights=relative)[0]])
+                for _ in itertools.count()
+            )
+        if warmup or self.request_count is None:
+            return itertools.cycle(self.tasks)
+        return iter(self.tasks)
 
 
 def load_multi_dataset_tasks(benchmark: BenchmarkConfig) -> dict[str, list[Task]]:

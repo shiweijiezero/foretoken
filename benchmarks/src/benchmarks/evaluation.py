@@ -5,26 +5,50 @@
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 from collections.abc import Sequence
 
+import wandb
+from foretoken.diagnostics import configure_logging
+from foretoken.errors import DeploymentError
+
 from benchmarks.config.evaluation import (
     EvaluationConfig,
-    native_arguments,
     parse_evaluation_arguments,
 )
-from benchmarks.model_service import resolve_model_service
-from benchmarks.results.console import configure_logging
+from benchmarks.model_service import ModelServiceResolver
 from benchmarks.results.experiment import experiment_output
 from benchmarks.results.output import ResultOutputs
 from benchmarks.runs.evaluation import run_evaluation, run_evaluation_comparison
 
 
-def _run(config: EvaluationConfig, *, help_requested: bool = False) -> None:
-    """Execute the selected evaluation adapter after validating its native options."""
-    if config.evaluator is None:
+def main(argv: Sequence[str] | None = None) -> None:
+    """Select evaluation and retain one experiment record across service preparation and execution."""
+    arguments = tuple(sys.argv[1:] if argv is None else argv)
+    try:
+        config, help_requested = parse_evaluation_arguments(arguments)
+        if config.evaluator is not None:
+            if config.evaluator == "lm-eval":
+                from benchmarks.integrations.lm_eval.cli import validate_arguments
+            else:
+                from benchmarks.integrations.evalscope.cli import validate_arguments
+
+            validate_arguments(["--help"] if help_requested else list(config.arguments))
         if help_requested:
             return
+        # Framework imports may configure root logging; the CLI owns presentation
+        # before experiment and run scopes attach their recording handlers.
+        configure_logging(not config.outputs.includes("quiet"))
+        with experiment_output(config, "eval", arguments) as config:
+            _run(config)
+    except (DeploymentError, OSError, sqlite3.Error, ValueError, wandb.errors.Error) as error:
+        raise SystemExit(str(error)) from error
+
+
+def _run(config: EvaluationConfig) -> None:
+    """Execute the selected evaluation adapter with validated native options."""
+    if config.evaluator is None:
         from benchmarks.config.distribution_comparison import (
             parse_distribution_comparison_arguments,
         )
@@ -39,57 +63,13 @@ def _run(config: EvaluationConfig, *, help_requested: bool = False) -> None:
         else:
             run_distribution_comparison(config, comparison)
         return
-    native = native_arguments(
-        config.evaluator,
-        ["--help"] if help_requested else list(config.arguments),
-    )
-    # Only transport and publication belong to Foretoken. Other native
-    # options, including structured model arguments, retain upstream ownership.
-    owned = (
-        ("model", "output_path", "wandb_args")
-        if config.evaluator == "lm-eval"
-        else ("api_url", "work_dir")
-    )
-    for name in owned:
-        value = getattr(native, name, None)
-        if value:
-            raise ValueError(
-                f"Native {name} is managed by Foretoken; use --model, --url, --output-dir or --output instead"
-            )
-    if config.evaluator == "evalscope":
-        if native.eval_type not in (None, "openai_api"):
-            raise ValueError("foretoken eval uses openai_api for the selected model service")
-        if native.eval_backend not in (None, "Native"):
-            raise ValueError("foretoken eval uses EvalScope's Native backend for the selected model service")
-    model_args = getattr(native, "model_args", None) or {}
-    for name in ("model", "base_url", "api_key", "auth_token"):
-        if name in model_args:
-            raise ValueError(
-                f"model arguments cannot replace {name}; select the service with --model, --url and --api-key"
-            )
-
     if len(config.services) > 1:
         run_evaluation_comparison(config)
     else:
         with (
             ResultOutputs(config, None, directory_prefix="eval-") as outputs,
-            resolve_model_service(config.service) as service,
+            ModelServiceResolver().resolve(config.service) as service,
         ):
             run = run_evaluation(config, service, outputs=outputs)
             if run.exit_code:
                 raise SystemExit(run.exit_code if run.exit_code > 0 else 128 - run.exit_code)
-
-
-def main(argv: Sequence[str] | None = None) -> None:
-    """Select evaluation and retain one experiment record across service preparation and execution."""
-    arguments = tuple(sys.argv[1:] if argv is None else argv)
-    try:
-        config, help_requested = parse_evaluation_arguments(arguments)
-        if help_requested:
-            _run(config, help_requested=True)
-            return
-        configure_logging(not config.outputs.includes("quiet"))
-        with experiment_output(config, "eval", arguments) as config:
-            _run(config)
-    except ValueError as error:
-        raise SystemExit(str(error)) from error

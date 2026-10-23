@@ -65,23 +65,6 @@ pub enum KvRuntimeConfigError {
     },
 }
 
-impl std::fmt::Display for KvRuntimeConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::DuplicateEventSourceId(id) => write!(f, "duplicate KV event source {id:?}"),
-            Self::BindingSourceMissing {
-                route_id,
-                event_source_id,
-            } => write!(
-                f,
-                "route {route_id:?} binds missing KV event source {event_source_id:?}"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for KvRuntimeConfigError {}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KvIndexDegradedReason {
@@ -106,36 +89,6 @@ pub enum KvIndexState {
     Healthy,
     Degraded,
 }
-impl KvIndexState {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Disabled => "disabled",
-            Self::Starting => "starting",
-            Self::Healthy => "healthy",
-            Self::Degraded => "degraded",
-        }
-    }
-}
-
-impl KvIndexDegradedReason {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::KeyMissing => "key_missing",
-            Self::KeyReadFailed => "key_read_failed",
-            Self::KeyInvalidLength => "key_invalid_length",
-            Self::SourceUnavailable => "source_unavailable",
-            Self::DeltaTransport => "delta_transport",
-            Self::DeltaHttpStatus => "delta_http_status",
-            Self::EventSubscriberUnavailable => "event_subscriber_unavailable",
-            Self::DeltaDecode => "delta_decode",
-            Self::DeltaIdentityMismatch => "delta_identity_mismatch",
-            Self::DeltaCursorReset => "delta_cursor_reset",
-            Self::DeltaSequenceGap => "delta_sequence_gap",
-            Self::DeltaSequenceInvalid => "delta_sequence_invalid",
-        }
-    }
-}
-
 /// Observable state of the indexer and its source stream health.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -294,19 +247,57 @@ impl KvIndexer {
             sources_total: h.2.len(),
         }
     }
+    /// Refreshes every configured source and updates index-owned locality facts and health.
+    ///
+    /// The frontend refresh loop keeps the event-based fallback current independently of live queries.
+    pub async fn refresh(&self) {
+        let Some(state) = &self.state else { return };
+        let _lock = state.refresh.lock().await;
+        // Fetch independently with bounded concurrency, then apply serially while holding only the
+        // short-lived index/cursor locks. A stuck producer therefore cannot block its peers.
+        let updates = stream::iter(self.config.event_sources.iter().cloned().map(|source| {
+            let cursor = state
+                .cursors
+                .lock()
+                .unwrap()
+                .get(&source.event_source_id)
+                .cloned()
+                .unwrap_or_default();
+            async move {
+                (
+                    source.clone(),
+                    fetch_delta(&self.client, source, cursor).await,
+                )
+            }
+        }))
+        .buffer_unordered(OBSERVATION_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+        for (source, result) in updates {
+            match result {
+                Ok(delta) => match apply(state, &source, delta) {
+                    Ok(()) => self.ok(&source),
+                    Err(reason) => self.fail(&source, reason),
+                },
+                Err(reason) => self.fail(&source, reason),
+            }
+        }
+    }
+
     /// Resolves a routing identity and DP rank to the snapshot's exact cache source.
     fn route_source(
         &self,
-        lookup: &KvPrefixLookup<'_>,
+        route_target_id: &str,
+        data_parallel_rank: u32,
     ) -> Result<(&KvRouteBinding, &KvEventSourceConfig), KvPrefixUnavailableReason> {
         let binding = self
             .config
             .route_bindings
-            .get(lookup.route_target_id)
+            .get(route_target_id)
             .ok_or(KvPrefixUnavailableReason::MissingBinding)?;
         let source_id = binding
             .data_parallel_rank_event_source_ids
-            .get(&lookup.data_parallel_rank)
+            .get(&data_parallel_rank)
             .ok_or(KvPrefixUnavailableReason::RankMismatch)?;
         let source = self
             .config
@@ -322,10 +313,11 @@ impl KvIndexer {
         if lookup.lora_name.is_some() || !lookup.multimodal.is_empty() {
             return KvPrefixQueryResult::Unavailable(KvPrefixUnavailableReason::UnsupportedRequest);
         }
-        let (binding, source) = match self.route_source(&lookup) {
-            Ok(route) => route,
-            Err(reason) => return KvPrefixQueryResult::Unavailable(reason),
-        };
+        let (binding, source) =
+            match self.route_source(lookup.route_target_id, lookup.data_parallel_rank) {
+                Ok(route) => route,
+                Err(reason) => return KvPrefixQueryResult::Unavailable(reason),
+            };
         let Some(state) = &self.state else {
             return KvPrefixQueryResult::Unavailable(KvPrefixUnavailableReason::Disabled);
         };
@@ -395,42 +387,6 @@ impl KvIndexer {
         }
         KvPrefixQueryResult::Matches(KvPrefixMatches::new(matches))
     }
-    /// Refreshes every configured source and updates index-owned locality facts and health.
-    ///
-    /// The frontend refresh loop keeps the event-based fallback current independently of live queries.
-    pub async fn refresh(&self) {
-        let Some(state) = &self.state else { return };
-        let _lock = state.refresh.lock().await;
-        // Fetch independently with bounded concurrency, then apply serially while holding only the
-        // short-lived index/cursor locks. A stuck producer therefore cannot block its peers.
-        let updates = stream::iter(self.config.event_sources.iter().cloned().map(|source| {
-            let cursor = state
-                .cursors
-                .lock()
-                .unwrap()
-                .get(&source.event_source_id)
-                .cloned()
-                .unwrap_or_default();
-            async move {
-                (
-                    source.clone(),
-                    fetch_delta(&self.client, source, cursor).await,
-                )
-            }
-        }))
-        .buffer_unordered(OBSERVATION_CONCURRENCY)
-        .collect::<Vec<_>>()
-        .await;
-        for (source, result) in updates {
-            match result {
-                Ok(delta) => match apply(state, &source, delta) {
-                    Ok(()) => self.ok(&source),
-                    Err(reason) => self.fail(&source, reason),
-                },
-                Err(reason) => self.fail(&source, reason),
-            }
-        }
-    }
     fn ok(&self, s: &KvEventSourceConfig) {
         let mut h = self.health.lock().unwrap();
         h.2.insert(s.event_source_id.clone(), true);
@@ -449,6 +405,53 @@ impl KvIndexer {
         h.1 = Some(r)
     }
 }
+impl std::fmt::Display for KvRuntimeConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DuplicateEventSourceId(id) => write!(f, "duplicate KV event source {id:?}"),
+            Self::BindingSourceMissing {
+                route_id,
+                event_source_id,
+            } => write!(
+                f,
+                "route {route_id:?} binds missing KV event source {event_source_id:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for KvRuntimeConfigError {}
+
+impl KvIndexState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::Starting => "starting",
+            Self::Healthy => "healthy",
+            Self::Degraded => "degraded",
+        }
+    }
+}
+
+impl KvIndexDegradedReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::KeyMissing => "key_missing",
+            Self::KeyReadFailed => "key_read_failed",
+            Self::KeyInvalidLength => "key_invalid_length",
+            Self::SourceUnavailable => "source_unavailable",
+            Self::DeltaTransport => "delta_transport",
+            Self::DeltaHttpStatus => "delta_http_status",
+            Self::EventSubscriberUnavailable => "event_subscriber_unavailable",
+            Self::DeltaDecode => "delta_decode",
+            Self::DeltaIdentityMismatch => "delta_identity_mismatch",
+            Self::DeltaCursorReset => "delta_cursor_reset",
+            Self::DeltaSequenceGap => "delta_sequence_gap",
+            Self::DeltaSequenceInvalid => "delta_sequence_invalid",
+        }
+    }
+}
+
 fn kv_http_client() -> reqwest::Client {
     // Bound connection, response, and body reads so a hung source cannot retain a refresh round.
     reqwest::Client::builder()
@@ -457,6 +460,8 @@ fn kv_http_client() -> reqwest::Client {
         .expect("static KV index HTTP client configuration is valid")
 }
 
+/// Fetches one source page for refresh without advancing its cursor or mutating the index.
+/// HTTP 409 carries reset state; `apply` owns epoch validation and invalidation for both responses.
 async fn fetch_delta(
     client: &reqwest::Client,
     source: KvEventSourceConfig,
@@ -489,8 +494,8 @@ async fn fetch_delta(
     }
 }
 
-// Validates source identity and cursor continuity, applies the delta, then advances the
-// source-owned cursor; invalid input clears only that source's cached locality facts.
+/// Validates and applies one source delta before advancing its owned cursor.
+/// Invalid identity or continuity clears only that source's cached locality facts.
 fn apply(
     state: &State,
     s: &KvEventSourceConfig,
@@ -588,6 +593,8 @@ fn apply(
     );
     Ok(())
 }
+/// Invalidates one source's cursor and facts together after refresh detects a broken epoch or page.
+/// Other sources retain their independent observations and routing eligibility.
 fn clear(state: &State, s: &KvEventSourceConfig) {
     if let Some(c) = state.cursors.lock().unwrap().remove(&s.event_source_id) {
         state.index.lock().unwrap().clear_source(&KvEventSourceId {

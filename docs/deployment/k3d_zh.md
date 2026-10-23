@@ -11,7 +11,6 @@ k3d 在 Docker 容器中运行轻量级 Kubernetes 发行版 k3s。它适合在�
 
 主机需要：
 
-- Python 3.11 或更高版本；
 - Linux；
 - NVIDIA 驱动程序；
 - NVIDIA Container Toolkit；
@@ -62,12 +61,14 @@ helm version --short
 
 ## 2. 进入仓库并选择 GPU
 
-获取源码后，从仓库根目录执行后续命令：
+获取源码并准备 CLI。后续命令在仓库根目录、已激活的环境中执行：
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-pip install -e .
+uv venv --python 3.12 --seed  # 使用 pip 时：python3 -m venv .venv（Python 3.11+）
+source .venv/bin/activate
+uv pip install -e .  # 或 pip install -e .
 ```
 
 查看 GPU：
@@ -90,7 +91,7 @@ foretoken cluster create k3d --name "$CLUSTER" --gpus "$GPU_INDICES"
 kubectl get nodes
 ```
 
-命令会挂载 NVIDIA 运行时和仓库中的 `data/` 目录，安装 NVIDIA 设备插件，并切换到新建集群的 kubeconfig context。
+命令会让集群使用选定的 GPU 和仓库中的 `data/` 目录，安装 NVIDIA 设备插件，并切换到新集群的 kubeconfig context。创建集群和安装平台时，还会检测主机的 RDMA 能力，自动准备受支持的设备与网络，供模型通信使用。
 
 ## 4. 安装并访问 Foretoken
 
@@ -105,45 +106,23 @@ foretoken install -e .
 使用发布包和镜像时，从所选[发布页面](https://github.com/shiweijiezero/foretoken/releases)取得示例，再安装：
 
 ```bash
-pip install foretoken
+uv pip install foretoken  # 或 pip install foretoken
 foretoken install
 ```
 
-### 4.2 本地模式
+### 4.2 部署快速开始示例
 
-部署快速开始示例，解析 k3s ServiceLB 为前端分配的地址：
+部署模型，获取共享 Gateway 的 URL 和请求所需的 Host。不传 `--name` 时，实例名取自 [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `qwen3-0-6b`：
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 ```
 
-### 4.3 网关模式
+如需其他实例名，在 `deploy` 中添加 `--name candidate-a`，并在 `endpoint` 中使用 `candidate-a`。
 
-先在 `examples/quickstart/qwen3-0.6b/frontend.yaml` 中设置对外域名：
-
-```yaml
-spec:
-  hostname: foretoken.example.com
-```
-
-启用网关模式并部署快速开始示例：
-
-```bash
-foretoken install -e . --frontend-mode gateway
-# 发布安装使用：foretoken install --frontend-mode gateway
-foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
-```
-
-解析已配置的 Gateway 入口：
-
-```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
-```
-
-### 4.4 发送 OpenAI API 兼容格式的请求
+### 4.3 发送 OpenAI API 兼容格式的请求
 
 ```bash
 curl "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -152,7 +131,6 @@ curl "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
   -d '{
     "model": "Qwen/Qwen3-0.6B",
     "messages": [{"role": "user", "content": "Reply with: Foretoken is ready"}],
-    "max_tokens": 32,
     "temperature": 0
   }'
 printf '\n'

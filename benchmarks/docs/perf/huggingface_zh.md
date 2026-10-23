@@ -20,6 +20,8 @@ foretoken perf examples/quickstart/qwen3-0.6b \
   --max-concurrency 2 --num-prompts 2 --output local,wandb
 ```
 
+文件 URI 需使用完整仓库 ID，即用户名或组织名加仓库名（`org/name`）。在仓库 ID 后添加 `@revision` 可选择分支、标签或拉取请求的版本，例如 `@refs/pr/10`；其他分支名中的 `/` 写成 `%2F`。
+
 直接指定文件时会将文件下载到 Hugging Face 缓存。数据行使用与[本地对话数据](conversations_zh.md)相同的格式。添加 `--max-turns 1` 可只评测首轮，`--dataset-offset` 可跳过开头的数据行。
 
 ![按发送顺序展示的 20 个 StudyChat 请求](../imgs/huggingface-wandb.png)

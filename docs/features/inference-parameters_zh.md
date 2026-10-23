@@ -75,6 +75,23 @@ spec:
 
 `ModelService.spec.nodeSelector` 选择默认 Pool，`modelPools[].nodeSelector` 为单个 Pool 选择另一组节点。Kubernetes 会把模型服务和运行时准备 Pod 调度到带有该 label 的节点。
 
+## 多节点副本的调度与配额
+
+平台管理员可以用 [Volcano](https://github.com/kubernetes-sigs/lws/tree/main/docs/examples/sample/gang-scheduling) 为完整执行组选择节点，用 [Kueue](https://kueue.sigs.k8s.io/docs/tasks/run/leaderworkerset/) 控制配额准入，也可以组合两者。模型容量、就绪判断与请求排空仍由 Foretoken 管理。单节点副本和不占用 GPU 的模型准备任务保持原有调度方式。
+
+原生控制器和队列需要提前准备。以下组合示例使用名为 `inference` 的 Volcano Queue，同时启用 Kueue 的 LeaderWorkerSet 集成，并在各服务命名空间创建名为 `inference` 的 LocalQueue。将配置保存到 `deploy/platform-values.yaml`：
+
+```yaml
+workload:
+  leaderWorkerScheduling:
+    volcanoQueueName: inference
+    kueueLocalQueueName: inference
+```
+
+只需要一种集成时，省略另一字段即可。执行 `foretoken install --values deploy/platform-values.yaml`，保留原安装命令的源码和镜像仓库选项，再重新部署需要采用队列的实例。Foretoken 会为自己托管的 LeaderWorkerSet 控制器启用 Volcano 支持；独立安装的控制器仍由其管理员配置。
+
+平台更新不会改变运行中或已暂停的实例。已有实例继续使用选定的队列，直到下一次明确执行 `foretoken deploy`。通过 `leaderWorkerScheduling: null` 清除新部署的选择。
+
 ## 实例并发上限
 
 要限制每个文本模型服务实例已接收但尚未完成的工作，包括引擎内排队的请求，在模型 YAML 中添加：
@@ -138,6 +155,56 @@ P/D 和 E/P/D 各 Pool 可以在模型和引擎支持的组合内分别配置并
 
 开启专家并行（EP）后，各 DP rank 的 KV Cache 仍独立。单节点 EP 仅在实际通信后端需要时申请 RDMA 设备。
 
+## 分离预填充与解码并复用 KV
+
+预填充（Prefill）计算输入，解码（Decode）生成回答。Mooncake 和 NIXL 都可以让后续 Prefill 复用上一轮 Decode 保留的 KV 缓存。两轮请求可以经过不同的前端和 Prefill 实例；能否复用取决于输入 token 前缀和缓存隔离身份是否匹配，无需提供会话标识。
+
+在 `modelPools` 中配置 `prefill` 和 `decode` 后，默认使用 Mooncake。两端有可用且相互兼容的 RDMA 设备分配和网络时，Foretoken 使用 RDMA，否则选择 TCP。网络准备由[平台安装](../deployment/kubernetes_zh.md#rdma-网络)完成，模型配置无需指定网卡或端口。
+
+集群的 GPU 和网卡驱动支持时，原生传输库会使用 GPUDirect RDMA，让网卡直接访问 GPU 内存，无需模型级开关。
+
+使用 NIXL 时只需选择 connector：
+
+```yaml
+spec:
+  kvTransfer:
+    connector: nixl
+```
+
+只有需要覆盖自动选择时，才设置 `kvTransfer.protocol: tcp` 或 `rdma`。修改后执行 `foretoken deploy <配置目录>`，替换该模型的 P/D 实例，其他模型继续使用各自的传输配置。
+
+Foretoken 的 vLLM 0.31 和所提供的沐曦运行环境会为使用完整注意力、不带 LoRA 的文本模型自动启用复用，并准备所需的传输依赖。
+
+复用要求每个模型副本位于单个节点，P/D 的 KV 布局兼容，PP/PCP/DCP 均为 1；NIXL 还要求两端 TP 大小相同。其他受支持的配置继续使用普通 P/D。Encoder 分离和 Mooncake Store 使用 Mooncake。
+
+NIXL 示例在 [`model.yaml`](../../examples/feature/nixl-prefix-reuse/model.yaml) 中直接声明模型 `Qwen/Qwen2.5-0.5B-Instruct` 和 P/D 两个 Pool，传输方式自动选择。每个阶段申请一张 GPU，前端有两个副本，存储使用[平台默认配置](model-storage_zh.md)。在已准备好的 Foretoken 集群上，从仓库根目录执行：
+
+```bash
+foretoken deploy examples/feature/nixl-prefix-reuse --timeout 20m
+FRONTEND_URL="$(foretoken endpoint qwen-nixl)"
+FRONTEND_HOST="$(foretoken endpoint qwen-nixl --host)"
+
+curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $FRONTEND_HOST" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "messages": [{"role": "user", "content": "请解释提示词缓存如何降低响应延迟。"}],
+    "temperature": 0,
+    "max_tokens": 256
+  }'
+```
+
+后续对话继续通过同一 API 提交完整历史；聊天模板若删除历史思考内容，token 前缀也会改变，需要重新计算。匹配的 Decode 前缀比 Prefill 本地缓存更长、且引擎判断值得传输时，才使用远端缓存，否则正常计算。仅按负载选路也会使用这条复用路径，[路由权重](../../data-plane/frontend/src/router/README_zh.md)只影响目标偏好。
+
+性能测量使用 [`foretoken perf`](../../benchmarks/docs/perf/README_zh.md)，也可以运行[多轮对话工作负载](../../benchmarks/docs/perf/conversations_zh.md)。
+
+使用完后删除示例：
+
+```bash
+foretoken delete qwen-nixl
+```
+
 ## 推测解码
 
 将完整的原生字典写在一起：
@@ -157,6 +224,6 @@ spec:
 
 ## 平台管理的选项
 
-模型、tokenizer、节点数量和缓存传输分别通过 `spec.model`、`spec.tokenizer`、`nodes`、`kvCache` 和 `ecProfile` 配置，Foretoken 据此设置启动参数。启用运行时缓存时，原生 profiler 配置由性能剖析功能管理；mcTracer 还会选择对应的 worker。多节点副本使用 `mp` executor。
+模型、tokenizer、节点数量、缓存存储与传输通过 `spec.model`、`spec.tokenizer`、`nodes`、`kvCache`、`kvTransfer` 和 `ecProfile` 配置，Foretoken 据此设置启动参数。启用运行时缓存时，原生 profiler 配置由性能剖析功能管理；mcTracer 还会选择对应的 worker。多节点副本使用 `mp` executor。
 
 其余原生选项交给 vLLM，包括 `ec-manager-config`，以及未使用 mcTracer 时的自定义 worker。完整选项见 [vLLM 参数文档](https://docs.vllm.ai/en/latest/configuration/engine_args/)。

@@ -25,19 +25,6 @@ struct ResponseMetadata {
     model: String,
 }
 
-impl ResponseMetadata {
-    fn from_generated(generated: &Generated) -> Self {
-        Self {
-            id: generated.routed.routed_request.request.request_id.clone(),
-            created: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            model: generated.routed.routed_request.decision.model.clone(),
-        }
-    }
-}
-
 #[derive(Serialize)]
 struct Usage {
     prompt_tokens: usize,
@@ -49,17 +36,6 @@ struct Usage {
 #[derive(Serialize)]
 struct PromptTokenUsageDetails {
     cached_tokens: usize,
-}
-
-impl Usage {
-    fn from_counts(prompt_tokens: usize, completion_tokens: usize, cached_tokens: usize) -> Self {
-        Self {
-            prompt_tokens,
-            completion_tokens,
-            total_tokens: prompt_tokens + completion_tokens,
-            prompt_tokens_details: PromptTokenUsageDetails { cached_tokens },
-        }
-    }
 }
 
 #[derive(Serialize)]
@@ -80,6 +56,30 @@ struct StreamErrorBody<'a> {
     #[serde(rename = "type")]
     kind: &'a str,
     code: &'a str,
+}
+
+impl ResponseMetadata {
+    fn from_generated(generated: &Generated) -> Self {
+        Self {
+            id: generated.routed.routed_request.request.request_id.clone(),
+            created: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            model: generated.routed.routed_request.decision.model.clone(),
+        }
+    }
+}
+
+impl Usage {
+    fn from_counts(prompt_tokens: usize, completion_tokens: usize, cached_tokens: usize) -> Self {
+        Self {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens: prompt_tokens + completion_tokens,
+            prompt_tokens_details: PromptTokenUsageDetails { cached_tokens },
+        }
+    }
 }
 
 fn stream_backend_error() -> StreamError<'static> {

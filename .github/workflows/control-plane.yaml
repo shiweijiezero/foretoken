@@ -12,9 +12,9 @@ on:
       - main
     paths:
       - control-plane/**
+      - deploy/build-source
       - deploy/charts/foretoken/**
-      - deploy/observability/**
-      - deploy/platform-values.example.yaml
+      - examples/quickstart/qwen3-0.6b/**
       - .dockerignore
       - LICENSE
       - .github/workflows/control-plane.yaml
@@ -39,8 +39,8 @@ jobs:
         run: |
           if [ "$EVENT_NAME" != pull_request ]; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
-          elif git diff --quiet HEAD^1 HEAD -- control-plane/ deploy/charts/foretoken/ \
-            deploy/observability/ deploy/platform-values.example.yaml .dockerignore \
+          elif git diff --quiet HEAD^1 HEAD -- control-plane/ deploy/build-source deploy/charts/foretoken/ \
+            examples/quickstart/qwen3-0.6b/ .dockerignore \
             LICENSE .github/workflows/control-plane.yaml; then
             echo 'run=false' >> "$GITHUB_OUTPUT"
             echo 'No control-plane changes; verification not needed.'
@@ -85,121 +85,14 @@ jobs:
         with:
           version: v0.32.0
           cluster_name: foretoken
-      - name: Validate Helm chart
-        if: steps.changes.outputs.run == 'true'
-        run: |
-          helm lint deploy/charts/foretoken --kube-version 1.36.3
-          helm template foretoken deploy/charts/foretoken --kube-version 1.36.3 > /tmp/foretoken.yaml
-          grep -q '^kind: Job' /tmp/foretoken.yaml
-          grep -q '^kind: ClusterRole' /tmp/foretoken.yaml
-          helm template foretoken deploy/charts/foretoken --kube-version 1.36.3 \
-            --namespace foretoken-demo --set scope=deployment > /tmp/foretoken-deployment.yaml
-          grep -q '^kind: Deployment' /tmp/foretoken-deployment.yaml
-          grep -q '^kind: Role$' /tmp/foretoken-deployment.yaml
-          if grep -Eq '^kind: (ServiceMonitor|PrometheusRule)' /tmp/foretoken.yaml; then
-            exit 1
-          fi
-          if grep -q '^kind: CustomResourceDefinition' /tmp/foretoken.yaml; then
-            exit 1
-          fi
-          helm template foretoken deploy/charts/foretoken \
-            --kube-version 1.36.3 \
-            --set frontend.enabled=true \
-            --set observability.mode=enabled \
-            --set-string observability.additionalLabels.release=kube-prometheus-stack \
-            --set observability.interval=30s \
-            --set observability.scrapeTimeout=10s \
-            > /tmp/foretoken-observability.yaml
-          test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability.yaml)" = "3"
-          test "$(grep -c '^kind: PrometheusRule' /tmp/foretoken-observability.yaml)" = "1"
-          test "$(grep -c 'path: /metrics' /tmp/foretoken-observability.yaml)" = "3"
-          test "$(grep -c 'interval: \"30s\"' /tmp/foretoken-observability.yaml)" = "3"
-          test "$(grep -c 'scrapeTimeout: \"10s\"' /tmp/foretoken-observability.yaml)" = "3"
-          test "$(grep -c 'release: kube-prometheus-stack' /tmp/foretoken-observability.yaml)" = "4"
-          grep -q 'foretoken:frontend_http_response_starts:rate5m' /tmp/foretoken-observability.yaml
-          grep -q 'foretoken:model_server_requests_waiting:sum' /tmp/foretoken-observability.yaml
-          if grep -q 'name: foretoken.alerting' /tmp/foretoken-observability.yaml; then exit 1; fi
-          helm template foretoken deploy/charts/foretoken \
-            --kube-version 1.36.3 \
-            --api-versions monitoring.coreos.com/v1/ServiceMonitor \
-            --api-versions monitoring.coreos.com/v1/PrometheusRule \
-            --set frontend.enabled=true \
-            > /tmp/foretoken-observability-auto.yaml
-          test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability-auto.yaml)" = "3"
-          test "$(grep -c '^kind: PrometheusRule' /tmp/foretoken-observability-auto.yaml)" = "1"
-      - name: Validate operator lifecycle
+      - name: Prepare test image and directory
         if: steps.changes.outputs.run == 'true'
         run: |
           kind load docker-image foretoken-control-plane:test --name foretoken
-          helm upgrade --install foretoken deploy/charts/foretoken \
-            --namespace foretoken-platform \
-            --create-namespace \
-            --set image.repository=foretoken-control-plane \
-            --set image.tag=test \
-            --set image.pullPolicy=Never \
-            --wait \
-            --timeout=3m
-          kubectl wait --for=condition=Established \
-            crd/frontendservices.inference.foretoken.io \
-            crd/modelservices.inference.foretoken.io \
-            crd/modelpools.inference.foretoken.io \
-            crd/modelgroups.inference.foretoken.io \
-            --timeout=1m
-          kubectl create namespace foretoken-demo
-          helm upgrade --install foretoken deploy/charts/foretoken \
-            --namespace foretoken-demo \
-            --set scope=deployment \
-            --set image.repository=foretoken-control-plane \
-            --set image.tag=test \
-            --set image.pullPolicy=Never \
-            --wait \
-            --timeout=3m
-          # kind has no default StorageClass. This static volume exercises the
-          # RuntimeCache binding path without adding an external provisioner.
-          kubectl apply -f - <<'EOF'
-          apiVersion: v1
-          kind: PersistentVolume
-          metadata:
-            name: foretoken-runtime-cache-test
-          spec:
-            capacity:
-              storage: 100Gi
-            accessModes:
-              - ReadWriteOnce
-            persistentVolumeReclaimPolicy: Retain
-            storageClassName: ""
-            hostPath:
-              path: /var/lib/foretoken-runtime-cache
-              type: DirectoryOrCreate
-          EOF
-          kubectl apply --server-side --namespace foretoken-demo -k examples/quickstart/qwen3-0.6b
-          kubectl wait --for=condition=PoolsMaterialized \
-            modelservice/quickstart-qwen3-0.6b \
-            --namespace foretoken-demo \
-            --timeout=1m
-          kubectl get modelpool/quickstart-qwen3-0.6b-default --namespace foretoken-demo
-          test "$(kubectl get modelservice/quickstart-qwen3-0.6b \
-            --namespace foretoken-demo \
-            -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" = "False"
-          helm upgrade foretoken deploy/charts/foretoken \
-            --namespace foretoken-demo \
-            --set scope=deployment \
-            --set image.repository=foretoken-control-plane \
-            --set image.tag=test \
-            --set image.pullPolicy=Never \
-            --set resources.requests.cpu=21m \
-            --wait \
-            --timeout=3m
-          kubectl delete modelservices,frontendservices --all --namespace foretoken-demo --wait --timeout=2m
-          kubectl delete runtimecaches --all --namespace foretoken-demo --wait --timeout=2m
-          helm uninstall foretoken --namespace foretoken-demo --wait
-          kubectl delete namespace foretoken-demo --wait --timeout=1m
-          helm uninstall foretoken --namespace foretoken-platform --wait
-          kubectl get crd/frontendservices.inference.foretoken.io
-          kubectl get crd/modelservices.inference.foretoken.io
-          kubectl get crd/modelpools.inference.foretoken.io
-          kubectl get crd/modelgroups.inference.foretoken.io
-          ! kubectl get clusterrole/foretoken-platform-foretoken-control-plane
+          docker exec foretoken-control-plane mkdir -p /var/lib/foretoken-runtime-cache
+      - name: Validate Helm and operator lifecycle
+        if: steps.changes.outputs.run == 'true'
+        run: make -C control-plane verify-deployment TEST_CONTEXT=kind-foretoken
       - name: Check generated files
         if: steps.changes.outputs.run == 'true'
         run: git diff --exit-code

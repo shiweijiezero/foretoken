@@ -1,38 +1,46 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Own temporary Kubernetes readers and native viewing sessions for retained captures."""
+"""Read retained captures with scoped Kubernetes readers and shared temporary-resource cleanup."""
 
 from __future__ import annotations
 
 import json
-import logging
 import os
 import secrets
-import subprocess
-import tempfile
-import threading
-import time
 from dataclasses import dataclass
 from importlib import resources
 from typing import Any, BinaryIO, Self
-from urllib.error import URLError
 from urllib.parse import quote, urlencode, urlsplit
-from urllib.request import Request, urlopen
 from uuid import uuid4
 
-from foretoken.deployment.storage import DirectoryVolumes
+from loguru import logger
+
+from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
+from foretoken.processes.execution import CommandExecution
 from foretoken.profiling.reader import (
     CAPTURE_MOUNT_PATH,
+    READER_DEPLOYMENT_UID_ENV,
+    READER_NAMESPACE_ENV,
     READER_PORT,
     READER_SECRET_ENV,
     capture_path,
     capture_token,
 )
 
-logger = logging.getLogger(__name__)
+
+@dataclass(frozen=True)
+class CaptureFileSource:
+    """Borrow one reader's scoped file URL; consumers must close before ProfileStorage releases it."""
+
+    namespace: str
+    claim_uid: str
+    deployment_uid: str
+    path: str
+    reader_name: str
+    url: str
 
 
 @dataclass(frozen=True)
@@ -42,24 +50,135 @@ class _Reader:
     secret: str
 
 
-class ProfileStorage:
-    """Own one viewer's readers and native sessions; preserve captures and storage."""
+class ViewerResources:
+    """Share UID-fenced creation and rollback while each viewer resource owner keeps its own registry."""
+
+    def __init__(self, kubectl: Kubectl, timeout: str, seconds: float) -> None:
+        """Track temporary resources under the owner's already resolved Kubernetes timeout."""
+        self.kubectl = kubectl
+        self.timeout = timeout
+        self.seconds = seconds
+        self._created: list[tuple[str, str, str, str]] = []
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Release only this owner's temporary UIDs, leaving borrowed resources and stored traces intact."""
+        self._cleanup()
+
+    def _object(self, kind: str, name: str, namespace: str) -> dict[str, Any] | None:
+        """Read one identity without confusing Kubernetes access failure with absence."""
+        output = self.kubectl.run(
+            [
+                "get",
+                kind,
+                name,
+                "-n",
+                namespace,
+                "--ignore-not-found",
+                "-o",
+                "json",
+                f"--request-timeout={self.timeout}",
+            ],
+            timeout=self.seconds,
+        ).stdout.strip()
+        return json.loads(output) if output else None
+
+    def _create(self, document: dict[str, Any], resource: str) -> dict[str, Any]:
+        """Finish accepted creation and record its UID before observing viewer cancellation."""
+        if execution := CommandExecution.current():
+            execution.check()
+        # Once submitted, creation must return its identity before the handler can
+        # stop; the viewer then releases the recorded UID after joining handlers.
+        with CommandExecution(report_failure=False):
+            created = json.loads(
+                self.kubectl.run(
+                    [
+                        "create",
+                        "-f",
+                        "-",
+                        "-o",
+                        "json",
+                        f"--request-timeout={self.timeout}",
+                    ],
+                    input_text=json.dumps(document),
+                    timeout=self.seconds,
+                ).stdout
+            )
+        metadata = created["metadata"]
+        self._created.append(
+            (resource, metadata["namespace"], metadata["name"], metadata["uid"])
+        )
+        return created
+
+    def _cleanup(self, start: int = 0) -> None:
+        """Delete only exact UIDs created here; API preconditions protect replacement objects."""
+        for resource, namespace, name, uid in reversed(self._created[start:]):
+            path = f"/api/v1/namespaces/{namespace}/{resource}/{name}"
+            try:
+                if self._object(resource, name, namespace) is None:
+                    continue
+                self.kubectl.run(
+                    [
+                        "delete",
+                        "--raw",
+                        path,
+                        "-f",
+                        "-",
+                        f"--request-timeout={self.timeout}",
+                    ],
+                    input_text=json.dumps(
+                        {
+                            "apiVersion": "v1",
+                            "kind": "DeleteOptions",
+                            "preconditions": {"uid": uid},
+                            "propagationPolicy": "Background",
+                        }
+                    ),
+                    timeout=self.seconds,
+                )
+                if resource == "pods":
+                    self.kubectl.run(
+                        [
+                            "wait",
+                            f"pod/{name}",
+                            "-n",
+                            namespace,
+                            "--for=delete",
+                            f"--timeout={self.timeout}",
+                        ],
+                        timeout=self.seconds + 1,
+                    )
+            except DeploymentError as exc:
+                logger.warning(
+                    "Could not remove temporary profile viewer {}/{}: {}",
+                    namespace,
+                    name,
+                    exc,
+                )
+        del self._created[start:]
+
+
+class ProfileStorage(ViewerResources):
+    """Own one viewer's capture readers while preserving retained traces and storage."""
 
     def __init__(
         self, kubectl: Kubectl, timeout: str, image: str | None = None
     ) -> None:
-        self.kubectl = kubectl
-        self.timeout = timeout
-        self.seconds = timeout_seconds(timeout)
-        if self.seconds <= 0:
+        """Load platform viewer settings before this CLI session creates any temporary resources."""
+        seconds = timeout_seconds(timeout)
+        if seconds <= 0:
             raise DeploymentError("profile viewer timeout must be positive")
+        super().__init__(kubectl, timeout, seconds)
         registry = os.environ.get("FORETOKEN_DOCKER_IO_REGISTRY", "docker.io").rstrip(
             "/"
         )
         self.image = image or f"{registry}/library/python:3.12-slim"
-        self._readers: dict[tuple[str, str], _Reader] = {}
-        self._created: list[tuple[str, str, str, str]] = []
-        self._nsight_sessions: dict[tuple[str, str, str], str] = {}
+        self._readers: dict[tuple[str, str, str], _Reader] = {}
         configs = json.loads(
             self.kubectl.run(
                 [
@@ -81,51 +200,83 @@ class ProfileStorage:
             )
         self.viewer_config = configs[0]["data"] if configs else {}
 
-    def __enter__(self) -> Self:
-        return self
+    def list_files(
+        self, namespace: str, claim_name: str, artifact_path: str,
+        *, deployment_uid: str,
+    ) -> list[dict[str, Any]]:
+        """List nested traces relative to a capture directory, distinguishing missing storage."""
+        try:
+            run = capture_path(artifact_path, namespace, deployment_uid)
+        except ValueError as exc:
+            raise DeploymentError("invalid capture directory") from exc
+        reader = self._reader(namespace, claim_name, deployment_uid)
+        path = self._path(reader, namespace, "list", run)
+        try:
+            result = json.loads(
+                self.kubectl.run(
+                    [
+                        "get",
+                        "--raw",
+                        path,
+                        f"--request-timeout={self.timeout}",
+                    ],
+                    timeout=self.seconds,
+                ).stdout
+            )
+        except DeploymentError as exc:
+            token = capture_token(reader.secret, run)
+            raise DeploymentError(str(exc).replace(token, "[redacted]")) from None
+        if result.get("error") == "not_found":
+            return []
+        if result.get("error"):
+            raise DeploymentError("capture files cannot be read by the storage viewer")
+        return result["files"]
 
-    def __exit__(self, *exc: object) -> None:
-        self.close()
-
-    def _object(self, kind: str, name: str, namespace: str) -> dict[str, Any] | None:
-        """Read one identity without confusing Kubernetes access failure with absence."""
-        output = self.kubectl.run(
-            [
-                "get",
-                kind,
-                name,
-                "-n",
-                namespace,
-                "--ignore-not-found",
-                "-o",
-                "json",
-                f"--request-timeout={self.timeout}",
-            ],
-            timeout=self.seconds,
-        ).stdout.strip()
-        return json.loads(output) if output else None
-
-    def _create(self, document: dict[str, Any], resource: str) -> dict[str, Any]:
-        """Record each created UID immediately so partial startup has the same cleanup owner."""
-        created = json.loads(
+    def stream_file(
+        self,
+        namespace: str,
+        claim_name: str,
+        artifact_path: str,
+        name: str,
+        output: BinaryIO,
+        *, deployment_uid: str,
+    ) -> None:
+        """Stream a listed trace to the viewer socket under kubectl's command deadline and cleanup."""
+        reader = self._reader(namespace, claim_name, deployment_uid)
+        path = self._path(reader, namespace, "file", artifact_path, name)
+        try:
             self.kubectl.run(
-                [
-                    "create",
-                    "-f",
-                    "-",
-                    "-o",
-                    "json",
-                    f"--request-timeout={self.timeout}",
-                ],
-                input_text=json.dumps(document),
+                ["get", "--raw", path, f"--request-timeout={self.timeout}"],
+                output=output,
                 timeout=self.seconds,
-            ).stdout
+            )
+        except DeploymentError as error:
+            token = capture_token(reader.secret, artifact_path)
+            raise DeploymentError(str(error).replace(token, "[redacted]")) from None
+
+    def file_source(
+        self, namespace: str, claim_name: str, directory: str, filename: str,
+        *, deployment_uid: str,
+    ) -> CaptureFileSource:
+        """Borrow an authenticated cluster file source; consumers must release it before this storage closes."""
+        reader = self._reader(namespace, claim_name, deployment_uid)
+        path = f"{capture_path(directory, namespace, deployment_uid)}/{filename}"
+        query = urlsplit(
+            self._path(reader, namespace, "file", directory, filename)
+        ).query
+        return CaptureFileSource(
+            namespace=namespace,
+            claim_uid=reader.claim_uid,
+            deployment_uid=deployment_uid,
+            path=path,
+            reader_name=reader.name,
+            url=f"http://{reader.name}.{namespace}.svc:{READER_PORT}/file?{query}",
         )
-        metadata = created["metadata"]
-        self._created.append(
-            (resource, metadata["namespace"], metadata["name"], metadata["uid"])
-        )
-        return created
+
+    def close(self) -> None:
+        """Release capture readers after their native consumers close, preserving traces and claims."""
+        super().close()
+        self._readers.clear()
 
     def _placement(self, namespace: str, claim: dict[str, Any]) -> str | None:
         """Keep an occupied RWO claim on its current node; never evict an RWOP consumer."""
@@ -169,12 +320,12 @@ class ProfileStorage:
             )
         return next(iter(nodes), None)
 
-    def _reader(self, namespace: str, claim_name: str) -> _Reader:
-        """Mount an existing claim without changing its binding, contents, or workload."""
+    def _reader(self, namespace: str, claim_name: str, deployment_uid: str) -> _Reader:
+        """Mount one deployment's existing capture scope without changing storage or workloads."""
         claim = self._object("pvc", claim_name, namespace)
         if claim is None:
             raise FileNotFoundError("capture storage no longer exists")
-        key = namespace, claim_name
+        key = namespace, claim_name, deployment_uid
         if key in self._readers:
             reader = self._readers[key]
             if reader.claim_uid != claim["metadata"]["uid"]:
@@ -187,13 +338,15 @@ class ProfileStorage:
         if claim.get("status", {}).get("phase") != "Bound":
             raise DeploymentError("capture storage is not bound")
         node = self._placement(namespace, claim)
-        uid, gid = DirectoryVolumes.read_directory_owner(claim) or (1000, 1000)
+        uid, gid = _capture_storage_identity(claim)
         name = f"foretoken-profile-view-{uuid4().hex[:16]}"
         reader = _Reader(name, claim["metadata"]["uid"], secrets.token_hex(32))
         labels = {
             "app.kubernetes.io/name": "foretoken-profile-view",
             "foretoken.io/view-session": name,
         }
+        if deployment_uid:
+            labels[DEPLOYMENT_UID_LABEL] = deployment_uid
         metadata = {"name": name, "namespace": namespace, "labels": labels}
         start = len(self._created)
         try:
@@ -235,7 +388,12 @@ class ProfileStorage:
                             {
                                 "name": READER_SECRET_ENV,
                                 "value": reader.secret,
-                            }
+                            },
+                            {
+                                "name": READER_NAMESPACE_ENV,
+                                "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+                            },
+                            {"name": READER_DEPLOYMENT_UID_ENV, "value": deployment_uid},
                         ],
                         "securityContext": {
                             "allowPrivilegeEscalation": False,
@@ -335,320 +493,6 @@ class ProfileStorage:
         self._readers[key] = reader
         return reader
 
-    def open_nsight(
-        self, namespace: str, claim_name: str, directory: str, filename: str
-    ) -> str:
-        """Start an authenticated official viewer for one retained report; close owns cleanup."""
-        image = self.viewer_config.get("nsightImage")
-        if not image:
-            raise DeploymentError(
-                "NVIDIA Nsight Viewer is not configured; update the platform or download the report"
-            )
-        reader = self._reader(namespace, claim_name)
-        report = f"{capture_path(directory)}/{filename}"
-        key = namespace, reader.claim_uid, report
-        if key in self._nsight_sessions:
-            return self._nsight_sessions[key]
-        # The authenticated reader owns source access; the official viewer receives only
-        # a session-local copy and keeps its image's startup identity.
-        config = self._object("configmap", reader.name, namespace)
-        if config is None:
-            raise DeploymentError(
-                "capture reader configuration was removed; restart the viewer"
-            )
-        query = urlsplit(
-            self._path(reader, namespace, "file", directory, filename)
-        ).query
-        report_url = f"http://{reader.name}.{namespace}.svc:{READER_PORT}/file?{query}"
-        name = f"foretoken-nsight-{uuid4().hex[:16]}"
-        labels = {
-            "app.kubernetes.io/name": "foretoken-nsight-view",
-            "foretoken.io/view-session": name,
-        }
-        metadata = {
-            "name": name,
-            "namespace": namespace,
-            "labels": labels,
-            "ownerReferences": [
-                {
-                    "apiVersion": "v1",
-                    "kind": "ConfigMap",
-                    "name": reader.name,
-                    "uid": config["metadata"]["uid"],
-                }
-            ],
-        }
-        token = secrets.token_urlsafe(32)
-        # TURN credentials are separate from HTTP access; Pion accepts word characters.
-        turn_password = secrets.token_hex(32)
-        cookie = name.replace("-", "_")
-        # A session cookie protects HTTP and WebSocket traffic without putting Basic
-        # credentials in the URL, which prevents the official UI's relative fetches.
-        proxy_config = f"""server {{
-    listen 8081;
-    absolute_redirect off;
-    access_log off;
-    add_header Referrer-Policy no-referrer always;
-    location = /session/{token} {{
-        add_header Set-Cookie "{cookie}={token}; Path=/; HttpOnly; SameSite=Lax";
-        add_header Referrer-Policy no-referrer always;
-        return 302 /;
-    }}
-    location / {{
-        if ($cookie_{cookie} != "{token}") {{ return 403; }}
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 1d;
-    }}
-}}
-"""
-        start = len(self._created)
-        try:
-            self._create(
-                {
-                    "apiVersion": "v1",
-                    "kind": "Secret",
-                    "metadata": metadata,
-                    "stringData": {
-                        "turn-password": turn_password,
-                        "default.conf": proxy_config,
-                        "report-url": report_url,
-                    },
-                },
-                "secrets",
-            )
-            service = self._create(
-                {
-                    "apiVersion": "v1",
-                    "kind": "Service",
-                    "metadata": metadata,
-                    "spec": {
-                        "type": "NodePort",
-                        "selector": labels,
-                        "ports": [
-                            {"name": "http", "port": 8080, "targetPort": "http"},
-                            {"name": "turn", "port": 3478, "targetPort": "turn"},
-                        ],
-                    },
-                },
-                "services",
-            )
-            # Reuse Kubernetes-assigned ports for the external service so k3s/k3d
-            # load balancers sharing a node IP can host several viewing sessions.
-            ports = service["spec"]["ports"]
-            for port in ports:
-                port["port"] = port["nodePort"]
-            self.kubectl.run(
-                [
-                    "patch",
-                    f"service/{name}",
-                    "-n",
-                    namespace,
-                    "--type=merge",
-                    "-p",
-                    json.dumps({"spec": {"type": "LoadBalancer", "ports": ports}}),
-                    f"--request-timeout={self.timeout}",
-                ],
-                timeout=self.seconds,
-            )
-            public_ports = {port["name"]: port["port"] for port in ports}
-            self.kubectl.run(
-                [
-                    "wait",
-                    f"service/{name}",
-                    "-n",
-                    namespace,
-                    "--for=jsonpath={.status.loadBalancer.ingress}",
-                    f"--timeout={self.timeout}",
-                    f"--request-timeout={self.timeout}",
-                ],
-                timeout=self.seconds + 1,
-            )
-            service = self._object("service", name, namespace)
-            if service is None:
-                raise DeploymentError("NVIDIA Nsight Viewer service was removed")
-            ingress = service["status"]["loadBalancer"]["ingress"][0]
-            host = ingress.get("ip") or ingress["hostname"]
-            credential = {"secretKeyRef": {"name": name, "key": "turn-password"}}
-            self._create(
-                {
-                    "apiVersion": "v1",
-                    "kind": "Pod",
-                    "metadata": metadata,
-                    "spec": {
-                        "automountServiceAccountToken": False,
-                        "restartPolicy": "Never",
-                        "imagePullSecrets": json.loads(
-                            self.viewer_config["imagePullSecrets"]
-                        ),
-                        "initContainers": [
-                            {
-                                "name": "report-copy",
-                                "image": self.image,
-                                "command": [
-                                    "python",
-                                    "-I",
-                                    "-B",
-                                    "-c",
-                                    """import os, shutil, sys
-from urllib.error import URLError
-from urllib.request import urlopen
-
-try:
-    with urlopen(os.environ['FORETOKEN_PROFILE_REPORT_URL'], timeout=float(sys.argv[1])) as source:
-        with open('/reports/selected.nsys-rep', 'xb') as target:
-            shutil.copyfileobj(source, target, length=1024 * 1024)
-            if target.tell() != int(source.headers['Content-Length']):
-                raise OSError('incomplete report transfer')
-            os.fchmod(target.fileno(), 0o444)
-except (URLError, OSError) as error:
-    raise SystemExit(f'Unable to copy the selected report: {error}')
-""",
-                                    str(self.seconds),
-                                ],
-                                "env": [
-                                    {
-                                        "name": "FORETOKEN_PROFILE_REPORT_URL",
-                                        "valueFrom": {
-                                            "secretKeyRef": {
-                                                "name": name,
-                                                "key": "report-url",
-                                            }
-                                        },
-                                    }
-                                ],
-                                "securityContext": {
-                                    "runAsNonRoot": True,
-                                    "runAsUser": 1000,
-                                    "runAsGroup": 1000,
-                                    "allowPrivilegeEscalation": False,
-                                    "readOnlyRootFilesystem": True,
-                                    "capabilities": {"drop": ["ALL"]},
-                                    "seccompProfile": {"type": "RuntimeDefault"},
-                                },
-                                "volumeMounts": [
-                                    {"name": "report", "mountPath": "/reports"}
-                                ],
-                            },
-                        ],
-                        "containers": [
-                            {
-                                "name": "viewer",
-                                "image": image,
-                                "env": [
-                                    {"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"},
-                                    {"name": "ENCODER", "value": "vp9enc"},
-                                    {
-                                        "name": "DEVTOOL_CMD",
-                                        "value": "host-linux-x64/nsys-ui --fullscreen /reports/selected.nsys-rep",
-                                    },
-                                    {
-                                        "name": "NSIGHT_PASSTHROUGH_ENV_VARS",
-                                        "value": "DEVTOOL_CMD,ENCODER",
-                                    },
-                                    {"name": "WEB_USERNAME", "value": ""},
-                                    {"name": "TURN_USERNAME", "value": "foretoken"},
-                                    {"name": "TURN_PASSWORD", "valueFrom": credential},
-                                    {"name": "CLIENT_TURN_HOST", "value": host},
-                                    {
-                                        "name": "CLIENT_TURN_PORT",
-                                        "value": str(public_ports["turn"]),
-                                    },
-                                    {
-                                        "name": "CLIENT_TURN_USERNAME",
-                                        "value": "foretoken",
-                                    },
-                                    {
-                                        "name": "CLIENT_TURN_PASSWORD",
-                                        "valueFrom": credential,
-                                    },
-                                ],
-                                "ports": [
-                                    {"name": "viewer", "containerPort": 8080},
-                                    {"name": "turn", "containerPort": 3478},
-                                ],
-                                "readinessProbe": {"tcpSocket": {"port": "viewer"}},
-                                "volumeMounts": [
-                                    {
-                                        "name": "report",
-                                        "mountPath": "/reports/selected.nsys-rep",
-                                        "subPath": "selected.nsys-rep",
-                                        "readOnly": True,
-                                    },
-                                    {"name": "shm", "mountPath": "/dev/shm"},
-                                ],
-                            },
-                            {
-                                "name": "access",
-                                "image": self.viewer_config["proxyImage"],
-                                "ports": [{"name": "http", "containerPort": 8081}],
-                                "readinessProbe": {"tcpSocket": {"port": "http"}},
-                                "volumeMounts": [
-                                    {
-                                        "name": "access",
-                                        "mountPath": "/etc/nginx/conf.d",
-                                        "readOnly": True,
-                                    }
-                                ],
-                                "securityContext": {"allowPrivilegeEscalation": False},
-                            },
-                        ],
-                        "volumes": [
-                            {"name": "report", "emptyDir": {}},
-                            {"name": "shm", "emptyDir": {"medium": "Memory"}},
-                            {
-                                "name": "access",
-                                "secret": {
-                                    "secretName": name,
-                                    "items": [
-                                        {"key": "default.conf", "path": "default.conf"}
-                                    ],
-                                },
-                            },
-                        ],
-                    },
-                },
-                "pods",
-            )
-            self.kubectl.run(
-                [
-                    "wait",
-                    f"pod/{name}",
-                    "-n",
-                    namespace,
-                    "--for=condition=Ready",
-                    f"--timeout={self.timeout}",
-                    f"--request-timeout={self.timeout}",
-                ],
-                timeout=self.seconds + 1,
-            )
-            authority = f"[{host}]" if ":" in host else host
-            origin = f"http://{authority}:{public_ports['http']}"
-            # Pod readiness can precede EndpointSlice and load-balancer propagation.
-            # Hand the browser a URL only after its authenticated HTTP route responds.
-            deadline = time.monotonic() + self.seconds
-            request = Request(origin + "/", headers={"Cookie": f"{cookie}={token}"})
-            while (remaining := deadline - time.monotonic()) > 0:
-                try:
-                    with urlopen(request, timeout=min(5, remaining)) as response:
-                        if response.status == 200:
-                            break
-                except (URLError, OSError):
-                    pass
-                time.sleep(min(0.2, max(0, deadline - time.monotonic())))
-            else:
-                raise DeploymentError(
-                    "NVIDIA viewer address is not reachable; check the cluster LoadBalancer route"
-                )
-            url = f"{origin}/session/{token}"
-            self._nsight_sessions[key] = url
-            return url
-        except BaseException:
-            self._cleanup(start)
-            raise
-
     def _path(
         self,
         reader: _Reader,
@@ -667,141 +511,16 @@ except (URLError, OSError) as error:
         )
         return f"/api/v1/namespaces/{quote(namespace, safe='')}/services/{reader.name}:http/proxy/{action}?{query}"
 
-    def list_files(
-        self, namespace: str, claim_name: str, artifact_path: str
-    ) -> list[dict[str, Any]]:
-        """List nested traces relative to a capture directory, distinguishing missing storage."""
-        try:
-            run = capture_path(artifact_path)
-        except ValueError as exc:
-            raise DeploymentError("invalid capture directory") from exc
-        reader = self._reader(namespace, claim_name)
-        path = self._path(reader, namespace, "list", run)
-        try:
-            result = json.loads(
-                self.kubectl.run(
-                    [
-                        "get",
-                        "--raw",
-                        path,
-                        f"--request-timeout={self.timeout}",
-                    ],
-                    timeout=self.seconds,
-                ).stdout
-            )
-        except DeploymentError as exc:
-            token = capture_token(reader.secret, run)
-            raise DeploymentError(str(exc).replace(token, "[redacted]")) from None
-        if result.get("error") == "not_found":
-            raise FileNotFoundError("capture directory was not found")
-        if result.get("error"):
-            raise DeploymentError("capture files cannot be read by the storage viewer")
-        return result["files"]
 
-    def stream_file(
-        self,
-        namespace: str,
-        claim_name: str,
-        artifact_path: str,
-        name: str,
-        output: BinaryIO,
-    ) -> None:
-        """Stream a listed trace through kubectl without materializing it in CLI memory."""
-        reader = self._reader(namespace, claim_name)
-        path = self._path(reader, namespace, "file", artifact_path, name)
-        timed_out = threading.Event()
-        with tempfile.TemporaryFile() as errors:
-            process = subprocess.Popen(
-                self.kubectl.command(
-                    [
-                        "get",
-                        "--raw",
-                        path,
-                        f"--request-timeout={self.timeout}",
-                    ]
-                ),
-                stdout=subprocess.PIPE,
-                stderr=errors,
-            )
-
-            def expire() -> None:
-                timed_out.set()
-                process.kill()
-
-            timer = threading.Timer(self.seconds, expire)
-            timer.daemon = True
-            timer.start()
-            try:
-                assert process.stdout is not None
-                with process.stdout:
-                    while chunk := process.stdout.read(1024 * 1024):
-                        output.write(chunk)
-                status = process.wait()
-                if timed_out.is_set():
-                    raise DeploymentError("timed out reading capture file")
-                if status:
-                    errors.seek(0)
-                    detail = errors.read().decode(errors="replace").strip()
-                    token = capture_token(reader.secret, artifact_path)
-                    raise DeploymentError(
-                        "cannot read capture file: "
-                        + detail.replace(token, "[redacted]")
-                    )
-            finally:
-                timer.cancel()
-                if process.poll() is None:
-                    process.kill()
-                process.wait()
-
-    def _cleanup(self, start: int = 0) -> None:
-        """Delete only exact UIDs created here; API preconditions protect replacement objects."""
-        for resource, namespace, name, uid in reversed(self._created[start:]):
-            path = f"/api/v1/namespaces/{namespace}/{resource}/{name}"
-            try:
-                if self._object(resource, name, namespace) is None:
-                    continue
-                self.kubectl.run(
-                    [
-                        "delete",
-                        "--raw",
-                        path,
-                        "-f",
-                        "-",
-                        f"--request-timeout={self.timeout}",
-                    ],
-                    input_text=json.dumps(
-                        {
-                            "apiVersion": "v1",
-                            "kind": "DeleteOptions",
-                            "preconditions": {"uid": uid},
-                            "propagationPolicy": "Background",
-                        }
-                    ),
-                    timeout=self.seconds,
-                )
-                if resource == "pods":
-                    self.kubectl.run(
-                        [
-                            "wait",
-                            f"pod/{name}",
-                            "-n",
-                            namespace,
-                            "--for=delete",
-                            f"--timeout={self.timeout}",
-                        ],
-                        timeout=self.seconds + 1,
-                    )
-            except DeploymentError as exc:
-                logger.warning(
-                    "Could not remove temporary profile viewer %s/%s: %s",
-                    namespace,
-                    name,
-                    exc,
-                )
-        del self._created[start:]
-
-    def close(self) -> None:
-        """Release this viewer's temporary readers without deleting traces, claims or namespaces."""
-        self._cleanup()
-        self._readers.clear()
-        self._nsight_sessions.clear()
+def _capture_storage_identity(claim: dict[str, Any]) -> tuple[int, int]:
+    """Read the existing directory identity without changing capture storage ownership."""
+    value = claim["metadata"].get("annotations", {}).get("inference.foretoken.io/directory-owner")
+    if value is None:
+        return 1000, 1000
+    try:
+        uid, gid = map(int, value.split(":"))
+        if not 0 < uid < 2**32 - 1 or not 0 <= gid < 2**32 - 1:
+            raise ValueError
+    except ValueError as error:
+        raise DeploymentError(f"invalid capture storage directory owner: {value}") from error
+    return uid, gid

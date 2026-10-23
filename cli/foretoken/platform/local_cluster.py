@@ -13,11 +13,26 @@ from pathlib import Path
 
 from foretoken.arguments import ClusterCommand
 from foretoken.errors import DeploymentError
+from foretoken.platform.networking.rdma_interfaces import is_roce_port
+from foretoken.working_directory import repository_data_directory
 
 _DEVICE_PLUGIN = (
     "https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/"
     "v0.17.4/deployments/static/nvidia-device-plugin.yml"
 )
+
+
+def run(command: ClusterCommand, root: Path | None = None) -> None:
+    """Create or remove a local cluster selected by the parsed CLI command."""
+    root = root or Path.cwd()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", command.name):
+        raise DeploymentError(f"invalid cluster name: {command.name}")
+    if command.action == "delete":
+        _delete(command)
+    elif command.kind == "kind":
+        _create_kind(command, root)
+    else:
+        _create_k3d(command, root)
 
 
 def _run(arguments: Sequence[str]) -> None:
@@ -88,6 +103,20 @@ def _mount_arguments() -> list[str]:
     return arguments
 
 
+def _rdma_mount_arguments(root: Path) -> list[str]:
+    """Keep RoCE node interfaces in k3d's startup lifecycle, including node restarts."""
+    ports = Path("/sys/class/infiniband").glob("*/ports/*")
+    if not any(is_roce_port(port) for port in ports):
+        return []
+    script = root / "deploy/k3d/prepare-rdma.sh"
+    if not script.is_file():
+        raise DeploymentError(f"k3d RoCE preparation script not found: {script}")
+    return [
+        "--volume", "/proc/1/ns/net:/run/foretoken/host-network:ro@server:0",
+        "--volume", f"{script.resolve()}:/bin/k3d-entrypoint-rdma.sh:ro@server:0",
+    ]
+
+
 def _refresh_kubeconfig(kind: str, name: str) -> None:
     """Refresh and select the kubeconfig entry written by a local cluster tool."""
     if kind == "kind":
@@ -122,7 +151,7 @@ def _create_k3d(command: ClusterCommand, root: Path) -> None:
     config = Path(command.config) if command.config else root / "deploy/k3d/config.yaml"
     if not config.is_file():
         raise DeploymentError(f"k3d configuration not found: {config}")
-    data = root / "data"
+    data = repository_data_directory(root)
     data.mkdir(exist_ok=True)
     arguments = [
         "k3d", "cluster", "create", command.name,
@@ -130,6 +159,7 @@ def _create_k3d(command: ClusterCommand, root: Path) -> None:
         "--gpus", f'"device={command.gpus}"',
         "--volume", f"{data}:{data}@server:0",
         *_mount_arguments(),
+        *_rdma_mount_arguments(root),
     ]
     _run(arguments)
     _refresh_kubeconfig("k3d", command.name)
@@ -149,21 +179,8 @@ def _delete(command: ClusterCommand) -> None:
     tool = "kind" if command.kind == "kind" else "k3d"
     _require_commands((tool,))
     arguments = (
-        [tool, "delete", "cluster", command.name]
+        [tool, "delete", "cluster", "--name", command.name]
         if command.kind == "kind"
         else [tool, "cluster", "delete", command.name]
     )
     _run(arguments)
-
-
-def run(command: ClusterCommand, root: Path | None = None) -> None:
-    """Create or remove a local cluster selected by the parsed CLI command."""
-    root = root or Path.cwd()
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", command.name):
-        raise DeploymentError(f"invalid cluster name: {command.name}")
-    if command.action == "delete":
-        _delete(command)
-    elif command.kind == "kind":
-        _create_kind(command, root)
-    else:
-        _create_k3d(command, root)

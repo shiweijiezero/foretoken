@@ -17,13 +17,13 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 - 知识与元知识：[`rsi-playbooks/guidance/knowledge/`](../knowledge/README_zh.md) 和 `rsi-playbooks/guidance/meta-knowledge/`，分别查技术原理、实验经验与研究方法。
 - 任务与模板：[`rsi-playbooks/tasks/`](../../tasks/README_zh.md)、[`rsi-playbooks/templates/`](../../templates/README_zh.md)，查目标负载、资源约束、历史交付要求及知识记录格式。
-- 实验总结：`<output-dir>/notes/experiment.md`，查整体发现、保留方案和后续问题；`<output-dir>/iterations/<iteration>/notes/iteration.md` 查各轮假设、改动、结果与取舍。
+- 实验总结：任务的 `report.md`，查整体发现、保留方案、后续问题与各轮入口；`<output-dir>/iterations/<iteration>/notes/iteration.md` 查各轮假设、改动、结果与取舍。
 - 原始证据：`<output-dir>/iterations/<iteration>/runs/<command>-NNNNNN/generated/context.json`、`generated/changes/` 和 `artifacts/<结果目录>/`，查命令、源码改动、配置、环境、指标、响应与日志。后两个路径均相对同一运行目录。完整布局见 [`rsi-playbooks/experiment-records_zh.md`](../../experiment-records_zh.md)。
 - 性能与负载：[`benchmarks/docs/recipes_zh.md`](../../../benchmarks/docs/recipes_zh.md)、[`benchmarks/docs/perf/README_zh.md`](../../../benchmarks/docs/perf/README_zh.md)、[`benchmarks/docs/metrics_zh.md`](../../../benchmarks/docs/metrics_zh.md)，查可运行负载、参数扫描、真实轨迹、SLO 与指标定义。
 - 质量与剖析：[`benchmarks/docs/eval/README_zh.md`](../../../benchmarks/docs/eval/README_zh.md)、[`benchmarks/docs/eval/distribution-comparison_zh.md`](../../../benchmarks/docs/eval/distribution-comparison_zh.md)、[`benchmarks/docs/profile/README_zh.md`](../../../benchmarks/docs/profile/README_zh.md)，查逐题报告、概率分布比较及执行时间线。
 - 观测：[`observability/README_zh.md`](../../../observability/README_zh.md)、[`observability/runbooks/alerts_zh.md`](../../../observability/runbooks/alerts_zh.md)，查指标、日志和排障方法。实际记录规则位于 [`deploy/charts/foretoken/files/recording-rules.yaml`](../../../deploy/charts/foretoken/files/recording-rules.yaml)，看板位于同目录的 [`grafana/`](../../../deploy/charts/foretoken/files/grafana/)。
 - 配置与运行示例：[`docs/deployment/source_zh.md`](../../../docs/deployment/source_zh.md)、[`docs/features/inference-parameters_zh.md`](../../../docs/features/inference-parameters_zh.md)、[`examples/recipes/`](../../../examples/recipes/)、[`examples/feature/encoder-prefill-decode/`](../../../examples/feature/encoder-prefill-decode/)、[`examples/feature/shared-kv-store/`](../../../examples/feature/shared-kv-store/)，查源码部署、引擎参数、分离服务和缓存配置。
-- 引擎源码与补丁：`data-plane/third_party/vllm/`、`third_party/mooncake/` 是子模块源码入口；[`.gitmodules`](../../../.gitmodules) 提供仓库地址，Git gitlink 记录固定提交。[`data-plane/patches/vllm/`](../../../data-plane/patches/vllm/) 查 Foretoken 补丁；`deploy/inference-engines/*/source-environment.json` 查运行环境和硬件适配来源。
+- 引擎源码与补丁：[`data-plane/Cargo.toml`](../../../data-plane/Cargo.toml) 和 [`deploy/mooncake/source-environment.json`](../../../deploy/mooncake/source-environment.json) 声明上游来源与版本，准备后的源码分别位于 `data-plane/third_party/vllm/`、`third_party/mooncake/`。[`data-plane/patches/vllm/`](../../../data-plane/patches/vllm/) 查 Foretoken 补丁；`deploy/inference-engines/*/source-environment.json` 查运行环境和硬件适配来源。
 - 项目历史：[Foretoken Issues](https://github.com/shiweijiezero/foretoken/issues)、[PR](https://github.com/shiweijiezero/foretoken/pulls) 及本地 Git 历史，查过去的讨论、修复、回退和最终实现。
 
 ### Issue、PR 与源码的查找方式

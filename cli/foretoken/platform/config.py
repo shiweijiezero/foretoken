@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,7 @@ class PlatformConfig:
     envoy_gateway: ManagedChart
     metallb: ManagedChart
     leader_worker: ManagedChart
+    multus: ManagedChart
     dragonfly: ManagedChart
     envoy_gateway_default_controller: str
     envoy_gateway_controller: str
@@ -57,30 +59,6 @@ class PlatformConfig:
             ("app.kubernetes.io/name", "foretoken-control-plane"),
             ("app.kubernetes.io/instance", self.platform.release_name),
         )
-
-
-def _oci_registry(value: str | None) -> str | None:
-    """Normalize an explicit OCI mirror prefix without accepting embedded credentials."""
-    registry = (value or "").strip().rstrip("/")
-    if not registry:
-        return None
-    if "://" in registry or "@" in registry or registry.startswith("/"):
-        raise DeploymentError(
-            "OCI registry must be HOST[/PATH] without a URL scheme or credentials"
-        )
-    return registry
-
-
-def _chart_source(
-    registry: str | None,
-    source: str,
-    mirror_path: str | None = None,
-) -> str:
-    """Return the public chart source or its deterministic path in a user mirror."""
-    if registry is None:
-        return source
-    path = mirror_path or source.removeprefix("oci://")
-    return f"oci://{registry}/{path}"
 
 
 def default_platform_config(oci_registry: str | None = None) -> PlatformConfig:
@@ -160,6 +138,16 @@ def default_platform_config(oci_registry: str | None = None) -> PlatformConfig:
             source=_chart_source(registry, "oci://registry.k8s.io/lws/charts/lws"),
             version="0.10.0",
         ),
+        multus=ManagedChart(
+            release_name="foretoken-multus",
+            source=_chart_source(
+                registry,
+                "https://github.com/rancher/rke2-charts/raw/refs/heads/main/"
+                "assets/rke2-multus/rke2-multus-v4.3.114.tgz",
+                "rke2-charts.rancher.io/rke2-multus",
+            ),
+            version="v4.3.114" if registry else None,
+        ),
         dragonfly=ManagedChart(
             release_name="foretoken-dragonfly",
             source=_chart_source(
@@ -190,20 +178,40 @@ DCGM_FI_DEV_XID_ERRORS, gauge, Last XID error code.
     )
 
 
+def migrate_stored_platform_values(values: dict[str, Any]) -> dict[str, Any]:
+    """Migrate saved Helm values to the current platform configuration."""
+    migrated = deepcopy(values)
+    vllm = migrated.get("runtime", {}).get("vllm", {})
+    pd = vllm.get("pd", {})
+    for old, new in (
+        ("rdmaResourceName", "resourceName"),
+        ("rdmaResourceCount", "resourceCount"),
+    ):
+        if old in pd:
+            value = pd.pop(old)
+            migrated.setdefault("rdma", {}).setdefault(new, value)
+    vllm.pop("pd", None)
+    distribution = migrated.get("modelDistribution", {})
+    distribution.pop("modelexpress", None)
+    distribution.pop("dragonfly", None)
+    return migrated
+
+
 def load_platform_values(paths: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
     """Read Helm values files and keep frontend topology under the CLI contract."""
     loaded: list[dict[str, Any]] = []
     for path_value in paths:
         path = Path(path_value)
         try:
-            values = yaml.safe_load(path.read_text()) or {}
+            values = yaml.safe_load(path.read_text())
         except (OSError, yaml.YAMLError) as exc:
             raise DeploymentError(
                 f"cannot read Helm values file {path}: {exc}"
             ) from exc
+        if values is None:
+            values = {}
         if not isinstance(values, dict):
-            loaded.append({})
-            continue
+            raise DeploymentError(f"Helm values file {path} must contain a mapping")
         global_values = values.get("global")
         if isinstance(global_values, dict) and "imageRegistry" in global_values:
             raise DeploymentError(
@@ -214,19 +222,21 @@ def load_platform_values(paths: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
             raise DeploymentError(
                 f"Helm values file {path} sets observability.prometheus; use --prometheus"
             )
-        distribution = values.get("modelDistribution", {})
-        if isinstance(distribution, dict):
-            dragonfly = distribution.get("dragonfly", {})
-            if isinstance(dragonfly, dict) and "socketPath" in dragonfly:
-                raise DeploymentError(
-                    f"Helm values file {path} sets modelDistribution.dragonfly.socketPath; "
-                    "foretoken install resolves it from the managed or existing Dragonfly release"
-                )
+        if "modelDistribution" in values:
+            raise DeploymentError(
+                f"Helm values file {path} sets modelDistribution; "
+                "model downloads and weight sharing are selected automatically; remove this section"
+            )
         frontend = values.get("frontend")
         if isinstance(frontend, dict):
-            reserved = tuple(key for key in ("mode", "gateway") if key in frontend)
+            reserved = ["frontend.mode"] if "mode" in frontend else []
+            if "gateway" in frontend:
+                gateway = frontend["gateway"]
+                if not isinstance(gateway, dict):
+                    raise DeploymentError(f"Helm values file {path} requires frontend.gateway to be a mapping")
+                reserved.extend(f"frontend.gateway.{key}" for key in gateway if key != "port")
             if reserved:
-                names = ", ".join(f"frontend.{key}" for key in reserved)
+                names = ", ".join(reserved)
                 raise DeploymentError(
                     f"Helm values file {path} sets {names}; use --frontend-mode "
                     "and --gateway-* options for frontend topology"
@@ -345,3 +355,27 @@ def resolve_load_balancer_config(
         if decoded is not None:
             config = decoded
     return config
+
+
+def _oci_registry(value: str | None) -> str | None:
+    """Normalize an explicit OCI mirror prefix without accepting embedded credentials."""
+    registry = (value or "").strip().rstrip("/")
+    if not registry:
+        return None
+    if "://" in registry or "@" in registry or registry.startswith("/"):
+        raise DeploymentError(
+            "OCI registry must be HOST[/PATH] without a URL scheme or credentials"
+        )
+    return registry
+
+
+def _chart_source(
+    registry: str | None,
+    source: str,
+    mirror_path: str | None = None,
+) -> str:
+    """Return the public chart source or its deterministic path in a user mirror."""
+    if registry is None:
+        return source
+    path = mirror_path or source.removeprefix("oci://")
+    return f"oci://{registry}/{path}"

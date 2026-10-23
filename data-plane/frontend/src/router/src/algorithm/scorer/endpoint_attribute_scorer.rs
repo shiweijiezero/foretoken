@@ -32,32 +32,6 @@ enum EndpointAttribute {
     E2eLatencyP95Ms,
 }
 
-impl EndpointAttributeScorer {
-    /// Reads rank-local gauges or group-level window statistics without substituting missing data.
-    fn read_attribute(&self, candidate: &RouteCandidate) -> Option<f64> {
-        let stats = candidate.route_target_stats.as_ref()?;
-        match self.attribute_key {
-            EndpointAttribute::SchedulerWaitingRequests => candidate
-                .data_parallel_stats()?
-                .scheduler_waiting_requests
-                .map(|value| value as f64),
-            EndpointAttribute::SchedulerRunningRequests => candidate
-                .data_parallel_stats()?
-                .scheduler_running_requests
-                .map(|value| value as f64),
-            EndpointAttribute::KvCacheUsage => candidate.data_parallel_stats()?.kv_cache_usage,
-            EndpointAttribute::PromptTokensPerSecond => stats.prompt_tokens_per_second,
-            EndpointAttribute::GenerationTokensPerSecond => stats.generation_tokens_per_second,
-            EndpointAttribute::TtftAverageMs => Some(stats.ttft.as_ref()?.average_ms),
-            EndpointAttribute::TtftP95Ms => stats.ttft.as_ref()?.p95_ms,
-            EndpointAttribute::TpotAverageMs => Some(stats.tpot.as_ref()?.average_ms),
-            EndpointAttribute::TpotP95Ms => stats.tpot.as_ref()?.p95_ms,
-            EndpointAttribute::E2eLatencyAverageMs => Some(stats.e2e_latency.as_ref()?.average_ms),
-            EndpointAttribute::E2eLatencyP95Ms => stats.e2e_latency.as_ref()?.p95_ms,
-        }
-    }
-}
-
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Algorithm {
@@ -170,5 +144,31 @@ impl RouteScorer for EndpointAttributeScorer {
                 RouteScore { preference }
             })
             .collect()
+    }
+}
+
+impl EndpointAttributeScorer {
+    /// Reads rank-local gauges or group-level window statistics without substituting missing data.
+    fn read_attribute(&self, candidate: &RouteCandidate) -> Option<f64> {
+        let stats = candidate.route_target_stats.as_ref()?;
+        match self.attribute_key {
+            EndpointAttribute::SchedulerWaitingRequests => candidate
+                .data_parallel_stats()?
+                .scheduler_waiting_requests
+                .map(|value| value as f64),
+            EndpointAttribute::SchedulerRunningRequests => candidate
+                .data_parallel_stats()?
+                .scheduler_running_requests
+                .map(|value| value as f64),
+            EndpointAttribute::KvCacheUsage => candidate.data_parallel_stats()?.kv_cache_usage,
+            EndpointAttribute::PromptTokensPerSecond => stats.prompt_tokens_per_second,
+            EndpointAttribute::GenerationTokensPerSecond => stats.generation_tokens_per_second,
+            EndpointAttribute::TtftAverageMs => Some(stats.ttft.as_ref()?.average_ms),
+            EndpointAttribute::TtftP95Ms => stats.ttft.as_ref()?.p95_ms,
+            EndpointAttribute::TpotAverageMs => Some(stats.tpot.as_ref()?.average_ms),
+            EndpointAttribute::TpotP95Ms => stats.tpot.as_ref()?.p95_ms,
+            EndpointAttribute::E2eLatencyAverageMs => Some(stats.e2e_latency.as_ref()?.average_ms),
+            EndpointAttribute::E2eLatencyP95Ms => stats.e2e_latency.as_ref()?.p95_ms,
+        }
     }
 }

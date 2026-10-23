@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Reusable request shaping and bounded stage-stream consumption.
+//! Request shaping and completion handoffs for encoder and prefill/decode stages.
 
+use foretoken_model_protocol::KvConnector;
 use futures::StreamExt;
 use vllm_llm::{FinishReason, GenerateRequest};
 
-use crate::http::{MODEL_SERVER_REQUEST_START_TIMEOUT, bootstrap_engine_id};
+use crate::http::{MODEL_SERVER_CLIENT, MODEL_SERVER_REQUEST_START_TIMEOUT, bootstrap_engine_id};
 use crate::{LlmFacadeError, TokenStream};
 
 /// Consumes the encoder completion barrier and returns its opaque connector descriptor.
@@ -27,17 +28,43 @@ pub async fn consume_encoder(stream: TokenStream) -> Result<serde_json::Value, L
     Err(LlmFacadeError::Protocol)
 }
 
-/// Consumes the prefill completion barrier.
-pub async fn consume_prefill(stream: TokenStream) -> Result<(), LlmFacadeError> {
-    let mut stream = Box::pin(stream);
-    while let Some(event) = stream.next().await {
-        match event?.finish_reason {
-            Some(FinishReason::Length) => return Ok(()),
-            Some(_) => return Err(LlmFacadeError::RequestFailed),
-            None => {}
+/// Retains the Decode request until its selected Prefill has completed the native handoff.
+pub struct DecodeHandoff {
+    request: GenerateRequest,
+    connector: KvConnector,
+}
+
+impl DecodeHandoff {
+    /// Consumes Prefill's completion barrier and returns the request for fresh Decode selection.
+    /// NIXL uses the actual producer descriptor; Mooncake retains its resolved bootstrap identity.
+    pub async fn complete_prefill(
+        mut self,
+        stream: TokenStream,
+    ) -> Result<GenerateRequest, LlmFacadeError> {
+        let mut stream = Box::pin(stream);
+        while let Some(output) = stream.next().await {
+            let output = output?;
+            match output.finish_reason {
+                Some(FinishReason::Length) => {
+                    if self.connector == KvConnector::Nixl {
+                        let descriptor = output
+                            .kv_transfer_params
+                            .filter(serde_json::Value::is_object)
+                            .ok_or(LlmFacadeError::Protocol)?;
+                        self.request
+                            .sampling_params
+                            .extra_args
+                            .get_or_insert_default()
+                            .insert("kv_transfer_params".into(), descriptor);
+                    }
+                    return Ok(self.request);
+                }
+                Some(_) => return Err(LlmFacadeError::RequestFailed),
+                None => {}
+            }
         }
+        Err(LlmFacadeError::Protocol)
     }
-    Err(LlmFacadeError::Protocol)
 }
 
 /// Rejects transfer descriptors supplied outside the controlled execution workflow.
@@ -67,33 +94,43 @@ pub fn encoder_stage_request(
     Ok(request)
 }
 
-/// Builds the selected P/D stage requests with connector-owned KV transfer parameters.
+/// Prepares one Prefill stage and retains the matching Decode handoff for the workflow.
+/// Only Mooncake queries bootstrap HTTP; NIXL obtains its descriptor from Prefill output.
 pub async fn pd_stage_requests(
     request: GenerateRequest,
-    bootstrap_endpoint: &str,
+    connector: KvConnector,
+    bootstrap_endpoint: Option<&str>,
     prefill_data_parallel_rank: u32,
-) -> Result<(GenerateRequest, GenerateRequest), LlmFacadeError> {
-    let client = reqwest::Client::builder()
-        .timeout(MODEL_SERVER_REQUEST_START_TIMEOUT)
-        .build()
-        .map_err(|_| LlmFacadeError::Configuration)?;
-    let engine_id =
-        bootstrap_engine_id(&client, bootstrap_endpoint, prefill_data_parallel_rank).await?;
-    pd_requests_with_engine(request, bootstrap_endpoint, engine_id)
-}
-
-fn pd_requests_with_engine(
-    request: GenerateRequest,
-    bootstrap_endpoint: &str,
-    engine_id: String,
-) -> Result<(GenerateRequest, GenerateRequest), LlmFacadeError> {
-    // Prefill produces one transfer and decode consumes that exact transfer using the live
-    // prefill engine identity. Stage IDs and transfer parameters are workflow-owned.
+) -> Result<(GenerateRequest, DecodeHandoff), LlmFacadeError> {
     reject_client_transfer_params(&request)?;
-    let transfer_id = format!("xfer-{}", request.request_id);
+    let mut prefill_params = serde_json::json!({
+        "do_remote_decode": true,
+        "do_remote_prefill": false,
+    });
+    let decode_params = if connector == KvConnector::Mooncake {
+        let transfer_id = format!("xfer-{}", request.request_id);
+        let endpoint = bootstrap_endpoint.ok_or(LlmFacadeError::Configuration)?;
+        let engine_id = tokio::time::timeout(
+            MODEL_SERVER_REQUEST_START_TIMEOUT,
+            bootstrap_engine_id(&MODEL_SERVER_CLIENT, endpoint, prefill_data_parallel_rank),
+        )
+        .await
+        .map_err(|_| LlmFacadeError::Unavailable)??;
+        prefill_params["transfer_id"] = serde_json::json!(transfer_id);
+        Some(serde_json::json!({
+            "do_remote_decode": false,
+            "do_remote_prefill": true,
+            "remote_bootstrap_addr": endpoint,
+            "remote_engine_id": engine_id,
+            "transfer_id": transfer_id,
+        }))
+    } else {
+        None
+    };
+
     let mut prefill = request.clone();
     prefill.request_id = format!("{}/prefill", request.request_id);
-    // Mooncake retains the produced KV only for a length-capped request, not EOS or stop tokens.
+    // A length-capped producer retains KV; sampling stops must not terminate its barrier early.
     prefill.sampling_params.max_tokens = 1;
     prefill.sampling_params.min_tokens = 0;
     prefill.sampling_params.eos_token_id = None;
@@ -102,19 +139,28 @@ fn pd_requests_with_engine(
     prefill.sampling_params.structured_outputs = None;
     prefill.sampling_params.repetition_detection = None;
     prefill.sampling_params.thinking_token_budget = None;
-    let mut prefill_args = prefill
+    prefill
         .sampling_params
         .extra_args
-        .take()
-        .unwrap_or_default();
-    prefill_args.insert("kv_transfer_params".into(), serde_json::json!({"do_remote_decode": true, "do_remote_prefill": false, "transfer_id": transfer_id}));
-    prefill.sampling_params.extra_args = Some(prefill_args);
+        .get_or_insert_default()
+        .insert("kv_transfer_params".into(), prefill_params);
+
     let mut decode = request;
     decode.request_id = format!("{}/decode", decode.request_id);
-    let mut decode_args = decode.sampling_params.extra_args.take().unwrap_or_default();
-    decode_args.insert("kv_transfer_params".into(), serde_json::json!({"do_remote_decode": false, "do_remote_prefill": true, "remote_bootstrap_addr": bootstrap_endpoint, "remote_engine_id": engine_id, "transfer_id": transfer_id}));
-    decode.sampling_params.extra_args = Some(decode_args);
-    Ok((prefill, decode))
+    if let Some(parameters) = decode_params {
+        decode
+            .sampling_params
+            .extra_args
+            .get_or_insert_default()
+            .insert("kv_transfer_params".into(), parameters);
+    }
+    Ok((
+        prefill,
+        DecodeHandoff {
+            request: decode,
+            connector,
+        },
+    ))
 }
 
 /// Adds an opaque encoder descriptor to the already controlled prefill request.

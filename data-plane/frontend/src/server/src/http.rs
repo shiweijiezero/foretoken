@@ -4,14 +4,20 @@
 //! Composes client APIs, operator endpoints, and frontend-wide HTTP middleware.
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use axum::extract::{DefaultBodyLimit, Request, State};
+use axum::extract::{DefaultBodyLimit, MatchedPath, Request, State};
 use axum::http::{Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
 use foretoken_admission::{CallerIdentity, observe_http, with_caller};
+use tower_http::request_id::{
+    MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer,
+};
+use tower_http::trace::TraceLayer;
+use tracing::Span;
 
 use crate::api::{self, ApiState};
 use crate::runtime::{Generation, before_deadline};
@@ -22,9 +28,13 @@ const MAX_HTTP_BODY_BYTES: usize = 48 * 1024 * 1024;
 pub fn router(
     generation: Arc<dyn Generation>,
     models: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
-) -> Result<Router, Box<dyn std::error::Error>> {
+    ledger: Option<Arc<foretoken_request_ledger::RequestLedger>>,
+) -> Result<(Router, Arc<crate::ResponseTasks>), Box<dyn std::error::Error>> {
     let video_tasks = crate::video_task::VideoTaskClient::from_service_account()?;
-    Ok(Router::new()
+    let store = crate::store::ApiStore::from_env(ledger.as_deref())?;
+    let response_tasks = crate::ResponseTasks::new(store.clone(), ledger);
+    response_tasks.maintain();
+    let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/health", get(readyz))
@@ -39,10 +49,52 @@ pub fn router(
             generation: generation.clone(),
             models,
             video_tasks,
+            store,
+            response_tasks: response_tasks.clone(),
         })
         .layer(DefaultBodyLimit::max(MAX_HTTP_BODY_BYTES))
         .layer(middleware::from_fn_with_state(generation, observe_request))
-        .layer(middleware::from_fn(foretoken_metrics::track_http_metrics)))
+        .layer(middleware::from_fn(foretoken_metrics::track_http_metrics))
+        // The diagnostic ID is available before tracing and returned even for intake errors.
+        .layer(PropagateRequestIdLayer::x_request_id())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &Request| {
+                    let route = request
+                        .extensions()
+                        .get::<MatchedPath>()
+                        .map_or("unmatched", MatchedPath::as_str);
+                    if foretoken_metrics::EXCLUDED_HANDLERS.contains(&route) {
+                        return Span::none();
+                    }
+                    let request_id = request
+                        .extensions()
+                        .get::<RequestId>()
+                        .and_then(|id| id.header_value().to_str().ok());
+                    // Correlation survives every enabled log level; spans emit no request event.
+                    tracing::error_span!(
+                        "http_request",
+                        method = %request.method(),
+                        route,
+                        request_id,
+                        status = tracing::field::Empty,
+                        latency_ms = tracing::field::Empty,
+                    )
+                })
+                .on_request(())
+                .on_response(|response: &Response, latency: Duration, span: &Span| {
+                    if !span.is_disabled() {
+                        span.record("status", response.status().as_u16());
+                        span.record("latency_ms", latency.as_secs_f64() * 1_000.0);
+                        tracing::debug!("HTTP response started");
+                    }
+                })
+                .on_failure(())
+                .on_body_chunk(())
+                .on_eos(()),
+        )
+        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid));
+    Ok((app, response_tasks))
 }
 
 // Capture the request budget before body extraction and share its origin with model admission.
@@ -65,7 +117,10 @@ async fn observe_request(
                 | "/detokenize"
                 | "/v1/videos/sync"
         );
-    if !protected {
+    let stored_api = path.starts_with("/v1/responses/")
+        || path.starts_with("/v1/conversations")
+        || path.starts_with("/v1/chat/completions");
+    if !protected && !stored_api {
         return next.run(request).await;
     }
     // Resolve owned identity synchronously; no borrow of the non-Sync request body may
@@ -97,6 +152,10 @@ async fn observe_request(
     with_caller(
         identity,
         observe_http(async move {
+            // Stored-object APIs consume the same ingress context without depending on model readiness.
+            if !protected {
+                return next.run(request).await;
+            }
             let timing = api::RequestTiming::now();
             request.extensions_mut().insert(timing);
             let snapshot = match generation.request_snapshot() {

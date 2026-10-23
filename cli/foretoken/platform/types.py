@@ -31,6 +31,7 @@ class PlatformGatewayConfig:
     name: str
     namespace: str
     section_name: str
+    port: int | None = None
 
 
 @dataclass(frozen=True)

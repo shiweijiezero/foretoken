@@ -1,27 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-// Defines the platform-selected file distribution endpoint used by preparation workers.
+// Defines the shared model-download service binding consumed by preparation workers.
 
 package runtimeconfig
 
 import (
 	"errors"
-	"path"
+	"net/url"
 )
 
-const DragonflySocketEnv = "FORETOKEN_DRAGONFLY_SOCKET"
+const ModelDownloadProxyEnv = "FORETOKEN_MODEL_DOWNLOAD_PROXY"
 
-// ModelDistributionProfile selects an optional node-local Dragonfly download service.
-// The platform installer resolves the host socket; preparation Pods mount its parent directory.
+// ModelDistributionProfile identifies the optional internal model-download service.
 type ModelDistributionProfile struct {
-	DragonflySocketPath string
+	ProxyURL string
 }
 
-// Validate checks the optional host socket before the controller projects it into workloads.
+// Validate checks the internal endpoint before preparation workers receive it.
 func (profile ModelDistributionProfile) Validate() error {
-	if socket := profile.DragonflySocketPath; socket != "" && (!path.IsAbs(socket) || path.Clean(socket) != socket || path.Dir(socket) == "/") {
-		return errors.New("Dragonfly socket must be an absolute file path below a socket directory")
+	if profile.ProxyURL == "" {
+		return nil
+	}
+	endpoint, err := url.Parse(profile.ProxyURL)
+	if err != nil || endpoint.Scheme != "http" || endpoint.Hostname() == "" || endpoint.User != nil ||
+		(endpoint.Path != "" && endpoint.Path != "/") || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return errors.New("model download proxy must be a credential-free internal HTTP endpoint")
 	}
 	return nil
 }

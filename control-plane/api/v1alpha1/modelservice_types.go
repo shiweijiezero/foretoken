@@ -47,6 +47,20 @@ type ExpertParallelism struct {
 	EPLB bool `json:"eplb,omitempty"`
 }
 
+// KVTransfer selects the transport shared by a ModelService's prefill and decode Pools.
+type KVTransfer struct {
+	// Connector defaults to mooncake when omitted.
+	// +optional
+	// +kubebuilder:validation:Enum=mooncake;nixl
+	Connector string `json:"connector,omitempty"`
+
+	// Protocol is selected automatically when omitted: RDMA when both stages can request
+	// the platform's advertised devices, otherwise TCP. Set it to override that choice.
+	// +optional
+	// +kubebuilder:validation:Enum=tcp;rdma
+	Protocol string `json:"protocol,omitempty"`
+}
+
 // KVCache defines typed KV-cache placement intent for one execution Pool.
 // +kubebuilder:validation:XValidation:rule="!(has(self.offload) && has(self.mooncakeStore))",message="kvCache.offload and kvCache.mooncakeStore are mutually exclusive"
 type KVCache struct {
@@ -211,6 +225,7 @@ type ProfilingConfig struct {
 }
 
 // ModelServiceSpec defines the desired state of a model service.
+// +kubebuilder:validation:XValidation:rule="!has(self.kvTransfer) || (has(self.modelPools) && self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode'))",message="kvTransfer requires prefill and decode modelPools"
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !(has(self.replicas) || has(self.nodes) || has(self.resources) || has(self.maxInputTokens) || has(self.kvCache) || has(self.features))",message="spec.modelPools is mutually exclusive with top-level replicas, nodes, resources, maxInputTokens, kvCache, and features"
 // +kubebuilder:validation:XValidation:rule="has(self.modelPools) || has(self.resources)",message="top-level resources are required when spec.modelPools is omitted"
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, pool.name != 'default')",message="modelPools name default is reserved for the Quick Start shorthand"
@@ -325,6 +340,10 @@ type ModelServiceSpec struct {
 	// Features declares explicit opt-in capabilities for the default Pool.
 	// +optional
 	Features *ModelFeatures `json:"features,omitempty"`
+
+	// KVTransfer selects one transport for this service's prefill and decode Pools.
+	// +optional
+	KVTransfer *KVTransfer `json:"kvTransfer,omitempty"`
 
 	// ECProfile selects the platform-maintained EC runtime for a complete E/P/D topology.
 	// +optional
@@ -446,7 +465,7 @@ type ModelServiceStatus struct {
 	// PoolApplications retains controller-selected execution settings when a Pool is recreated.
 	// The controller publishes selections before materializing their Pool and Group contracts.
 	// +optional
-	PoolApplications map[string]ApplicationSelection `json:"poolApplications,omitempty"`
+	PoolApplications map[string]ModelApplicationSelection `json:"poolApplications,omitempty"`
 
 	// +optional
 	// +kubebuilder:validation:Minimum=0

@@ -6,7 +6,10 @@
 package v1alpha1
 
 import (
+	"slices"
+
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -59,44 +62,73 @@ type ModelGroupArtifacts struct {
 	HuggingFaceAccess *HuggingFaceAccess `json:"huggingFaceAccess,omitempty"`
 }
 
-// RDMAAllocation identifies the platform device-plugin allocation used by runtime transports.
+// RDMAAllocation identifies the device requests, placement, and networks used by runtime transports.
+// +kubebuilder:validation:XValidation:rule="has(self.resources) ? size(self.resources) > 0 && !has(self.resourceName) && !has(self.resourceCount) : has(self.resourceName) && has(self.resourceCount)",message="RDMA requires resources or a retained single-resource allocation"
 type RDMAAllocation struct {
+	// Resources are requested together by each runtime member Pod.
+	// +optional
+	Resources corev1.ResourceList `json:"resources,omitempty"`
+	// RequiredNodeAffinity constrains members to nodes providing the selected network binding.
+	// +optional
+	RequiredNodeAffinity *corev1.NodeSelector `json:"requiredNodeAffinity,omitempty"`
+	// ResourceName and ResourceCount retain allocations written by older controllers.
+	// New allocations use Resources exclusively.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
-	ResourceName string `json:"resourceName"`
+	ResourceName string `json:"resourceName,omitempty"`
+	// +optional
 	// +kubebuilder:validation:Minimum=1
-	ResourceCount int32 `json:"resourceCount"`
+	ResourceCount int32 `json:"resourceCount,omitempty"`
+	// Networks are the Multus attachments selected with these device requests.
+	// +optional
+	Networks []string `json:"networks,omitempty"`
 }
+
+// P/D connector identities use the class names consumed by the vLLM adapter.
+const (
+	MooncakeConnector = "MooncakeConnector"
+	NixlConnector     = "NixlConnector"
+)
 
 // ModelGroupPDRuntimeConfig defines the resolved P/D transport runtime.
 type ModelGroupPDRuntimeConfig struct {
-	// ProfileName and ProfileRevision are opaque platform-owned identifiers.
+	// ProfileName and ProfileRevision preserve existing cohorts for older namespace controllers.
+	// New cohorts use Connector and Protocol directly.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=256
-	ProfileName string `json:"profileName"`
+	ProfileName string `json:"profileName,omitempty"`
 
+	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=256
-	ProfileRevision string `json:"profileRevision"`
+	ProfileRevision string `json:"profileRevision,omitempty"`
 
 	// ServiceUID bounds transfer side channels to Pools owned by one ModelService.
 	// +kubebuilder:validation:MinLength=1
 	ServiceUID string `json:"serviceUID"`
 
-	// +kubebuilder:validation:Enum=MooncakeConnector
+	// +kubebuilder:validation:Enum=MooncakeConnector;NixlConnector
 	Connector string `json:"connector"`
 
 	// +kubebuilder:validation:Enum=rdma;tcp
 	Protocol string `json:"protocol"`
 
+	// BootstrapPort is the Mooncake bootstrap port or the NIXL side-channel base.
+	// NIXL allocates one listener per DP rank at base + rank.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	BootstrapPort int32 `json:"bootstrapPort"`
 
+	// AbortRequestTimeoutSeconds retains an explicit Mooncake timeout for this cohort.
+	// Omission uses the native connector default.
+	// +optional
 	// +kubebuilder:validation:Minimum=1
-	AbortRequestTimeoutSeconds int32 `json:"abortRequestTimeoutSeconds"`
+	AbortRequestTimeoutSeconds int32 `json:"abortRequestTimeoutSeconds,omitempty"`
 
-	// RDMADeviceName optionally limits Mooncake to a comma-separated HCA list.
-	// When omitted, Mooncake selects from the devices allocated to the Pod.
+	// RDMADeviceName optionally selects a comma-separated connector-native device list.
+	// Mooncake uses HCA names; NIXL uses UCX device:port identifiers such as mlx5_0:1.
+	// When omitted, the connector selects from the devices allocated to the Pod.
 	// +optional
 	RDMADeviceName string `json:"rdmaDeviceName,omitempty"`
 }
@@ -189,29 +221,19 @@ type ModelGroupKVRuntimeConfig struct {
 	MooncakeStore *ModelGroupMooncakeStoreRuntime `json:"mooncakeStore,omitempty"`
 }
 
-// AdmissionStoreConnection selects the platform ledger without exposing credential values.
-// +kubebuilder:validation:XValidation:rule="has(self.url) != has(self.urlSecretRef)",message="exactly one admission store URL or Secret reference is required"
-type AdmissionStoreConnection struct {
-	// URL is a credential-free Redis-compatible endpoint.
-	// +optional
-	// +kubebuilder:validation:Pattern="^rediss?://[^@]+$"
-	URL string `json:"url,omitempty"`
-
-	// URLSecretRef contains the full connection URL in a namespace-local Secret.
-	// +optional
-	URLSecretRef *corev1.SecretKeySelector `json:"urlSecretRef,omitempty"`
-}
-
 // InstanceAdmissionFileProtocol selects the live-file configuration interface of a model application.
 const InstanceAdmissionFileProtocol uint32 = 1
 
 // ModelGroupRuntime defines the resolved inference-engine runtime.
 type ModelGroupRuntime struct {
-	// PreparationVersion selects the source-publication contract for this immutable cohort.
-	// Omitted on cohorts created before source preparation was introduced.
+	// LeaderWorkerScheduling fixes native placement and quota admission across platform updates.
+	// +optional
+	LeaderWorkerScheduling *LeaderWorkerScheduling `json:"leaderWorkerScheduling,omitempty"`
+
+	// PreparationVersion selects native acquisition (0), vLLM preparation (1), or shared-cache preparation (2).
 	// +optional
 	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=1
+	// +kubebuilder:validation:Maximum=2
 	PreparationVersion int32 `json:"preparationVersion,omitempty"`
 
 	// SourceRevision selects the immutable source bundle at the platform application origin.
@@ -259,7 +281,7 @@ type ModelGroupRuntime struct {
 
 	// AdmissionStore pins the shared ledger selected by the platform for this cohort.
 	// +optional
-	AdmissionStore *AdmissionStoreConnection `json:"admissionStore,omitempty"`
+	AdmissionStore *RedisConnection `json:"admissionStore,omitempty"`
 
 	// TritonCacheDirectory is the initial worker cache path; Kubernetes expands its node reference.
 	// +optional
@@ -402,6 +424,25 @@ type ModelGroupList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []ModelGroup `json:"items"`
+}
+
+// Canonical returns independent native requests and placement for workload projection
+// and execution comparison, converting retained single-resource allocations without mutating them.
+func (allocation *RDMAAllocation) Canonical() *RDMAAllocation {
+	if allocation == nil {
+		return nil
+	}
+	result := *allocation
+	result.Resources = allocation.Resources.DeepCopy()
+	if result.Resources == nil && allocation.ResourceName != "" {
+		result.Resources = corev1.ResourceList{
+			corev1.ResourceName(allocation.ResourceName): *resource.NewQuantity(int64(allocation.ResourceCount), resource.DecimalSI),
+		}
+	}
+	result.ResourceName, result.ResourceCount = "", 0
+	result.RequiredNodeAffinity = allocation.RequiredNodeAffinity.DeepCopy()
+	result.Networks = slices.Clone(allocation.Networks)
+	return &result
 }
 
 func init() {

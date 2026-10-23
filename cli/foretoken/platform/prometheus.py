@@ -21,7 +21,7 @@ _REQUIRED_PROMETHEUS_RESOURCES = frozenset(
         "prometheusrules.monitoring.coreos.com",
     }
 )
-_METRICS_SCRAPER_LABEL = "inference.foretoken.io/metrics-scraper"
+METRICS_SCRAPER_LABEL = "inference.foretoken.io/metrics-scraper"
 _FORETOKEN_LABELS = {
     "app.kubernetes.io/name": "foretoken-control-plane",
     "app.kubernetes.io/instance": "foretoken",
@@ -97,13 +97,13 @@ def select_prometheus(
                 f"requested Prometheus {requested} is unavailable or cannot select "
                 f"Foretoken ServiceMonitors and PrometheusRules in namespace "
                 f"{platform_namespace}; verify its selectors and label its namespace "
-                f"with {_METRICS_SCRAPER_LABEL}=true"
+                f"with {METRICS_SCRAPER_LABEL}=true"
             )
         raise DeploymentError(
             "Prometheus instances exist, but none is available and can select "
             f"Foretoken ServiceMonitors and PrometheusRules in namespace "
             f"{platform_namespace}; verify its selectors and namespace label "
-            f"{_METRICS_SCRAPER_LABEL}=true, or specify a compatible instance "
+            f"{METRICS_SCRAPER_LABEL}=true, or specify a compatible instance "
             "with --prometheus NAMESPACE/NAME"
         )
     if len(compatible) > 1:
@@ -260,7 +260,7 @@ def _prometheus_namespace_is_trusted(
     labels = metadata.get("labels") or {}
     return (
         isinstance(labels, dict)
-        and labels.get(_METRICS_SCRAPER_LABEL) == "true"
+        and labels.get(METRICS_SCRAPER_LABEL) == "true"
     )
 
 
