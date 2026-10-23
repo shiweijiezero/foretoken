@@ -2,7 +2,7 @@
 
 English | [简体中文](video_zh.md) · [Performance examples](README.md)
 
-Run the benchmark from the repository root against an existing synchronous video-generation endpoint. The benchmark checks `/health` on the same server first; use `--health-url` if its public health endpoint is elsewhere.
+Run the benchmark from the repository root against an existing synchronous video-generation endpoint. To check a separate public health endpoint before sending requests, add `--health-url URL`.
 
 ## VideoArgusBench datasets
 

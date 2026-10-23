@@ -96,11 +96,7 @@ def _add_benchmark_arguments(
     parser.add_argument(
         "--health-url",
         default=_default(ModelServiceSource, "health_url"),
-        help=(
-            "Health endpoint; derived from --url when omitted"
-            if video
-            else "Optional service health endpoint checked before the benchmark"
-        ),
+        help="Optional service health endpoint checked before the benchmark",
     )
     parser.add_argument(
         "--timeout",

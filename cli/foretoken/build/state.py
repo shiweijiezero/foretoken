@@ -637,6 +637,7 @@ def source_uninstall(
                             kubectl, namespace, node, socket, tools, timeout,
                             binding=binding, pull_secrets=secrets,
                         ) as store:
+                            store.release_leases()
                             store.release_except(retained)
 
 

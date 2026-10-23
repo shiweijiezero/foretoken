@@ -55,8 +55,9 @@ async def run_video_benchmark(
         directory_prefix=f"{config.name}_",
         sink_factory=partial(video_result_sinks, config),
     ) as outputs:
-        await require_health_endpoint(config.endpoint.health_url)
-        logger.info("Video server health check passed")
+        if config.endpoint.health_url:
+            await require_health_endpoint(config.endpoint.health_url)
+            logger.info("Video server health check passed")
         run_dir = Path(outputs.execution_dir)
         outputs.open(record, configuration=config.to_dict())
         if config.warmup_requests:

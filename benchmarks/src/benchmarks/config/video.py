@@ -9,7 +9,7 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 from benchmarks.config.benchmark import BenchmarkOutputConfig, WandbRunConfig
 
@@ -165,7 +165,7 @@ class VideoBenchmarkConfig:
         health = urlsplit(self.endpoint.health_url)
         if endpoint.scheme not in {"http", "https"} or not endpoint.netloc:
             raise ValueError(f"invalid video endpoint URL: {self.endpoint.url}")
-        if health.scheme not in {"http", "https"} or not health.netloc:
+        if self.endpoint.health_url and (health.scheme not in {"http", "https"} or not health.netloc):
             raise ValueError(f"invalid video health URL: {self.endpoint.health_url}")
         if not math.isfinite(self.endpoint.timeout_s) or self.endpoint.timeout_s <= 0:
             raise ValueError("video --timeout must be finite and positive")
@@ -215,9 +215,3 @@ class VideoBenchmarkConfig:
                 "experiment_name": self.sweep.experiment_name,
             },
         }
-
-
-def video_health_url(endpoint_url: str) -> str:
-    """Derive the conventional health endpoint from the video endpoint URL."""
-    parsed = urlsplit(endpoint_url)
-    return urlunsplit((parsed.scheme, parsed.netloc, "/health", "", ""))

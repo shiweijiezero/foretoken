@@ -115,7 +115,7 @@ foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeou
 
 后续从这个 Foretoken 目录部署时，会沿用选定的 vLLM 目录。修改 Python、Triton 或 NVIDIA CUDA/C++ 代码后，部署时添加 `-e .`，即可自动构建并应用改动。每个 Foretoken 源码目录的引擎目录需分别指定。
 
-需要限制构建并发时，在源码安装或部署命令前加 `BUILD_JOBS=4`，各 Go、Rust 和引擎原生编译任务分别使用四个编译作业。
+需要指定构建并发时，在源码安装或部署命令前加 `BUILD_JOBS=4`，各 Go、Rust、引擎原生编译和 Python 字节码准备任务分别使用四个并发作业。
 
 修改沐曦原生 kernel 时，还需同时指定插件目录及与其匹配的 vLLM 目录：
 

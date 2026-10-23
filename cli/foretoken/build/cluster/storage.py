@@ -9,7 +9,7 @@ import json
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from loguru import logger
@@ -189,10 +189,12 @@ def ensure_build_volumes(
 
 def ensure_shared_build_cache(
     kubectl: Kubectl, namespace: str, node: str, configuration: dict[str, str], owner: dict[str, str],
+    *, role: Literal["compiler", "node-client"] = "compiler",
 ) -> str:
-    """Reuse one platform-owned dependency cache per node across independent compiler workspaces."""
+    """Reuse platform-owned node caches without sharing trusted client compilation with editable workload code."""
     node_uid = kubectl.get("node", node)["metadata"]["uid"]
-    name = "foretoken-development-" + owner["uid"][:8] + "-" + node_uid[:8]
+    prefix = "foretoken-development-" if role == "compiler" else "foretoken-build-client-"
+    name = prefix + owner["uid"][:8] + "-" + node_uid[:8]
     existing = kubectl.get_if_exists("pvc", name, namespace)
     if existing is None:
         document = {

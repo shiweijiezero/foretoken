@@ -20,7 +20,6 @@ from benchmarks.config.video import (
     VideoDatasetDefaults,
     VideoEndpointConfig,
     VideoParameterSweepConfig,
-    video_health_url,
 )
 from benchmarks.datasets.video.loader import load_video_dataset, video_dataset_name
 
@@ -113,7 +112,7 @@ def parse_video_arguments(argv: Sequence[str]) -> VideoBenchCommand:
         dataset_path=dataset_path,
         endpoint=VideoEndpointConfig(
             url=endpoint_url,
-            health_url=parsed.health_url or video_health_url(endpoint_url),
+            health_url=parsed.health_url,
             timeout_s=parsed.timeout,
         ),
         requests=requests,

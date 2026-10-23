@@ -6,12 +6,15 @@
 from __future__ import annotations
 
 import json
-import re
+import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
+from loguru import logger
+
+from foretoken.build.cluster.native_client import CLIENT_BINARY
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
 from foretoken.processes.execution import CommandExecution, cleanup_commands
@@ -24,6 +27,7 @@ SOURCE_IMAGE_HELPER_LABEL = "inference.foretoken.io/source-image-helper"
 _PIN_LABEL = "io.cri-containerd.pinned"
 _CONTAINERD_CLIENT = "/usr/local/bin/ctr"
 _CONTAINERD_SOCKET = "/run/foretoken-containerd.sock"
+_CONTAINERD_NAMESPACE = "k8s.io"
 
 
 class NodeImageStore:
@@ -37,7 +41,7 @@ class NodeImageStore:
         self.pod = pod
         self.binding = binding
 
-    def run(self, args: list[str], *, capture: bool = False) -> str:
+    def run(self, args: list[str], *, capture: bool = False, input_text: str | None = None) -> str:
         """Execute a node image operation, surfacing failures to its lifecycle caller."""
         execution = CommandExecution.current() or CommandExecution()
         result = execution.run(
@@ -56,6 +60,7 @@ class NodeImageStore:
             ),
             text=True,
             capture_output=capture,
+            input=input_text,
         )
         if result.returncode:
             detail = (result.stderr or result.stdout or "").strip()
@@ -66,14 +71,60 @@ class NodeImageStore:
         return result.stdout if capture else ""
 
     def containerd(self) -> list[str]:
-        """Return the node client command used by source export and image operations."""
+        """Return the node client command for image records and lease cleanup."""
         return [
             _CONTAINERD_CLIENT,
             "--address",
             _CONTAINERD_SOCKET,
             "--namespace",
-            "k8s.io",
+            _CONTAINERD_NAMESPACE,
         ]
+
+    def client_request(self, lease: str, platform: str) -> dict[str, Any]:
+        """Project this node's access and operation ownership for the packaged native client."""
+        return {
+            "containerd_address": _CONTAINERD_SOCKET, "containerd_namespace": _CONTAINERD_NAMESPACE,
+            "lease_id": lease, "platform": platform,
+            "lease_labels": {_IMAGE_OWNER_LABEL: "foretoken", SOURCE_BUILD_BINDING_LABEL: self.binding},
+        }
+
+    def inspect(
+        self, image: str, lease: str, platform: str, *, descriptor: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Read and retain a named input or generated descriptor without transferring image layers."""
+        request = {**self.client_request(lease, platform), "image": image}
+        if descriptor is not None:
+            request["descriptor"] = descriptor
+        result = json.loads(self.run([CLIENT_BINARY, "inspect"], capture=True, input_text=json.dumps(request)))
+        return result if result["found"] else None
+
+    def deliver(self, descriptor: dict[str, Any], image: str, lease: str, platform: str) -> None:
+        """Publish and unpack an owned image only after its build's dependency stages have succeeded."""
+        started = time.monotonic()
+        logger.info("Delivering source image {} to the node", image)
+        request = self.client_request(lease, platform)
+        request.update(
+            descriptor=descriptor, image=image,
+            image_labels={**request["lease_labels"], _PIN_LABEL: "pinned"},
+        )
+        self.run([CLIENT_BINARY, "deliver"], input_text=json.dumps(request))
+        logger.info("Source image {} delivered to the node in {:.1f}s", image, time.monotonic() - started)
+
+    def release_leases(self, identifiers: set[str] | None = None) -> None:
+        """Release this binding's native operation leases after their writer Pods have stopped."""
+        output = self.run([*self.containerd(), "leases", "list"], capture=True)
+        selected = []
+        for line in output.splitlines()[1:]:
+            columns = line.split()
+            labels = dict(item.split("=", 1) for item in columns[-1].split(",") if "=" in item)
+            if (
+                labels.get(_IMAGE_OWNER_LABEL) == "foretoken"
+                and labels.get(SOURCE_BUILD_BINDING_LABEL) == self.binding
+                and (identifiers is None or columns[0] in identifiers)
+            ):
+                selected.append(columns[0])
+        if selected:
+            self.run([*self.containerd(), "leases", "delete", *selected])
 
     def images(self) -> dict[str, str]:
         """Return reference-to-digest records for the builder's existing cache comparison."""
@@ -87,26 +138,6 @@ class NodeImageStore:
     def _descriptor(self, digest: str) -> dict[str, Any]:
         """Read an OCI descriptor without exporting or unpacking image layers."""
         return json.loads(self.run([*self.containerd(), "content", "get", digest], capture=True))
-
-    def image_digest(self, image: str) -> str | None:
-        """Resolve a local build dependency from containerd metadata alone."""
-        digest = self.images().get(image)
-        return image_manifest_digest(digest, self._descriptor) if digest is not None else None
-
-    def image_user(self, digest: str, architecture: str) -> str:
-        """Read the build node's image USER from manifests and config, without unpacking layers."""
-        manifest = self._descriptor(digest)
-        while "manifests" in manifest:
-            selected = next((
-                entry for entry in manifest["manifests"]
-                if entry.get("platform", {}).get("os") == "linux"
-                and entry["platform"].get("architecture") == architecture
-            ), None)
-            if selected is None:
-                raise DeploymentError(f"image {digest} has no linux/{architecture} manifest")
-            manifest = self._descriptor(selected["digest"])
-        configuration = self._descriptor(manifest["config"]["digest"])
-        return configuration["config"].get("User", "") or "0"
 
     def matches(self, image: str, digest: str) -> bool:
         """Compare BuildKit output with a node reference, including its single-image index."""
@@ -178,90 +209,6 @@ class NodeImageStore:
                 f"{SOURCE_BUILD_BINDING_LABEL}={self.binding}",
             ]
         )
-
-    def _major_version(self) -> int:
-        """Select the supported containerd archive API from the node's client version."""
-        version = self.run([_CONTAINERD_CLIENT, "--version"], capture=True)
-        match = re.search(r"\bv([12])\.\d+\.\d+", version)
-        if match is None:
-            raise DeploymentError(
-                f"unsupported containerd client version: {version.strip()}"
-            )
-        return int(match[1])
-
-    def export_command(self, image: str, archive: str, platform: str) -> list[str]:
-        """Return a synchronous OCI export for the builder's cancellation-aware executor."""
-        command = [*self.containerd(), "images", "export"]
-        if self._major_version() == 2:
-            # The transfer client's asynchronous receiver can close an unfinished archive.
-            command.append("--local")
-        return [*command, "--skip-manifest-json", "--platform", platform, archive, image]
-
-    def import_layout(self, layout: str, image: str) -> None:
-        """Import and pin every OCI alias; ctr 1.x pins before its long unpack stage."""
-        command = [*self.containerd(), "images", "import"]
-        major = self._major_version()
-        if major == 2:
-            command.append("--local")
-        index = json.loads(self.run(["cat", layout + "/index.json"], capture=True))
-        references = {image}
-        for manifest in index["manifests"]:
-            annotations = manifest.get("annotations", {})
-            reference = annotations.get("io.containerd.image.name") or annotations.get(
-                "org.opencontainers.image.ref.name"
-            )
-            if reference:
-                references.add(reference)
-        # A borrowed base or another build's selection is never claimed by import.
-        existing = self.images().keys() & references
-        foreign = existing - self.owned_images().keys()
-        if foreign:
-            raise DeploymentError(
-                "source image references are not owned by this build: "
-                + ", ".join(sorted(foreign))
-            )
-        if major == 2:
-            for label in (
-                f"{_PIN_LABEL}=pinned",
-                f"{_IMAGE_OWNER_LABEL}=foretoken",
-                f"{SOURCE_BUILD_BINDING_LABEL}={self.binding}",
-            ):
-                command += ["--label", label]
-        else:
-            # ctr 1.x preserves labels on target-only updates during the second import.
-            # Its initial import-to-label interval is not atomic; label errors must fail.
-            self._import_layout(
-                layout, [*command, "--no-unpack", "--index-name", image, "-"]
-            )
-            for reference in sorted(references):
-                self._pin(reference)
-        # ctr 1.x has already stored and pinned the content graph. Sending its
-        # index again triggers unpack without rewriting every blob a second time.
-        self._import_layout(
-            layout, [*command, "--index-name", image, "-"], metadata_only=major == 1
-        )
-
-    def _import_layout(
-        self, layout: str, command: list[str], *, metadata_only: bool = False
-    ) -> None:
-        """Stream the OCI archive, or its index for already stored content, to the node client."""
-        members = "oci-layout index.json" if metadata_only else "."
-        self.run(
-            [
-                "bash",
-                "-ec",
-                f'set -o pipefail; layout=$1; shift; tar -C "$layout" -cf - {members} | "$@"',
-                "import",
-                layout,
-                *command,
-            ]
-        )
-
-    def remove_owned(self, references: set[str]) -> None:
-        """Discard this build's temporary aliases without deleting unowned references."""
-        unused = references & self.owned_images().keys()
-        if unused:
-            self.run([*self.containerd(), "images", "remove", *sorted(unused)])
 
     def release_except(self, retained: set[str]) -> set[str]:
         """Release unreferenced owned pins and return owned references still retained by consumers."""
@@ -395,7 +342,7 @@ def node_image_store(
 def image_manifest_digest(
     digest: str, read: Callable[[str], dict[str, Any]]
 ) -> str:
-    """Resolve a single-image index for node and OCI-layout consumers without unwrapping artifacts."""
+    """Compare a node's single-image index with build output without unwrapping artifacts."""
     descriptor = read(digest)
     if descriptor.get("mediaType") not in {
         "application/vnd.oci.image.index.v1+json",
@@ -430,7 +377,7 @@ def image_tools_image(
     arguments: dict[str, str],
     registry_mirrors: dict[str, list[str]] | None = None,
 ) -> str:
-    """Select Bash and GNU tar for node image operations using the build's Docker mirror."""
+    """Select the storage and node-client runtime through the build's Docker mirror."""
     automatic = (registry_mirrors or {}).get("docker.io", ["docker.io"])[0]
     registry = arguments.get("BASE_IMAGE_REGISTRY", automatic).rstrip("/")
     return f"{registry}/library/debian:bookworm-slim"
