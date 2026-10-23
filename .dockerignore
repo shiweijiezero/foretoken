@@ -34,4 +34,8 @@ third_party/mooncake/**/.git
 !control-plane/go.sum
 !control-plane/internal/
 !control-plane/internal/**
+# Keep documentation out of source-build cache keys, as in CLI snapshots.
+control-plane/**/*.md
+control-plane/**/*.png
+control-plane/**/*.svg
 control-plane/**/*_test.go

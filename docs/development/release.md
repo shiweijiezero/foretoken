@@ -66,7 +66,7 @@ export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
-The command builds the runtime images and saves `foretoken-applications-<version>-linux-amd64.tar.gz` and the matching Helm Chart in `/tmp/foretoken-release`. MetaX image tags use the `-metax` suffix. To use a different compatible NVIDIA base, set `INFERENCE_ENGINE_IMAGE` before building.
+The command builds the runtime images and saves `foretoken-applications-<version>-linux-amd64.tar.gz`, the matching Helm Chart and exported build caches in `/tmp/foretoken-release`. All outputs stay local until publication. MetaX image tags use the `-metax` suffix. To use a different compatible NVIDIA base, set `INFERENCE_ENGINE_IMAGE` before building.
 
 To export the application archive without rebuilding environments:
 
@@ -74,9 +74,11 @@ To export the application archive without rebuilding environments:
 deploy/release-artifacts export --output-dir /tmp/foretoken-release
 ```
 
-Upload the validated archive as a GitHub Release asset. The `push` command below publishes the environment images and Helm Chart, not the archive.
+Upload the validated archive as a GitHub Release asset. The `push` command below publishes the environment images, exported build caches and Helm Chart, not the archive.
 
-After validating the artifacts, log in to the registry and push them:
+With the Docker driver, cache metadata travels inside the environment images. For Docker 27.0 or 27.1, upgrade to 27.2 or later to avoid the [upstream inline-cache regression](https://github.com/moby/buildkit/issues/5242). Other Buildx drivers export separate cache layouts; publishing those requires [ORAS](https://oras.land/docs/installation/), which uses the Docker registry credentials.
+
+After validating the artifacts, log in to the registry and push them. If the build used `--output-dir`, pass the same option to `push`:
 
 ```bash
 docker login ghcr.io

@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.19
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
@@ -29,11 +29,11 @@ FROM compiler AS builder
 ARG FORETOKEN_GITHUB_MIRROR
 ARG FORETOKEN_CARGO_REGISTRY
 ARG CARGO_NET_GIT_FETCH_WITH_CLI
-ARG BUILD_JOBS
 COPY data-plane/ ./data-plane/
 COPY deploy/build-source ./deploy/build-source
 ENV CARGO_HOME=/var/cache/foretoken/cargo-home
-RUN --mount=type=cache,id=foretoken-vllm-source,target=/var/cache/foretoken/vllm \
+RUN --mount=type=secret,id=foretoken-build-jobs,env=BUILD_JOBS \
+    --mount=type=cache,id=foretoken-vllm-source,target=/var/cache/foretoken/vllm \
     --mount=type=cache,id=foretoken-cargo-home,target=/var/cache/foretoken/cargo-home \
     --mount=type=cache,id=foretoken-cargo-target-bookworm-prepared-source,target=/workspace/data-plane/target,sharing=locked \
     python3 -I deploy/build-source frontend /out --cache /var/cache/foretoken --parts rust
@@ -42,10 +42,6 @@ FROM scratch AS source-export
 COPY --from=builder /out/ /
 
 FROM ${RUNTIME_IMAGE} AS environment
-ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
-ARG OCI_REVISION
-LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
-      org.opencontainers.image.revision="${OCI_REVISION}"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libssl3 libstdc++6 \
     && rm -rf /var/lib/apt/lists/* \
@@ -54,6 +50,11 @@ RUN apt-get update \
     && chown -R 65532:65532 /var/cache/foretoken
 ENV HF_HOME=/var/cache/foretoken/huggingface
 USER 65532:65532
+
+ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
+ARG OCI_REVISION
+LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
+      org.opencontainers.image.revision="${OCI_REVISION}"
 
 FROM environment AS runtime
 COPY --from=builder /out/bin/foretoken-frontend /usr/local/bin/foretoken-frontend

@@ -50,13 +50,13 @@ ARG FORETOKEN_GITHUB_MIRROR
 ARG FORETOKEN_CARGO_REGISTRY
 ARG CARGO_NET_GIT_FETCH_WITH_CLI
 ARG FORETOKEN_MODEL_SERVER_BINARY=foretoken-model-server
-ARG BUILD_JOBS
 COPY --exclude=model-server/python data-plane/ ./data-plane/
 COPY deploy/build-source ./deploy/build-source
 COPY LICENSE ./LICENSE
 ENV CARGO_HOME=/var/cache/foretoken/cargo-home
 # Keep this target separate from the frontend's newer glibc toolchain.
-RUN --mount=type=cache,id=foretoken-vllm-source,target=/var/cache/foretoken/vllm \
+RUN --mount=type=secret,id=foretoken-build-jobs,env=BUILD_JOBS \
+    --mount=type=cache,id=foretoken-vllm-source,target=/var/cache/foretoken/vllm \
     --mount=type=cache,id=foretoken-cargo-home,target=/var/cache/foretoken/cargo-home \
     --mount=type=cache,id=foretoken-cargo-target-model-server-prepared-source,target=/workspace/data-plane/target,sharing=locked \
     python3 -I deploy/build-source model-server /out --cache /var/cache/foretoken --parts rust
@@ -97,11 +97,11 @@ RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
     "${FORETOKEN_VLLM_PYTHON:-python3}" /tmp/vllm-patches/apply.py
 
 ARG UV_DEFAULT_INDEX
-ARG BUILD_JOBS
 # Engine images may provide a Python virtual environment without pip.
 # MACA also exposes torch.version.cuda, so select dependencies from the engine build.
 # Precompile installed packages to avoid repeated bytecode compilation at startup.
-RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+RUN --mount=type=secret,id=foretoken-build-jobs,env=BUILD_JOBS \
+    --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     --mount=from=runtime-patches,source=/patches,target=/tmp/vllm-patches \
     python_path=$("${FORETOKEN_VLLM_PYTHON:-python3}" -c \
       'import sys; print(sys.executable)') \
@@ -134,15 +134,15 @@ FROM inference-base AS mooncake-build
 USER root
 COPY --from=uv /uv /usr/local/bin/uv
 COPY --from=mooncake-go /usr/local/go /usr/local/go
-ARG BUILD_JOBS=2
 ARG UV_DEFAULT_INDEX
 ARG FORETOKEN_GITHUB_MIRROR
 ARG GOPROXY
 ARG GOSUMDB
-RUN --mount=type=bind,from=mooncake-inputs,target=/input \
+RUN --mount=type=secret,id=foretoken-build-jobs,env=BUILD_JOBS \
+    --mount=type=bind,from=mooncake-inputs,target=/input \
     --mount=type=cache,id=foretoken-mooncake-source,target=/var/cache/foretoken/mooncake \
     "${FORETOKEN_VLLM_PYTHON:-python3}" -I /input/deploy/mooncake/build-cuda-wheel \
-      --output /out --cache /var/cache/foretoken/mooncake --jobs "${BUILD_JOBS}"
+      --output /out --cache /var/cache/foretoken/mooncake --jobs "${BUILD_JOBS:-2}"
 
 FROM engine-base AS engine-runtime
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \

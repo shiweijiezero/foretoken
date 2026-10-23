@@ -21,6 +21,11 @@ third_party/mooncake/**/.gpu_cache
 third_party/mooncake/**/.gpu_cache/**
 !data-plane/
 !data-plane/**
+# Match CLI snapshots for first-party documentation; preserve supplied upstream files.
+data-plane/**/*.md
+data-plane/**/*.png
+data-plane/**/*.svg
+!data-plane/third_party/vllm/**
 data-plane/**/.git
 data-plane/target/
 data-plane/**/target/

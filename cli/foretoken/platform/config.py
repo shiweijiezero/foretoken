@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from foretoken import platform_version
+from foretoken import DEFAULT_PLATFORM_REGISTRY, platform_version
 from foretoken.errors import DeploymentError
 from foretoken.platform.types import LoadBalancerConfig, RuntimeOverrides
 
@@ -75,7 +75,7 @@ def default_platform_config(oci_registry: str | None = None) -> PlatformConfig:
             release_name="foretoken",
             source=_chart_source(
                 registry,
-                "oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken",
+                f"oci://{DEFAULT_PLATFORM_REGISTRY}/charts/foretoken",
             ),
             version=platform_version(),
         ),

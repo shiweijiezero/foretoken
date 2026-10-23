@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.19
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
@@ -25,11 +26,11 @@ WORKDIR /workspace
 FROM compiler AS builder
 ARG GOPROXY
 ARG GOSUMDB
-ARG BUILD_JOBS
 COPY control-plane/ ./control-plane/
 COPY deploy/build-source ./deploy/build-source
 COPY LICENSE ./LICENSE
-RUN --mount=type=cache,id=foretoken-go-modules,target=/var/cache/foretoken/go-modules \
+RUN --mount=type=secret,id=foretoken-build-jobs,env=BUILD_JOBS \
+    --mount=type=cache,id=foretoken-go-modules,target=/var/cache/foretoken/go-modules \
     --mount=type=cache,id=foretoken-go-build,target=/var/cache/foretoken/go-build \
     python3 -I deploy/build-source control-plane /out --cache /var/cache/foretoken
 

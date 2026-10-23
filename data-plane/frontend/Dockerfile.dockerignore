@@ -7,6 +7,11 @@
 !deploy/build-source
 !data-plane/
 !data-plane/**
+# Match CLI snapshots for first-party documentation; preserve supplied upstream files.
+data-plane/**/*.md
+data-plane/**/*.png
+data-plane/**/*.svg
+!data-plane/third_party/vllm/**
 data-plane/**/.git
 # Python adapters belong to the model-server image, not the frontend build.
 data-plane/model-server/python/

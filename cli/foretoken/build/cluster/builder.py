@@ -112,6 +112,9 @@ class ClusterBuilder(AbstractContextManager):
     def sync(self, files: dict[str, Path], versions: dict[str, str]) -> None:
         """Capture environment inputs using the same complete-inventory transfer as native builds."""
         synchronize_inputs(self.command, self.cancellation, self.workspace, self.execution_root + "/inputs.json", files, versions)
+        # BuildKit includes directory modes in COPY cache keys. Clear inherited
+        # volume permissions inside the inputs, leaving the private workspace root intact.
+        self.run(["find", self.workspace, "-mindepth", "1", "-type", "d", "-exec", "chmod", "00755", "{}", "+"])
 
     def build(
         self,
@@ -123,6 +126,7 @@ class ClusterBuilder(AbstractContextManager):
         arguments: dict[str, str] | None = None,
         capture: bool = False,
         metadata_only: bool = False,
+        cache_imports: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         """Build an image or inspect dependency metadata, retaining native content until delivery.
 
@@ -183,7 +187,7 @@ class ClusterBuilder(AbstractContextManager):
                 "buildkit_address": "unix://" + self.runtime_root + "/runtime/buildkit/buildkitd.sock",
                 "frontend_attrs": frontend, "inputs": inputs,
                 "local_dirs": {"context": self.workspace, "dockerfile": self.workspace},
-                "output": output, "metadata_file": metadata,
+                "output": output, "metadata_file": metadata, "cache_imports": cache_imports,
             }
             self.run([CLIENT_BINARY, "solve"], container="images", input_text=json.dumps(request), capture=capture)
         else:
@@ -191,9 +195,12 @@ class ClusterBuilder(AbstractContextManager):
                 "buildctl", "build", "--frontend", "dockerfile.v0",
                 "--local", "context=" + self.workspace, "--local", "dockerfile=" + self.workspace,
                 "--metadata-file", metadata, "--progress", "plain",
+                "--secret", "id=foretoken-build-jobs,env=BUILD_JOBS",
             ]
             for key, value in frontend.items():
                 args += ["--opt", f"{key}={value}"]
+            for reference in cache_imports:
+                args += ["--import-cache", "type=registry,ref=" + reference]
             export = {"type": output["type"], **output["attrs"]}
             self.run([*args, "--output", ",".join(f"{key}={value}" for key, value in export.items())], capture=capture)
         result = self.read_json(metadata)
@@ -576,6 +583,7 @@ chmod 600 "$state/buildkit.toml"
                 {"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"},
                 {"name": "HOME", "value": self.runtime_root + "/home"},
                 {"name": "TMPDIR", "value": self.runtime_root + "/tmp"},
+                {"name": "BUILD_JOBS", "value": os.environ.get("BUILD_JOBS", "")},
                 {"name": "XDG_RUNTIME_DIR", "value": self.runtime_root + "/runtime"},
                 {
                     "name": "BUILDKIT_HOST",

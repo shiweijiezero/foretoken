@@ -15,7 +15,11 @@ main() {
   DRY_RUN=false
   PLAIN_HTTP=false
   PYTHON=${FORETOKEN_PYTHON:-python}
+  BUILD_DRIVER=
+  PAYLOAD_DIR=
+  CACHE_EXPORT=
   export FORETOKEN_PYTHON="$PYTHON"
+  trap cleanup EXIT
 
   [[ $# -gt 0 ]] || {
     usage >&2
@@ -106,8 +110,8 @@ main() {
   }
 
   # Translate the package's PEP 440 release spelling to the OCI/Chart SemVer spelling.
-  read -r PYTHON_VERSION OCI_VERSION < <(
-    "$PYTHON" - "$ROOT" <<'PY'
+  read -r PYTHON_VERSION OCI_VERSION CONTROL_PLANE_IMAGE FRONTEND_IMAGE MODEL_SERVER_IMAGE MODEL_SERVER_METAX_IMAGE < <(
+    "$PYTHON" - "$ROOT" "$REGISTRY" <<'PY'
 from pathlib import Path
 import sys
 import tomllib
@@ -116,7 +120,7 @@ import yaml
 
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root / "cli"))
-from foretoken import platform_version_for
+from foretoken import environment_image_reference, platform_version_for
 
 with (root / "pyproject.toml").open("rb") as source:
     python_version = tomllib.load(source)["project"]["version"]
@@ -132,7 +136,11 @@ if chart_version != oci_version or app_version != oci_version:
         f"pyproject.toml={python_version}, expected Chart version/appVersion={oci_version}, "
         f"found version={chart_version}, appVersion={app_version}"
     )
-print(python_version, oci_version)
+images = [
+    environment_image_reference(sys.argv[2], oci_version, component)
+    for component in ("control-plane", "frontend", "model-server", "model-server-metax")
+]
+print(python_version, oci_version, *images)
 PY
   )
 
@@ -147,12 +155,8 @@ PY
     esac
   done
 
-  CONTROL_PLANE_IMAGE="$REGISTRY/control-plane-environment:$OCI_VERSION"
-  FRONTEND_IMAGE="$REGISTRY/frontend-environment:$OCI_VERSION"
-  MODEL_SERVER_IMAGE="$REGISTRY/model-server-environment:$OCI_VERSION"
-  MODEL_SERVER_METAX_IMAGE="$REGISTRY/model-server-environment:$OCI_VERSION-metax"
+  OUTPUT_DIR=$("$PYTHON" -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$OUTPUT_DIR")
   APPLICATION_PACKAGE="$OUTPUT_DIR/foretoken-applications-$OCI_VERSION-linux-amd64.tar.gz"
-  PAYLOAD_DIR="$OUTPUT_DIR/application-payload"
   CHART_PACKAGE="$OUTPUT_DIR/foretoken-$OCI_VERSION.tgz"
   OCI_REVISION=
   if [[ "$MODE" == build ]] && images_selected && \
@@ -174,18 +178,38 @@ PY
 build_or_export() {
   export DOCKER_DEFAULT_PLATFORM=linux/amd64
   images_selected && require_command make
-  [[ "$MODE" != build ]] || { selected chart && require_command helm; }
+  if [[ "$MODE" == build ]] && selected chart; then
+    require_command helm
+  fi
+  if images_selected && [[ "$DRY_RUN" != true ]]; then
+    require_command docker
+    # Retain the selected builder's caches and access to local base images.
+    local inspection selection builder driver
+    inspection=$(docker buildx inspect)
+    selection=$("$PYTHON" -c '
+import sys
+lines = sys.stdin.read().splitlines()
+selected = []
+for key in ("Name:", "Driver:"):
+    selected.append(next(line.removeprefix(key).strip() for line in lines if line.startswith(key)))
+print(*selected)
+' <<< "$inspection")
+    read -r builder driver <<< "$selection"
+    BUILD_DRIVER=$driver
+    # docker build requires an explicit selection even after buildx use.
+    export BUILDX_BUILDER="$builder"
+  fi
 
   if [[ "$MODE" == build ]]; then
     if selected control-plane; then
-      run make -C "$ROOT" image-control-plane \
-        "CONTROL_PLANE_IMAGE=$CONTROL_PLANE_IMAGE" "IMAGE_TARGET=environment" \
+      build_with_cache control-plane environment image-control-plane \
+        "CONTROL_PLANE_IMAGE=$CONTROL_PLANE_IMAGE" "IMAGE_TARGET=environment" "IMAGE_OUTPUT=type=docker" \
         "OCI_SOURCE=$SOURCE_URL" \
         "OCI_REVISION=$OCI_REVISION"
     fi
     if selected frontend; then
-      run make -C "$ROOT" image-frontend \
-        "FRONTEND_IMAGE=$FRONTEND_IMAGE" "IMAGE_TARGET=environment" \
+      build_with_cache frontend environment image-frontend \
+        "FRONTEND_IMAGE=$FRONTEND_IMAGE" "IMAGE_TARGET=environment" "IMAGE_OUTPUT=type=docker" \
         "OCI_SOURCE=$SOURCE_URL" \
         "OCI_REVISION=$OCI_REVISION"
     fi
@@ -196,41 +220,29 @@ build_or_export() {
         "${FORETOKEN_VLLM_PYTHON:-}"
     fi
     if selected model-server-metax; then
-      if [[ "$DRY_RUN" == true ]]; then
-        (
-          unset FORETOKEN_VLLM_PYTHON
-          build_model_server \
-            "$MODEL_SERVER_METAX_IMAGE" \
-            "${METAX_INFERENCE_ENGINE_IMAGE:-METAX_INFERENCE_ENGINE_IMAGE}" \
-            "${METAX_VLLM_PYTHON:-}"
-        )
-      else
-        [[ -n "${METAX_INFERENCE_ENGINE_IMAGE:-}" ]] || {
-          printf '%s\n' 'METAX_INFERENCE_ENGINE_IMAGE is required for model-server-metax' >&2
-          exit 2
-        }
-        (
-          unset FORETOKEN_VLLM_PYTHON
-          build_model_server \
-            "$MODEL_SERVER_METAX_IMAGE" \
-            "$METAX_INFERENCE_ENGINE_IMAGE" \
-            "${METAX_VLLM_PYTHON:-}"
-        )
+      if [[ "$DRY_RUN" != true && -z "${METAX_INFERENCE_ENGINE_IMAGE:-}" ]]; then
+        printf '%s\n' 'METAX_INFERENCE_ENGINE_IMAGE is required for model-server-metax' >&2
+        exit 2
       fi
+      build_model_server \
+        "$MODEL_SERVER_METAX_IMAGE" \
+        "${METAX_INFERENCE_ENGINE_IMAGE:-METAX_INFERENCE_ENGINE_IMAGE}" \
+        "${METAX_VLLM_PYTHON:-}" model-server-metax
     fi
   fi
   # A release archive contains all applications; partial environment builds skip it.
   if selected control-plane && selected frontend && { selected model-server || selected model-server-metax; }; then
     run mkdir -p "$OUTPUT_DIR"
-    if [[ "$DRY_RUN" != true ]]; then
+    if [[ "$DRY_RUN" == true ]]; then
+      PAYLOAD_DIR="$OUTPUT_DIR/application-payload"
+    else
       PAYLOAD_DIR=$(mktemp -d "$OUTPUT_DIR/application.XXXXXX")
-      trap 'rm -rf "$PAYLOAD_DIR"' EXIT
     fi
-    run make -C "$ROOT" image-control-plane "IMAGE_TARGET=source-export" \
+    build_with_cache control-plane source-export image-control-plane "IMAGE_TARGET=source-export" \
       "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/control-plane"
-    run make -C "$ROOT" image-frontend "IMAGE_TARGET=source-export" \
+    build_with_cache frontend source-export image-frontend "IMAGE_TARGET=source-export" \
       "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/frontend"
-    run make -C "$ROOT" image-model-server "IMAGE_TARGET=source-export" \
+    build_with_cache model-server source-export image-model-server "IMAGE_TARGET=source-export" \
       "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/model-server"
     run "$PYTHON" - "$PAYLOAD_DIR" "$APPLICATION_PACKAGE" <<'PY'
 from pathlib import Path
@@ -253,20 +265,22 @@ PY
       # The checkout remains usable with already-published image-only releases.
       chart_root=$(mktemp -d "$OUTPUT_DIR/chart.XXXXXX")
       cp -R "$ROOT/deploy/charts/foretoken" "$chart_root/foretoken"
-      "$PYTHON" - "$chart_root/foretoken/values.yaml" "$SOURCE_URL" "$PYTHON_VERSION" "$OCI_VERSION" "$REGISTRY" <<'PY'
+      "$PYTHON" - "$ROOT" "$chart_root/foretoken/values.yaml" "$SOURCE_URL" "$PYTHON_VERSION" "$OCI_VERSION" "$REGISTRY" <<'PY'
 from pathlib import Path
 import sys
 import yaml
-path = Path(sys.argv[1])
-source, python_version, version, registry = sys.argv[2:]
+sys.path.insert(0, str(Path(sys.argv[1]) / "cli"))
+from foretoken import environment_image_reference
+path = Path(sys.argv[2])
+source, python_version, version, registry = sys.argv[3:]
 values = yaml.safe_load(path.read_text())
 values["applicationFiles"]["releaseURL"] = f"{source}/releases/download/v{python_version}/foretoken-applications-{version}-linux-amd64.tar.gz"
-values["image"]["repository"] = f"{registry}/control-plane-environment"
-values["frontend"]["image"] = f"{registry}/frontend-environment:{version}"
+values["image"]["repository"] = environment_image_reference(registry, version, "control-plane").rsplit(":", 1)[0]
+values["frontend"]["image"] = environment_image_reference(registry, version, "frontend")
 values["runtime"]["vllm"]["image"] = "auto"
 values["runtime"]["vllm"]["environmentImages"] = {
-    "nvidia": f"{registry}/model-server-environment:{version}",
-    "metax": f"{registry}/model-server-environment:{version}-metax",
+    "nvidia": environment_image_reference(registry, version, "model-server"),
+    "metax": environment_image_reference(registry, version, "model-server-metax"),
 }
 path.write_text(yaml.safe_dump(values, sort_keys=False))
 PY
@@ -285,6 +299,15 @@ push_release() {
   selected frontend && push_image "$FRONTEND_IMAGE"
   selected model-server && push_image "$MODEL_SERVER_IMAGE"
   selected model-server-metax && push_image "$MODEL_SERVER_METAX_IMAGE"
+
+  for component in "${SELECTED_COMPONENTS[@]}"; do
+    [[ "$component" == chart ]] || push_build_cache "$component" environment
+  done
+  for component in control-plane frontend model-server; do
+    if selected "$component" || { [[ "$component" == model-server ]] && selected model-server-metax; }; then
+      push_build_cache "$component" source-export
+    fi
+  done
 
   if selected chart; then
     CHART_REGISTRY="oci://$REGISTRY/charts"
@@ -324,18 +347,19 @@ Usage:
   deploy/release-artifacts push   --registry REGISTRY [options]
 
 Modes:
-  build   Build dependency environments, export application files, and package the chart.
-  export  Export the ordinary application tar.gz without building environment images.
-  push    Push only environments and chart, skipping existing registry tags.
+  build   Build environments, export applications and build caches, and package the chart.
+  export  Export applications and their build caches without building environment images.
+  push    Push environments, exported build caches and chart, preserving existing tags.
 
-Upload the application tar.gz separately as a normal GitHub Release asset.
+Build and export keep their outputs local. Push requires Docker, Helm for charts,
+and ORAS for build caches. Upload the application tar.gz as a GitHub Release asset.
 
 Options:
   --registry REGISTRY       Image prefix, for example ghcr.io/example/foretoken.
   --components LIST         Environment/chart selection for build or push. Defaults to all:
                             control-plane,frontend,model-server,
                             model-server-metax,chart
-  --output-dir DIRECTORY    Archive/chart directory (default: /tmp/foretoken-release).
+  --output-dir DIRECTORY    Release artifact directory (default: /tmp/foretoken-release).
   --dry-run                 Print commands for supplementary parsing only.
   --plain-http              Allow a local HTTP registry for artifact publication.
   -h, --help                Show this help.
@@ -378,17 +402,105 @@ require_command() {
   }
 }
 
+# Release only resources created by this invocation, retaining the original failure.
+cleanup() {
+  local status=$? cleanup_status=0
+  trap - EXIT
+  if [[ -n "$PAYLOAD_DIR" && "$DRY_RUN" != true ]]; then
+    rm -rf -- "$PAYLOAD_DIR" || cleanup_status=$?
+  fi
+  if [[ -n "$CACHE_EXPORT" && "$DRY_RUN" != true ]]; then
+    rm -rf -- "$CACHE_EXPORT" || cleanup_status=$?
+  fi
+  if ((status == 0)); then status=$cleanup_status; fi
+  exit "$status"
+}
+
+# Keep the previous cache readable during the solve, then replace it with this target's exported graph.
+build_with_cache() {
+  local component=$1 target=$2
+  shift 2
+  local layout="$OUTPUT_DIR/cache/$OCI_VERSION/$component/$target"
+  # Model-server callers pass the selected variant's Python explicitly to Make.
+  local -a args=(env -u FORETOKEN_VLLM_PYTHON make -C "$ROOT" "$@")
+  if [[ "$BUILD_DRIVER" == docker ]]; then
+    if [[ "$target" == environment ]]; then
+      args+=("BUILDKIT_INLINE_CACHE=1" "IMAGE_OUTPUT=")
+    fi
+    run "${args[@]}" "IMAGE_CACHE_TO="
+    if [[ "$DRY_RUN" != true ]]; then rm -rf -- "$layout"; fi
+    return
+  fi
+  if [[ -z "${IMAGE_CACHE_FROM:-}" && -f "$layout/index.json" ]]; then
+    args+=("IMAGE_CACHE_FROM=type=local,src=$layout")
+  fi
+  if [[ "$DRY_RUN" == true ]]; then
+    run "${args[@]}" "IMAGE_CACHE_TO=type=local,dest=$layout,mode=max,image-manifest=true,oci-mediatypes=true"
+    return
+  fi
+  mkdir -p "${layout%/*}"
+  CACHE_EXPORT=$(mktemp -d "${layout%/*}/.$target.XXXXXX")
+  run "${args[@]}" "IMAGE_CACHE_TO=type=local,dest=$CACHE_EXPORT,mode=max,image-manifest=true,oci-mediatypes=true"
+  # A successful metadata-only solve has no index; replace any older graph too.
+  rm -rf -- "$layout"
+  mv -- "$CACHE_EXPORT" "$layout"
+  CACHE_EXPORT=
+}
+
+# Publish the native cache layout without rebuilding or changing the build command's local-only behavior.
+push_build_cache() {
+  local component=$1 target=$2 reference digest output status
+  local layout="$OUTPUT_DIR/cache/$OCI_VERSION/$component/$target"
+  # Metadata-only targets have no BuildKit cache records to export.
+  if [[ "$DRY_RUN" != true && ! -f "$layout/index.json" ]]; then
+    printf 'No exported build-cache graph for %s/%s; skipping cache publication\n' "$component" "$target"
+    return
+  fi
+  reference=$("$PYTHON" - "$ROOT" "$REGISTRY" "$OCI_VERSION" "$component" "$target" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + "/cli")
+from foretoken import build_cache_reference
+print(build_cache_reference(*sys.argv[2:]))
+PY
+  )
+  require_command oras
+  local connection=
+  [[ "$PLAIN_HTTP" != true ]] || connection=--plain-http
+  if [[ "$DRY_RUN" != true ]]; then
+    if output=$(oras resolve ${connection:+"$connection"} "$reference" 2>&1); then
+      printf 'Remote tag already exists, leaving unchanged: %s\n' "$reference"
+      return
+    else
+      status=$?
+      if [[ "$output" != *"not found"* && "$output" != *"MANIFEST_UNKNOWN"* && "$output" != *"manifest unknown"* ]]; then
+        printf 'cannot determine whether build cache exists: %s\n%s\n' "$reference" "$output" >&2
+        return "$status"
+      fi
+    fi
+    digest=$("$PYTHON" - "$layout/index.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+index = json.loads(Path(sys.argv[1]).read_text())
+print(index["manifests"][0]["digest"])
+PY
+    )
+  else
+    digest=MANIFEST_DIGEST
+  fi
+  connection=
+  [[ "$PLAIN_HTTP" != true ]] || connection=--to-plain-http
+  run oras cp --from-oci-layout ${connection:+"$connection"} "$layout@$digest" "$reference"
+}
+
 # Build one model-server variant without replacing an inference base's Python selection.
 build_model_server() {
-  local image=$1 inference_engine_image=$2 python_path=$3
-  local -a args=(
-    make -C "$ROOT" image-model-server
-    "MODEL_SERVER_IMAGE=$image"
-  )
+  local image=$1 inference_engine_image=$2 python_path=$3 component=${4:-model-server}
+  local -a args=(image-model-server "MODEL_SERVER_IMAGE=$image")
   [[ -z "$inference_engine_image" ]] || args+=("INFERENCE_ENGINE_IMAGE=$inference_engine_image")
   [[ -z "$python_path" ]] || args+=("FORETOKEN_VLLM_PYTHON=$python_path")
-  args+=("OCI_SOURCE=$SOURCE_URL" "OCI_REVISION=$OCI_REVISION" "IMAGE_TARGET=environment")
-  run "${args[@]}"
+  args+=("OCI_SOURCE=$SOURCE_URL" "OCI_REVISION=$OCI_REVISION" "IMAGE_TARGET=environment" "IMAGE_OUTPUT=type=docker")
+  build_with_cache "$component" environment "${args[@]}"
 }
 
 show_remote_chart() {

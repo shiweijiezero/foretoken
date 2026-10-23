@@ -27,6 +27,7 @@ import (
 	bkclient "github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
+	"github.com/moby/buildkit/session/secrets/secretsprovider"
 	"github.com/moby/buildkit/util/progress/progresswriter"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/tonistiigi/fsutil"
@@ -45,6 +46,7 @@ type request struct {
 	Inputs              map[string]ocispec.Descriptor `json:"inputs,omitempty"`
 	Output              output                        `json:"output,omitempty"`
 	MetadataFile        string                        `json:"metadata_file,omitempty"`
+	CacheImports        []string                      `json:"cache_imports,omitempty"`
 	Image               string                        `json:"image,omitempty"`
 	Descriptor          *ocispec.Descriptor           `json:"descriptor,omitempty"`
 	ImageLabels         map[string]string             `json:"image_labels,omitempty"`
@@ -146,9 +148,20 @@ func solve(ctx context.Context, node *containerd.Client, input request, matcher 
 	options := bkclient.SolveOpt{
 		Frontend: "dockerfile.v0", FrontendAttrs: make(map[string]string),
 		LocalMounts: make(map[string]fsutil.FS), OCIStores: make(map[string]content.Store),
-		Session: []session.Attachable{authprovider.NewDockerAuthProvider(authprovider.DockerAuthProviderConfig{
-			AuthConfigProvider: authprovider.LoadAuthConfig(config.LoadDefaultConfigFile(os.Stderr)),
-		})},
+		Session: []session.Attachable{
+			authprovider.NewDockerAuthProvider(authprovider.DockerAuthProviderConfig{
+				AuthConfigProvider: authprovider.LoadAuthConfig(config.LoadDefaultConfigFile(os.Stderr)),
+			}),
+			// Execution budgets remain effective without changing runtime image cache keys.
+			secretsprovider.FromMap(map[string][]byte{
+				"foretoken-build-jobs": []byte(input.FrontendAttrs["build-arg:BUILD_JOBS"]),
+			}),
+		},
+	}
+	for _, reference := range input.CacheImports {
+		options.CacheImports = append(options.CacheImports, bkclient.CacheOptionsEntry{
+			Type: "registry", Attrs: map[string]string{"ref": reference},
+		})
 	}
 	maps.Copy(options.FrontendAttrs, input.FrontendAttrs)
 	for name, directory := range input.LocalDirs {

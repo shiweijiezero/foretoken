@@ -66,7 +66,7 @@ export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
-命令构建运行环境镜像，并将 `foretoken-applications-<version>-linux-amd64.tar.gz` 和匹配的 Helm Chart 保存到 `/tmp/foretoken-release`。沐曦镜像 tag 使用 `-metax` 后缀。如需替换 NVIDIA 基础镜像，在构建前设置 `INFERENCE_ENGINE_IMAGE`。
+命令构建运行环境镜像，将 `foretoken-applications-<version>-linux-amd64.tar.gz`、匹配的 Helm Chart 和导出的构建缓存保存到 `/tmp/foretoken-release`，发布前产物均留在本地。沐曦镜像 tag 使用 `-metax` 后缀。如需替换 NVIDIA 基础镜像，在构建前设置 `INFERENCE_ENGINE_IMAGE`。
 
 只导出应用文件、不重建运行环境时，执行：
 
@@ -74,9 +74,11 @@ deploy/release-artifacts build --registry "$REGISTRY"
 deploy/release-artifacts export --output-dir /tmp/foretoken-release
 ```
 
-将验证后的压缩包上传为 GitHub Release 附件。下面的 `push` 命令发布运行环境镜像和 Helm Chart，不上传压缩包。
+将验证后的压缩包上传为 GitHub Release 附件。下面的 `push` 命令发布运行环境镜像、导出的构建缓存和 Helm Chart，不上传压缩包。
 
-完成产物验证后，登录仓库并推送：
+Docker driver 将缓存元数据随运行环境镜像一起发布。使用 Docker 27.0 或 27.1 时，升级到 27.2 或更高版本，以修复[上游 inline 缓存缺陷](https://github.com/moby/buildkit/issues/5242)。其他 Buildx driver 导出独立缓存，发布这些缓存时需要 [ORAS](https://oras.land/docs/installation/)，它沿用 Docker 的仓库登录凭据。
+
+完成产物验证后，登录仓库并推送。构建时若指定了 `--output-dir`，推送时传入相同选项：
 
 ```bash
 docker login ghcr.io

@@ -27,6 +27,7 @@ class BuildEnvironments:
         *,
         push: bool,
         refresh: bool = False,
+        cache_references: dict[str, tuple[str, ...]] | None = None,
     ) -> None:
         self.builders = builders
         self.versions = versions
@@ -34,6 +35,7 @@ class BuildEnvironments:
         self.images = images
         self.push = push
         self.refresh = refresh
+        self.cache_references = cache_references or {}
         self._records: dict[str, Any] = {}
         self._built: set[str] = set()
         self._delivered: dict[str, set[str]] = {builder.node: set() for builder in builders}
@@ -127,6 +129,7 @@ class BuildEnvironments:
                     builder.cancellation.run_stage, builder.build,
                     dockerfile, target=target, image=image, push=self.push,
                     arguments={**arguments, **(node_arguments or {}).get(builder.node, {})},
+                    cache_imports=self.cache_references.get(name, ()),
                 )
                 for builder in builders
             }

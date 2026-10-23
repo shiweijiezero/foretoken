@@ -17,6 +17,12 @@ from typing import Any
 
 from loguru import logger
 
+from foretoken import (
+    DEFAULT_PLATFORM_REGISTRY,
+    build_cache_reference,
+    environment_image_reference,
+    platform_version,
+)
 from foretoken.applications.files import (
     ApplicationFiles,
     ApplicationPublication,
@@ -60,8 +66,9 @@ from foretoken.build.state import (
     local_candidates,
     write_source_state,
 )
-from foretoken.downloads.sources import select_build_sources
+from foretoken.downloads.sources import platform_image_reference, select_build_sources
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
+from foretoken.platform.config import default_platform_config
 from foretoken.processes.execution import CommandExecution
 
 _LOCAL_IMAGE_PREFIX = "docker.io/library/foretoken-dev"
@@ -97,6 +104,7 @@ class _PreparedSourceBuild:
     previous_inputs: Path | None
     previous_versions: dict[str, str]
     compiler_configuration: dict[str, str]
+    cache_references: dict[str, tuple[str, ...]]
     pending_path: Path
     pending_state: dict[str, Any]
     nodes: list[tuple[str, str, str]]
@@ -271,6 +279,33 @@ def _prepare_source_build(
         arguments.get("BASE_IMAGE_REGISTRY", registry_mirrors.get("docker.io", [""])[0]),
     )
     registry = (command.registry or "").rstrip("/")
+    # Build arguments already resolve explicit GHCR and general OCI overrides.
+    cache_mirror = arguments.get("UV_IMAGE_REGISTRY")
+    cache_version = platform_version()
+    # Cache hints do not change environment identity. Environments can reuse either
+    # a separate build graph or the inline cache carried by the published image.
+    cache_references = {}
+    for component in components:
+        cache_references["compiler-" + component] = (
+            build_cache_reference(DEFAULT_PLATFORM_REGISTRY, cache_version, component, "source-export"),
+        )
+        if component == "control-plane":
+            # This environment adds no build layers to its existing base.
+            continue
+        runtime_component = (
+            "model-server-metax" if component == "model-server" and runtime_backend == "metax" else component
+        )
+        cache_references[component] = (
+            build_cache_reference(DEFAULT_PLATFORM_REGISTRY, cache_version, runtime_component, "environment"),
+            environment_image_reference(DEFAULT_PLATFORM_REGISTRY, cache_version, runtime_component),
+        )
+    # Explicit overrides follow the platform image mapping. Otherwise preserve the
+    # canonical names for BuildKit's registry mirrors without probing optional caches.
+    if cache_mirror is not None:
+        cache_references = {
+            name: tuple(platform_image_reference(reference, cache_mirror) for reference in references)
+            for name, references in cache_references.items()
+        }
     cached_build = (
         pending["build"]
         if pending.get("root") == str(root) and pending.get("build", {}).get("binding") == binding
@@ -350,7 +385,8 @@ def _prepare_source_build(
     return _PreparedSourceBuild(
         engines=engines, previous_state=previous, previous_build=build, cached_build=cached_build,
         previous_inputs=old, previous_versions=previous_versions,
-        compiler_configuration=configuration, pending_path=pending_path, pending_state=pending_state,
+        compiler_configuration=configuration, cache_references=cache_references,
+        pending_path=pending_path, pending_state=pending_state,
         nodes=nodes, execution_claims=execution_claims, registry=registry,
         revision=revision, mooncake_version=mooncake_version,
     )
@@ -462,6 +498,7 @@ def _prepare_workspaces(
         [
             prepared.compiler_configuration["image"], base_image or "",
             *(value for key, value in settings["arguments"].items() if key.endswith("_IMAGE")),
+            *(reference for references in prepared.cache_references.values() for reference in references),
         ],
         registries=[
             prepared.registry, "docker.io", "gcr.io", "ghcr.io",
@@ -692,6 +729,7 @@ def _build_applications(
     environments = BuildEnvironments(
         workspaces.builders, workspaces.versions, settings["environments"],
         settings["images"], push=bool(prepared.registry), refresh=refresh,
+        cache_references=prepared.cache_references,
     )
     previous_revisions, early_parts = _select_application_parts(prepared, workspaces, origin, components)
     # Keep acquired compiler resources outside the worker scope: cancellation
@@ -791,7 +829,6 @@ def _publish_applications(
     """Publish completed exports together, retaining live consumers and the checkout's prior selections."""
     retained = None
     if checkout is not None:
-        from foretoken.platform.config import default_platform_config
         from foretoken.platform.helm import Helm
 
         retained = origin.references(Helm(default_platform_config(oci_registry), origin.kubectl).application_history())

@@ -18,6 +18,8 @@ OCI_SOURCE ?= https://github.com/shiweijiezero/foretoken
 OCI_REVISION ?= $(shell if [ "$$(git rev-parse --show-toplevel 2>/dev/null)" = "$(CURDIR)" ]; then git rev-parse --verify HEAD 2>/dev/null; fi)
 IMAGE_TARGET ?= runtime
 IMAGE_OUTPUT ?=
+IMAGE_CACHE_FROM ?=
+IMAGE_CACHE_TO ?=
 
 VLLM_METAX_IMAGE ?= foretoken-vllm-metax:dev
 
@@ -64,12 +66,15 @@ image-control-plane:
 		$(if $(GCR_REGISTRY),--build-arg DISTROLESS_IMAGE_REGISTRY="$(GCR_REGISTRY)",) \
 		--build-arg GOPROXY \
 		--build-arg GOSUMDB \
-		--build-arg BUILD_JOBS \
+		--secret id=foretoken-build-jobs,env=BUILD_JOBS \
 		--build-arg FORETOKEN_GITHUB_MIRROR \
 		$(if $(GHCR_REGISTRY),--build-arg UV_IMAGE_REGISTRY="$(GHCR_REGISTRY)",) \
 		$(if $(UV_IMAGE),--build-arg UV_IMAGE="$(UV_IMAGE)",) \
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
+		--build-arg BUILDKIT_INLINE_CACHE \
+		$(if $(IMAGE_CACHE_FROM),--cache-from "$(IMAGE_CACHE_FROM)",) \
+		$(if $(IMAGE_CACHE_TO),--cache-to "$(IMAGE_CACHE_TO)",) \
 		--target "$(IMAGE_TARGET)" $(if $(IMAGE_OUTPUT),--output "$(IMAGE_OUTPUT)",) \
 		-f control-plane/Dockerfile -t "$(CONTROL_PLANE_IMAGE)" .
 
@@ -81,9 +86,12 @@ image-frontend:
 		--build-arg FORETOKEN_GITHUB_MIRROR \
 		--build-arg FORETOKEN_CARGO_REGISTRY \
 		--build-arg CARGO_NET_GIT_FETCH_WITH_CLI \
-		--build-arg BUILD_JOBS \
+		--secret id=foretoken-build-jobs,env=BUILD_JOBS \
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
+		--build-arg BUILDKIT_INLINE_CACHE \
+		$(if $(IMAGE_CACHE_FROM),--cache-from "$(IMAGE_CACHE_FROM)",) \
+		$(if $(IMAGE_CACHE_TO),--cache-to "$(IMAGE_CACHE_TO)",) \
 		--target "$(IMAGE_TARGET)" $(if $(IMAGE_OUTPUT),--output "$(IMAGE_OUTPUT)",) \
 		-f data-plane/frontend/Dockerfile -t "$(FRONTEND_IMAGE)" .
 
@@ -116,10 +124,13 @@ image-model-server:
 		--build-arg FORETOKEN_GITHUB_MIRROR \
 		--build-arg FORETOKEN_CARGO_REGISTRY \
 		--build-arg CARGO_NET_GIT_FETCH_WITH_CLI \
-		--build-arg BUILD_JOBS \
+		--secret id=foretoken-build-jobs,env=BUILD_JOBS \
 		--build-arg UV_DEFAULT_INDEX \
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
+		--build-arg BUILDKIT_INLINE_CACHE \
+		$(if $(IMAGE_CACHE_FROM),--cache-from "$(IMAGE_CACHE_FROM)",) \
+		$(if $(IMAGE_CACHE_TO),--cache-to "$(IMAGE_CACHE_TO)",) \
 		--target "$(IMAGE_TARGET)" $(if $(IMAGE_OUTPUT),--output "$(IMAGE_OUTPUT)",) \
 		-f data-plane/model-server/Dockerfile -t "$(MODEL_SERVER_IMAGE)" .
 
@@ -142,7 +153,7 @@ image-model-server-omni:
 		--build-arg FORETOKEN_GITHUB_MIRROR \
 		--build-arg FORETOKEN_CARGO_REGISTRY \
 		--build-arg CARGO_NET_GIT_FETCH_WITH_CLI \
-		--build-arg BUILD_JOBS \
+		--secret id=foretoken-build-jobs,env=BUILD_JOBS \
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
 		-f data-plane/model-server/Dockerfile -t "$(OMNI_MODEL_SERVER_IMAGE)" .
