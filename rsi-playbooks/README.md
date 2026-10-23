@@ -55,13 +55,21 @@ Preparing the next candidate can overlap evaluation of the current one. The team
 
 See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace isolation and resource handoffs.
 
-## Steps
+## Reuse the environment across iterations
 
-The team reads the task, code and previous results, chooses a useful question, and investigates it through implementation and experiments. A question may take several iterations or lead to a finding that an approach is unsuitable. The lead uses the results to continue, change direction or combine approaches, then validates and delivers the outcome when the task ends.
+For code optimization, prepare the source platform once; parameter-only experiments can reuse installed applications. Keep each candidate's checkout and instance name across iterations. The normal loop is: choose a question → change code or configuration → deploy the candidate → confirm a successful request → measure performance and quality → retain or revise the approach.
 
-Use [source deployments](../docs/deployment/source.md#run-candidates-in-parallel) to build code changes and give each parallel candidate its own instance name. Use the same `--name` with deployment and evaluation commands, and select that instance by name for `status`, `stop`, `delete` and `endpoint`.
+| Situation | Workflow |
+| --- | --- |
+| First source experiment | Follow [source installation](../docs/deployment/source.md#install-from-source) to prepare the platform, toolchains and runtime environments. An existing published platform can be converted through the same installation command. |
+| Go, Rust or Python application changes | Use `foretoken deploy` with `-e` pointing to the candidate checkout. Reuse unchanged environments and compatible build caches, and publish the affected applications rather than rebuilding and transporting complete runtime images each round. |
+| Runtime dependency, base-image or shared platform changes | Rebuild the affected environment through the source workflow; use `foretoken install -e` for shared CRD or platform changes. Return to incremental deployment for subsequent application edits. |
 
-Once workload groups are defined, the team can compare them through existing sweeps and assess performance and answer quality against the task's requirements. See [exploration and decision-making](guidance/meta-knowledge/03-exploration-and-decision.md) for choosing experiments, interpreting results, and continuing the research.
+Reusing the environment makes repeated code updates faster than first-time preparation. Keep initial setup time separate from each iteration's build, publication, service startup and measurement time. Model processes may still need to restart or reload weights after serving-code changes.
+
+Use [parallel source deployments](../docs/deployment/source.md#run-candidates-in-parallel) for independent candidates, with the same `--name` in deployment and evaluation commands. Run `deploy` after changes before starting `perf` or `eval`: benchmarks reuse an existing service without updating its code. Share model downloads through the configured storage, while keeping each instance's runtime caches and results separate. Use `stop` to release GPUs between iterations; delete instances when they are no longer needed.
+
+Once workload groups are defined, compare candidates through existing sweeps. Use the results to continue, change direction or combine approaches, and validate the retained combination before delivery. See [exploration and decision-making](guidance/meta-knowledge/03-exploration-and-decision.md) for choosing experiments and interpreting results.
 
 ## Choose evaluations
 
