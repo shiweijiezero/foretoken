@@ -11,13 +11,15 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
-use foretoken_admission::{AdmissionRequest, CallerIdentity};
+use foretoken_admission::{AdmissionRequest, CallerIdentity, with_caller};
 use foretoken_chat::{
     ChatOptions, ChatRequest, GenerationPromptMode, ParserSelection, ResolvedToolContext,
 };
 use foretoken_text::{Prompt, SamplingParams, TextDecodeOptions};
+use futures::FutureExt;
 use hyproxy::headers::hopby::StripHopByHopLayer;
 use serde_json::{Value, json};
+use tracing::Instrument;
 
 mod async_video;
 mod convert;
@@ -120,38 +122,51 @@ async fn completions(
         Ok(permit) => permit,
         Err(error) => return openai_error(error),
     };
-    let mut generated = Vec::with_capacity(units);
+    let mut requests = Vec::with_capacity(units);
     for prompt in prompts {
         for _ in 0..best_of {
-            match state
-                .generation
-                .generate(GenerationRequest {
-                    admission: Some(admission.split_one()),
-                    model: request.model.clone(),
-                    request_id: if generated.is_empty() {
-                        request_id.clone()
-                    } else {
-                        server_request_id("cmpl")
-                    },
-                    prompt: prompt.clone(),
-                    sampling_params: sampling_params.clone(),
-                    decode_options: decode_options(request.stop.clone()),
-                    intermediate: stream,
-                    priority: request.priority,
-                    cache_salt: request.cache_salt.clone(),
-                    session_id: request.session_id.clone(),
-                    arrival_time: timing.arrival_time,
-                    started_at: timing.started_at,
-                    tool_call_parser: ParserSelection::None,
-                    reasoning_parser: ParserSelection::None,
-                })
-                .await
-            {
-                Ok(item) => generated.push(item),
-                Err(error) => return openai_error(error),
-            }
+            requests.push(GenerationRequest {
+                admission: Some(admission.split_one()),
+                model: request.model.clone(),
+                request_id: if requests.is_empty() {
+                    request_id.clone()
+                } else {
+                    server_request_id("cmpl")
+                },
+                prompt: prompt.clone(),
+                sampling_params: sampling_params.clone(),
+                decode_options: decode_options(request.stop.clone()),
+                intermediate: stream,
+                priority: request.priority,
+                cache_salt: request.cache_salt.clone(),
+                session_id: request.session_id.clone(),
+                arrival_time: timing.arrival_time,
+                started_at: timing.started_at,
+                tool_call_parser: ParserSelection::None,
+                reasoning_parser: ParserSelection::None,
+            });
         }
     }
+    let mut requests = requests.into_iter();
+    let Some(first_request) = requests.next() else {
+        return openai_error(GenerationError::InvalidRequest);
+    };
+    // First acceptance establishes response metadata and the batch grant before
+    // parallel candidates can encounter an initial Busy response.
+    let first = match state.generation.generate(first_request).await {
+        Ok(generated) => generated,
+        Err(error) => return openai_error(error),
+    };
+    let pending = requests
+        .map(|request| {
+            let generation = state.generation.clone();
+            let caller = admission_request.caller.clone();
+            // SSE can poll after the HTTP handler's task-local scope has ended.
+            async move { with_caller(caller, generation.generate(request)).await }
+                .in_current_span()
+                .boxed()
+        })
+        .collect();
     let options = CompletionResponseOptions {
         n: request.n as usize,
         candidates_per_prompt: best_of as usize,
@@ -163,9 +178,9 @@ async fn completions(
         return_prompt_token_ids: request.return_prompt_token_ids,
     };
     if stream {
-        text_stream_many(generated, state.stream_idle, include_usage, options)
+        text_stream_many(first, pending, state.stream_idle, include_usage, options)
     } else {
-        text_collected_many(generated, state.stream_idle, options).await
+        text_collected_many(first, pending, state.stream_idle, options).await
     }
 }
 

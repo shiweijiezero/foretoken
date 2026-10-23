@@ -48,11 +48,15 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-pip install -e .
+uv venv --python 3.12 --seed  # 使用 pip 时：python3 -m venv .venv（Python 3.11+）
+source .venv/bin/activate
+uv pip install -e .  # 或 pip install -e .
 
 # 使用发布的 CLI：
-# pip install foretoken
+# uv pip install foretoken  # 或 pip install foretoken
 ```
+
+后续命令在已激活的环境中执行。
 
 ### 2. 安装 Kubernetes 平台
 

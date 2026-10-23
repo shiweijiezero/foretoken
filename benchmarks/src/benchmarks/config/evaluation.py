@@ -48,7 +48,7 @@ def deployment_labels(services: tuple[ModelServiceSource, ...]) -> tuple[str, ..
     return tuple(
         next(
             ("/".join(parts[-size:]) for size in range(1, len(parts) + 1)
-             if sum(other[-size:] == parts[-size:] for other in names) == 1),
+             if all(other == parts or other[-size:] != parts[-size:] for other in names)),
             "/".join(parts),
         )
         for parts in names

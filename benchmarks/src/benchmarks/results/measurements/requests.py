@@ -14,7 +14,7 @@ import numpy as np
 
 from benchmarks.results.measurements.itl import ITLSummary, combine_itl_summaries
 
-_SLO_CRITERION = re.compile(r"^(?:avg_|p50_|p90_|p95_|p99_)?(latency|ttft|tpot|itl)$")
+_SLO_CRITERION = re.compile(r"^(?:avg_|p50_|p95_|p99_)?(latency|ttft|tpot|itl)$")
 
 
 @dataclass(frozen=True)

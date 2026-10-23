@@ -34,20 +34,6 @@ class _InterceptHandler(logging.Handler):
         ).log(level, record.getMessage())
 
 
-def _console_format(record: dict) -> str:
-    """Show an exception's cause while leaving complete traceback formatting to file sinks."""
-    exception = record["exception"]
-    record["extra"]["console_exception"] = (
-        "".join(traceback.format_exception_only(exception.type, exception.value))
-        if exception else ""
-    )
-    return "{message}\n{extra[console_exception]}"
-
-
-def _console_filter(record: dict) -> bool:
-    return record["level"].no >= (logging.ERROR if _console_quiet else logging.INFO)
-
-
 def configure_logging(console_enabled: bool = True, *, full_tracebacks: bool = False) -> None:
     """Configure one application's sinks before run recording starts, including native SDK loggers."""
     global _console_quiet
@@ -84,15 +70,6 @@ def configure_logging(console_enabled: bool = True, *, full_tracebacks: bool = F
         logging.getLogger(name).setLevel(logging.WARNING)
 
 
-def _write_console(message: str, *, stream: TextIO) -> None:
-    """Keep terminal I/O failures from blocking healthy file sinks and resource cleanup."""
-    try:
-        tqdm.write(message, file=stream, end="")
-        stream.flush()
-    except OSError:
-        silence_failed_console(stream)
-
-
 def silence_failed_console(stream: TextIO) -> None:
     """Discard a failed diagnostic stream's pending writes so final flushing preserves the exit status."""
     try:
@@ -117,3 +94,26 @@ def quiet_console(quiet: bool) -> Iterator[None]:
         yield
     finally:
         _console_quiet = previous
+
+
+def _console_format(record: dict) -> str:
+    """Show an exception's cause while leaving complete traceback formatting to file sinks."""
+    exception = record["exception"]
+    record["extra"]["console_exception"] = (
+        "".join(traceback.format_exception_only(exception.type, exception.value))
+        if exception else ""
+    )
+    return "{message}\n{extra[console_exception]}"
+
+
+def _console_filter(record: dict) -> bool:
+    return record["level"].no >= (logging.ERROR if _console_quiet else logging.INFO)
+
+
+def _write_console(message: str, *, stream: TextIO) -> None:
+    """Keep terminal I/O failures from blocking healthy file sinks and resource cleanup."""
+    try:
+        tqdm.write(message, file=stream, end="")
+        stream.flush()
+    except OSError:
+        silence_failed_console(stream)

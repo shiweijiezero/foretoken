@@ -171,16 +171,10 @@ func (r *Reconciler) materialize(ctx context.Context, deployment *api.InferenceD
 	if err != nil {
 		return nil, err
 	}
-	controller := selection.Template.Controller.DeepCopy()
-	container, err := managerContainer(controller)
+	container, err := managerContainer(&selection.Template.Controller)
 	if err != nil {
 		return nil, err
 	}
-	encoded, err := json.Marshal(bindings)
-	if err != nil {
-		return nil, err
-	}
-	setControllerArgument(container, "cache-directory-bindings", string(encoded))
 	gateway, err := r.gatewayAccess(ctx, controllerArgument(container, "frontend-mode"), controllerArgument(container, "frontend-gateway-name"), controllerArgument(container, "frontend-gateway-namespace"), controllerArgument(container, "frontend-gateway-section-name"))
 	if err != nil {
 		return nil, err
@@ -197,6 +191,22 @@ func (r *Reconciler) materialize(ctx context.Context, deployment *api.InferenceD
 	if err := r.apply(ctx, deployment, configuration); err != nil {
 		return nil, fmt.Errorf("publish deployment access: %w", err)
 	}
+	return r.materializeController(ctx, deployment, selection, bindings)
+}
+
+// materializeController restores the selected executor and its access without preparing serving storage or gateways.
+// Retirement reuses persisted directory bindings so missing serving dependencies cannot block finalizer execution.
+func (r *Reconciler) materializeController(ctx context.Context, deployment *api.InferenceDeployment, selection *controllerSelection, bindings map[string]string) (*appsv1.Deployment, error) {
+	controller := selection.Template.Controller.DeepCopy()
+	container, err := managerContainer(controller)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(bindings)
+	if err != nil {
+		return nil, err
+	}
+	setControllerArgument(container, "cache-directory-bindings", string(encoded))
 
 	// Registry credentials are copied by the platform owner, never read by member CLIs.
 	for index, reference := range controller.Spec.Template.Spec.ImagePullSecrets {

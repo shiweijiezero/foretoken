@@ -12,6 +12,15 @@ const ModelArtifactsEnv = "FORETOKEN_MODEL_ARTIFACTS"
 // SharedModelCachePreparationVersion selects engine-neutral preparation with shared-cache references.
 const SharedModelCachePreparationVersion int32 = 2
 
+// ModelArtifacts identifies model and tokenizer sources for preparation and engine launch.
+type ModelArtifacts struct {
+	Model             string          `json:"model"`
+	Source            api.ModelSource `json:"source"`
+	Revision          string          `json:"revision"`
+	Tokenizer         string          `json:"tokenizer"`
+	TokenizerRevision string          `json:"tokenizerRevision"`
+}
+
 // ModelPreparationVersion retains an application's acquisition contract across controller upgrades.
 // Selections written before this field used vLLM preparation v1 and native Omni acquisition.
 func ModelPreparationVersion(selectedVersion *int32, backend string) int32 {
@@ -22,15 +31,6 @@ func ModelPreparationVersion(selectedVersion *int32, backend string) int32 {
 		return 1
 	}
 	return 0
-}
-
-// ModelArtifacts identifies model and tokenizer sources for preparation and engine launch.
-type ModelArtifacts struct {
-	Model             string          `json:"model"`
-	Source            api.ModelSource `json:"source"`
-	Revision          string          `json:"revision"`
-	Tokenizer         string          `json:"tokenizer"`
-	TokenizerRevision string          `json:"tokenizerRevision"`
 }
 
 // ResolveModelArtifacts projects retained Pool source intent with tokenizer defaults.

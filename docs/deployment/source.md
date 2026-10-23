@@ -9,19 +9,19 @@ Build Foretoken from a local source directory and deploy changes to Kubernetes. 
 
 ## Install from source
 
-Prepare Python 3.11+, kubectl and [Helm 4](../../cli/README.md#before-you-start), and select a GPU-enabled Kubernetes cluster with a default StorageClass. On a shared cluster, ask the administrator for [source-build access](../../cli/README.md#prepare-a-namespace-for-members).
+Prepare kubectl and [Helm 4](../../cli/README.md#before-you-start), and select a GPU-enabled Kubernetes cluster with a default StorageClass. On a shared cluster, ask the administrator for [source-build access](../../cli/README.md#prepare-a-namespace-for-members).
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 kubectl config current-context
+
+uv venv --python 3.12 --seed  # With pip: python3 -m venv .venv (Python 3.11+)
+source .venv/bin/activate
+uv pip install -e .  # Or: pip install -e .
 ```
 
-Install the CLI from this checkout:
-
-```bash
-pip install -e .
-```
+Keep the environment active for the commands below.
 
 The platform needs one source installation for the cluster. If it is already installed from source, continue with [deployment](#deploy-a-model-service); another workstation only needs the CLI and a source checkout.
 
@@ -62,7 +62,7 @@ After changing controller, frontend or model-server code, rerun the deployment c
 
 To deploy from another directory, add `-e` with the path to the Foretoken checkout, for example `foretoken deploy foretoken/examples/quickstart/qwen3-0.6b -e foretoken --timeout 20m` from its parent directory. The deployment path remains relative to the directory where the command runs.
 
-CLI changes use the directory where `pip install -e .` was run. Reinstall the CLI when changing its Python dependencies.
+CLI changes use the source directory selected during editable installation. Reinstall the CLI when changing its Python dependencies.
 
 Remove the example when finished:
 

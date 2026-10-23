@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
+	"sync"
 	"time"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -23,6 +25,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -68,6 +71,10 @@ type Reconciler struct {
 	RuntimeProfile FrontendRuntimeProfile
 	CacheProfile   runtimeconfig.RuntimeCacheProfile
 	Alerts         *observability.ServiceAlerts
+
+	// Own-write receipts distinguish informer echoes from new configuration inputs.
+	snapshotWriteMu sync.Mutex
+	snapshotWrites  map[types.UID][]string
 }
 
 // Reconcile applies frontend resources and keeps readiness fail-closed until a serving snapshot is installed.
@@ -123,13 +130,20 @@ func (reconciler *Reconciler) reconcileFrontend(ctx context.Context, frontend *i
 		return ctrl.Result{}, err
 	}
 	if err := servingconfig.EnsureKVIndexerSecret(ctx, reconciler.Client, frontend.Namespace); err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "KVIndexerSecretFailed", FailureMessage: err.Error()})
+		statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "KVIndexerSecretFailed", FailureMessage: err.Error()})
+		return ctrl.Result{}, errors.Join(err, statusErr)
 	}
-	published, projectionErr := reconciler.reconcileServingSnapshot(ctx, frontend, services.Items, false)
-	if !published && projectionErr != nil {
-		// Rejected serving intent must not prevent retirement of terminated execution members.
-		_, membershipErr := reconciler.reconcileServingSnapshot(ctx, frontend, nil, true)
-		projectionErr = errors.Join(projectionErr, membershipErr)
+	publication, err := reconciler.reconcileServingSnapshot(ctx, frontend, services.Items, false)
+	projectionErr := publication.ConfigurationError
+	if err == nil && !publication.Published && projectionErr != nil {
+		// Rejected serving intent still permits membership retirement. An API failure
+		// instead returns to the retry owner without attempting another publication.
+		_, err = reconciler.reconcileServingSnapshot(ctx, frontend, nil, true)
+	}
+	if err != nil {
+		failure := errors.Join(projectionErr, err)
+		statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ServingSnapshotPublicationFailed", FailureMessage: failure.Error()})
+		return ctrl.Result{}, errors.Join(failure, statusErr)
 	}
 
 	runtimeCache, cacheReady, err := reconciler.CacheProfile.Resolve(ctx, reconciler.Client, frontend.Namespace)
@@ -397,10 +411,27 @@ func (reconciler *Reconciler) reconcileAlerts(ctx context.Context, frontend *inf
 // SetupWithManager watches each resource whose state contributes to frontend readiness.
 func (reconciler *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 	builder := ctrl.NewControllerManagedBy(manager).
-		For(&inferencev1alpha1.FrontendService{}).
+		For(&inferencev1alpha1.FrontendService{}, ctrlbuilder.WithPredicates(predicate.Funcs{
+			UpdateFunc: func(update event.UpdateEvent) bool {
+				// Reserving a publication does not create a new reconciliation input.
+				before := update.ObjectOld.(*inferencev1alpha1.FrontendService).DeepCopy()
+				after := update.ObjectNew.(*inferencev1alpha1.FrontendService)
+				before.ResourceVersion, before.ManagedFields = after.ResourceVersion, after.ManagedFields
+				before.Status.ServingSnapshotVersion = after.Status.ServingSnapshotVersion
+				return !reflect.DeepEqual(before, after)
+			},
+		})).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		Owns(&corev1.ConfigMap{}).
+		Owns(&corev1.ConfigMap{}, ctrlbuilder.WithPredicates(predicate.Funcs{
+			UpdateFunc: reconciler.snapshotInputChanged,
+			DeleteFunc: func(deleted event.DeleteEvent) bool {
+				reconciler.snapshotWriteMu.Lock()
+				defer reconciler.snapshotWriteMu.Unlock()
+				delete(reconciler.snapshotWrites, deleted.Object.GetUID())
+				return true
+			},
+		})).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{})

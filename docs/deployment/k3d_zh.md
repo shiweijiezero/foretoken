@@ -11,7 +11,6 @@ k3d 在 Docker 容器中运行轻量级 Kubernetes 发行版 k3s。它适合在�
 
 主机需要：
 
-- Python 3.11 或更高版本；
 - Linux；
 - NVIDIA 驱动程序；
 - NVIDIA Container Toolkit；
@@ -62,12 +61,14 @@ helm version --short
 
 ## 2. 进入仓库并选择 GPU
 
-获取源码后，从仓库根目录执行后续命令：
+获取源码并准备 CLI。后续命令在仓库根目录、已激活的环境中执行：
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-pip install -e .
+uv venv --python 3.12 --seed  # 使用 pip 时：python3 -m venv .venv（Python 3.11+）
+source .venv/bin/activate
+uv pip install -e .  # 或 pip install -e .
 ```
 
 查看 GPU：
@@ -105,7 +106,7 @@ foretoken install -e .
 使用发布包和镜像时，从所选[发布页面](https://github.com/shiweijiezero/foretoken/releases)取得示例，再安装：
 
 ```bash
-pip install foretoken
+uv pip install foretoken  # 或 pip install foretoken
 foretoken install
 ```
 

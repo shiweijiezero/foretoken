@@ -22,7 +22,7 @@ def find_source_directory(root: Path) -> Path | None:
 
 
 def _checkout_roots(root: Path) -> tuple[Path, Path] | None:
-    """Read worktree metadata only for the selected Foretoken source directory."""
+    """Resolve current and primary checkouts from their shared Git metadata."""
     source = find_source_directory(root)
     if source is None or not (source / ".git").exists():
         return None
@@ -36,19 +36,22 @@ def _checkout_roots(root: Path) -> tuple[Path, Path] | None:
         checkout = Path(os.fsdecode(current.stdout.removesuffix(b"\n"))).resolve()
         if checkout != source:
             return None
-        worktrees = subprocess.run(
-            ["git", "-C", str(source), "worktree", "list", "--porcelain", "-z"],
+        shared = subprocess.run(
+            ["git", "-C", str(source), "rev-parse", "--git-common-dir"],
+            capture_output=True, check=True,
+        )
+        common = (source / os.fsdecode(shared.stdout.removesuffix(b"\n"))).resolve()
+        bare = subprocess.run(
+            ["git", "--git-dir", str(common), "rev-parse", "--is-bare-repository"],
             capture_output=True, check=True,
         )
     except FileNotFoundError:
         return None
     except subprocess.CalledProcessError as error:
         raise DeploymentError(f"cannot read Git worktree paths: {os.fsdecode(error.stderr).strip()}") from error
-    primary = worktrees.stdout.split(b"\0\0", 1)[0].split(b"\0")
-    if b"bare" in primary:
+    if bare.stdout == b"true\n":
         return checkout, checkout
-    path = primary[0].removeprefix(b"worktree ")
-    return checkout, Path(os.fsdecode(path)).resolve()
+    return checkout, common.parent if common.name == ".git" else common
 
 
 def repository_data_directory(root: Path) -> Path:

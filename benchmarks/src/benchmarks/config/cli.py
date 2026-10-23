@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import MISSING, fields
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -29,6 +29,7 @@ from benchmarks.config.benchmark import (
     WandbRunConfig,
     parse_duration_seconds,
 )
+from benchmarks.config.evaluation import deployment_labels
 from benchmarks.config.video import VideoEndpointConfig
 
 
@@ -516,22 +517,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
     sources = paths or urls
     if models and len(models) not in (1, len(sources)):
         raise ValueError("--model accepts one shared value or one value per service")
-    service_choices = (
-        tuple(
-            {"name": Path(path).name, "path": path,
-             "model": models[0] if len(models) == 1 else models[index] if models else ""}
-            for index, path in enumerate(paths)
-        )
-        if paths
-        else tuple(
-            {
-                "name": urlsplit(url).netloc or f"url-{index + 1}",
-                "url": url,
-                "model": models[0] if len(models) == 1 else models[index] if models else "",
-            }
-            for index, url in enumerate(urls)
-        )
-    )
+    service_choices = _service_choices(paths, urls, models)
     first_choice = service_choices[0] if service_choices else {}
     return BenchmarkConfig(
         service=ModelServiceSource(
@@ -623,3 +609,38 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
         ),
         service_choices=service_choices,
     )
+
+
+def _service_choices(
+    paths: tuple[str, ...], urls: tuple[str, ...], models: tuple[str, ...],
+) -> tuple[dict[str, str], ...]:
+    """Assign readable, distinct CLI method labels without changing explicit sweep names."""
+    labels = (
+        deployment_labels(tuple(ModelServiceSource(kustomize_path=path) for path in paths))
+        if paths else tuple(urlsplit(url).netloc.rsplit("@", 1)[-1] or f"url-{index + 1}" for index, url in enumerate(urls))
+    )
+    choices = [
+        {"name": labels[index], "path" if paths else "url": source,
+         "model": models[0] if len(models) == 1 else models[index] if models else ""}
+        for index, source in enumerate(paths or urls)
+    ]
+    counts = Counter(choice["name"] for choice in choices)
+    for choice in choices:
+        if counts[choice["name"]] > 1 and choice["model"]:
+            choice["name"] += " / " + choice["model"]
+    counts = Counter(choice["name"] for choice in choices)
+    for choice in choices:
+        if counts[choice["name"]] > 1 and "url" in choice:
+            choice["name"] += " " + (urlsplit(choice["url"]).path or "/")
+    counts = Counter(choice["name"] for choice in choices)
+    reserved = set(counts)
+    for index, choice in enumerate(choices):
+        name = choice["name"]
+        if counts[name] <= 1:
+            continue
+        suffix = index + 1
+        while f"{name} ({suffix})" in reserved:
+            suffix += 1
+        choice["name"] = f"{name} ({suffix})"
+        reserved.add(choice["name"])
+    return tuple(choices)

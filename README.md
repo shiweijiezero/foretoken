@@ -48,11 +48,15 @@ The steps below use k3d as the example.
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-pip install -e .
+uv venv --python 3.12 --seed  # With pip: python3 -m venv .venv (Python 3.11+)
+source .venv/bin/activate
+uv pip install -e .  # Or: pip install -e .
 
 # For the published CLI instead:
-# pip install foretoken
+# uv pip install foretoken  # Or: pip install foretoken
 ```
+
+Keep this environment active for the commands below.
 
 ### 2. Install the Kubernetes platform
 

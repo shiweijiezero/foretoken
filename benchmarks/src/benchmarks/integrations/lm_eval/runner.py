@@ -109,13 +109,12 @@ def _execute(config, model, manager) -> None:
         if tracker.push_results_to_hub or tracker.push_samples_to_hub:
             tracker.recreate_metadata_card()
         if trackio is not None:
-            # Optional tracking failures do not discard saved native reports.
             try:
                 trackio.post_init(results)
                 trackio.log_eval_result()
                 if config.log_samples:
                     trackio.log_eval_samples(samples)
-            except Exception:
+            except Exception:  # noqa: BLE001 - Optional publication does not invalidate saved native reports.
                 logger.opt(exception=True).warning("Logging to Trackio failed")
     finally:
         if trackio is not None:

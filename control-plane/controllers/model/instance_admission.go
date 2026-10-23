@@ -52,9 +52,9 @@ type instanceAdmissionDiagnostics struct {
 }
 
 // reconcileInstanceAdmission is the sole publisher of live instance limits.
-// Pool spec generation identifies changed or repaired configuration; unrelated spec
-// changes retain the publication. Reserving its version in Pool status before writing
-// the ConfigMap prevents restoration of an older payload from lowering the runtime target.
+// Changed or repaired limits advance beyond both the durable version and the observed
+// projection; unrelated spec changes retain the publication. Pool status reserves the
+// version before ConfigMap writes so recovery cannot lower a live runtime's target.
 // Workload membership changes refresh new ingress Pods without changing immutable Group contracts.
 func (reconciler *PoolReconciler) reconcileInstanceAdmission(ctx context.Context, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate) error {
 	groups, err := ownedModelGroups(ctx, reconciler.Client, pool)
@@ -80,16 +80,24 @@ func (reconciler *PoolReconciler) reconcileInstanceAdmission(ctx context.Context
 		return fmt.Errorf("get instance admission ConfigMap: %w", err)
 	}
 	config := instanceAdmissionConfiguration{Version: max(uint64(pool.Generation), pool.Status.InstanceAdmissionVersion), MaxConcurrentRequests: instanceAdmissionLimit(pool.Spec.InstanceAdmission)}
+	renew := created && pool.Status.InstanceAdmissionVersion != 0
 	if !created {
 		if !metav1.IsControlledBy(configuration, pool) {
 			return fmt.Errorf("ConfigMap %q is not controlled by ModelPool", configuration.Name)
 		}
 		previous, err := readInstanceAdmissionConfiguration(configuration.Data[instanceAdmissionKey])
-		// Pool intent remains authoritative when the owned projection is damaged.
-		configurationChanged := err != nil || previous.Version < pool.Status.InstanceAdmissionVersion || previous.Version > uint64(pool.Generation) || !reflect.DeepEqual(previous.MaxConcurrentRequests, config.MaxConcurrentRequests)
-		if !configurationChanged {
+		if err == nil && previous.Version >= pool.Status.InstanceAdmissionVersion && reflect.DeepEqual(previous.MaxConcurrentRequests, config.MaxConcurrentRequests) {
 			config.Version = previous.Version
+		} else {
+			config.Version = max(config.Version, previous.Version)
+			renew = true
 		}
+	}
+	if renew {
+		if config.Version == ^uint64(0) {
+			return fmt.Errorf("instance admission publication version is exhausted")
+		}
+		config.Version++
 	}
 	if pool.Status.InstanceAdmissionVersion < config.Version {
 		base := pool.DeepCopy()
@@ -125,8 +133,8 @@ func (reconciler *PoolReconciler) reconcileInstanceAdmission(ctx context.Context
 	if err := reader.List(ctx, &pods, client.InNamespace(pool.Namespace)); err != nil {
 		return fmt.Errorf("list instance admission Pods: %w", err)
 	}
-	// ConfigMap resourceVersion also changes on same-version repairs; it is only a
-	// projection refresh token, while runtime acknowledgement uses the payload version.
+	// ResourceVersion refreshes the projected file; runtime acknowledgement uses
+	// the payload's independently reserved publication version.
 	refreshToken := configuration.ResourceVersion
 	for index := range pods.Items {
 		pod := &pods.Items[index]

@@ -7,14 +7,18 @@ from __future__ import annotations
 
 import json
 import re
+import signal
 import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterable
+from contextlib import ExitStack
+from dataclasses import dataclass
 from typing import Any, Self
 
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef
+from foretoken.processes.execution import CommandExecution
 
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 # Labels identify Foretoken workloads; ownership is resolved by UID, never by name prefix.
@@ -27,18 +31,12 @@ _WORKLOAD_LABELS = (
 )
 
 
-def _message(text: str) -> str:
-    """Remove terminal controls while retaining diagnostic line breaks and indentation."""
-    return "".join(c for c in _ANSI.sub("", text) if c.isprintable() or c in "\n\t")
+@dataclass(frozen=True)
+class _LogReader:
+    """Keep one container attempt's process and cancellation scope together until retirement."""
 
-
-def _termination_detail(state: dict[str, Any]) -> str:
-    """Present kubelet's container exit metadata and original termination message."""
-    metadata = f"reason={state.get('reason', '')} exit={state.get('exitCode')}"
-    if state.get("signal"):
-        metadata += f" signal={state['signal']}"
-    message = state.get("message", "")
-    return metadata + ("\n" + message if message else "")
+    process: subprocess.Popen
+    lifetime: ExitStack
 
 
 class StartupProgress:
@@ -55,7 +53,7 @@ class StartupProgress:
         self._previous: dict[tuple[str, str, int], dict[str, tuple[str, float]]] = {}
         self._owners: dict[str, dict[str, Any]] = {}
         self._seen_owners: set[str] = set()
-        self._logs: dict[tuple[str, str, str], subprocess.Popen] = {}
+        self._logs: dict[tuple[str, str, str], _LogReader] = {}
         self._unavailable = ""
 
     def __enter__(self) -> Self:
@@ -160,14 +158,11 @@ class StartupProgress:
                 self._unavailable = message
 
     @staticmethod
-    def _stop(processes: Iterable[subprocess.Popen]) -> None:
-        """Close read-only log connections without leaving local child processes."""
-        readers = list(processes)
-        for process in readers:
-            if process.poll() is None:
-                process.kill()
-        for process in readers:
-            process.wait()
+    def _stop(readers: Iterable[_LogReader]) -> None:
+        """Close every owned log process group, even when another reader's cleanup fails."""
+        with ExitStack() as cleanup:
+            for reader in readers:
+                cleanup.callback(reader.lifetime.close)
 
     def _follow(
         self, pod: dict[str, Any], container: dict[str, Any],
@@ -189,18 +184,23 @@ class StartupProgress:
             key = (meta["uid"], container["name"], container_id)
             live_readers.add(key)
             if key not in self._logs:
-                self._logs[key] = self._log_process(
+                self._logs[key] = self._start_log_reader(
                     meta, container["name"], follow=follow, previous=source == "previous",
                 )
-            if (code := self._logs[key].poll()) not in (None, 0):
-                failures.append(f"{source} log reader exited with code {code}")
+            reader = self._logs[key]
+            if (code := reader.process.poll()) is not None:
+                # Retire the group promptly; keep its container identity only to
+                # avoid replaying logs after the process ID can be reused.
+                reader.lifetime.close()
+                if code != 0:
+                    failures.append(f"{source} log reader exited with code {code}")
         return "; ".join(failures)
 
-    def _log_process(
+    def _start_log_reader(
         self, metadata: dict[str, Any], container: str, *,
         follow: bool = False, previous: bool = False,
-    ) -> subprocess.Popen:
-        """Stream all available log lines directly through kubectl's native source prefixes."""
+    ) -> _LogReader:
+        """Stream native kubectl prefixes while retaining the entire reader process group's lifetime."""
         args = [
             "logs", metadata["name"], "-n", metadata["namespace"], "-c", container,
             "--prefix=true", "--tail=-1",
@@ -210,10 +210,17 @@ class StartupProgress:
         if previous:
             args.append("--previous=true")
         try:
-            return subprocess.Popen(
-                self.kubectl.command(args), stdin=subprocess.DEVNULL,
-                stdout=sys.stderr, stderr=sys.stderr,
-            )
+            with ExitStack() as lifetime:
+                execution = CommandExecution(report_failure=False)
+                process = lifetime.enter_context(execution.process(
+                    self.kubectl.command(args), stdin=subprocess.DEVNULL,
+                    stdout=sys.stderr, stderr=sys.stderr,
+                    interrupt_signal=signal.SIGKILL, shutdown_grace=0,
+                ))
+                # Read-only followers need no drain; cancel their group before
+                # closing the process context that joins its leader.
+                lifetime.callback(execution.cancel)
+                return _LogReader(process, lifetime.pop_all())
         except OSError as exc:
             raise DeploymentError(
                 f"cannot follow logs for {metadata['name']}/{container}: {exc}"
@@ -277,3 +284,17 @@ class StartupProgress:
         if previous is None or previous[0] != text or (channel != "LogsUnavailable" and time.monotonic() - previous[1] >= 30):
             self.emit(f"[{elapsed:6.1f}s] {text}")
             observations[channel] = (text, time.monotonic())
+
+
+def _message(text: str) -> str:
+    """Remove terminal controls while retaining diagnostic line breaks and indentation."""
+    return "".join(c for c in _ANSI.sub("", text) if c.isprintable() or c in "\n\t")
+
+
+def _termination_detail(state: dict[str, Any]) -> str:
+    """Present kubelet's container exit metadata and original termination message."""
+    metadata = f"reason={state.get('reason', '')} exit={state.get('exitCode')}"
+    if state.get("signal"):
+        metadata += f" signal={state['signal']}"
+    message = state.get("message", "")
+    return metadata + ("\n" + message if message else "")

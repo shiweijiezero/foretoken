@@ -10,6 +10,7 @@ import math
 import re
 import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 from foretoken.errors import DeploymentError
@@ -22,6 +23,7 @@ from foretoken.platform.prometheus import (
     prometheus_query,
     select_prometheus,
 )
+from loguru import logger
 
 from benchmarks.integrations.vllm import (
     measure_speculative_window,
@@ -47,7 +49,8 @@ class PrometheusObserver:
         self._api_path: str | None = None
         self._stop = threading.Event()
         self._stop_deadline: float | None = None
-        self._thread: threading.Thread | None = None
+        self._executor: ThreadPoolExecutor | None = None
+        self._sampling: Future[None] | None = None
         self._samples: list[tuple[float, dict[str, Any]]] = []
         self._errors = 0
         self._last_error: str | None = None
@@ -56,7 +59,7 @@ class PrometheusObserver:
         """Resolve Prometheus and its HTTP Service once, then sample within bounded rounds."""
         if not self._service.model_service_refs:
             raise DeploymentError("Prometheus observation requires a Kustomize service")
-        if self._thread is not None:
+        if self._executor is not None:
             raise RuntimeError("Prometheus observer is already active")
         if deadline is None:
             deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
@@ -71,11 +74,14 @@ class PrometheusObserver:
                 raise DeploymentError("no compatible Prometheus is available")
             self._api_path = prometheus_api_path(kubectl, prometheus)
         self._prometheus = prometheus
-        self._thread = threading.Thread(
-            target=self._run,
-            name="foretoken-benchmark-prometheus",
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="foretoken-benchmark-prometheus",
         )
-        self._thread.start()
+        try:
+            self._sampling = self._executor.submit(self._run)
+        except BaseException:
+            self.close()
+            raise
 
     def finish(
         self, time_origin: float | None, duration_seconds: float | None = None, *, deadline: float | None = None,
@@ -100,14 +106,14 @@ class PrometheusObserver:
                         duration_seconds=duration_seconds, ended_at=ended_at,
                         query=lambda expression: self._query(kubectl, expression),
                     )
-            except (DeploymentError, KeyError, TypeError, ValueError) as exc:
+            except (DeploymentError, OSError, KeyError, TypeError, ValueError) as exc:
                 self._errors += 1
                 self._last_error = str(exc)
         if ended_at is not None and duration_seconds is not None:
             try:
                 with kubectl.until(deadline):
                     resources = self._measure_resource_window(time_origin, duration_seconds, ended_at, kubectl)
-            except DeploymentError as exc:
+            except (DeploymentError, OSError) as exc:
                 self._errors += 1
                 self._last_error = str(exc)
         rows = []
@@ -148,26 +154,34 @@ class PrometheusObserver:
         self._stop.set()
 
     def close(self, *, deadline: float | None = None) -> None:
-        """Join the bounded in-flight query; repeated calls are harmless."""
-        thread = self._thread
-        if thread is None:
+        """Join the bounded query and propagate worker failures; repeated calls are harmless."""
+        executor, self._executor = self._executor, None
+        if executor is None:
             return
-        self._thread = None
+        sampling, self._sampling = self._sampling, None
         self.stop(deadline if deadline is not None else time.monotonic() + OBSERVATION_TIMEOUT_SECONDS)
-        thread.join()
+        try:
+            if sampling is not None:
+                sampling.result()
+        finally:
+            executor.shutdown(wait=True)
 
     def _run(self) -> None:
         """Sample until stopped, retaining query failures separately from missing metric values."""
-        while not self._stop.is_set():
-            try:
-                sampled_at = time.perf_counter()
-                sample = self._read_sample()
-            except (DeploymentError, KeyError, TypeError, ValueError) as exc:
-                self._errors += 1
-                self._last_error = str(exc)
-            else:
-                self._samples.append((sampled_at, sample))
-            self._stop.wait(_SAMPLE_INTERVAL_SECONDS)
+        try:
+            while not self._stop.is_set():
+                try:
+                    sampled_at = time.perf_counter()
+                    sample = self._read_sample()
+                except (DeploymentError, OSError, KeyError, TypeError, ValueError) as exc:
+                    self._errors += 1
+                    self._last_error = str(exc)
+                else:
+                    self._samples.append((sampled_at, sample))
+                self._stop.wait(_SAMPLE_INTERVAL_SECONDS)
+        except BaseException:
+            logger.exception("Prometheus observation stopped unexpectedly")
+            raise
 
     def _query(self, kubectl: Kubectl, expression: str) -> tuple[dict[str, Any], ...] | None:
         """Keep one unavailable query distinct from an empty series without discarding other readings."""
@@ -175,7 +189,7 @@ class PrometheusObserver:
             return prometheus_query(
                 kubectl, self._prometheus, expression, _REQUEST_TIMEOUT, api_path=self._api_path,
             )
-        except DeploymentError as error:
+        except (DeploymentError, OSError) as error:
             self._errors += 1
             self._last_error = str(error)
             return None

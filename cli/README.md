@@ -23,21 +23,24 @@ Use `foretoken` to manage inference deployments, check services, run benchmarks,
 
 ### Install the command-line tool
 
-With Python 3.11 or later:
-
 ```bash
-pip install foretoken
+uv venv --python 3.12 --seed  # With pip: python3 -m venv .venv (Python 3.11+)
+source .venv/bin/activate
+uv pip install foretoken  # Or: pip install foretoken
 foretoken --version
 ```
+
+Keep the environment active when running `foretoken` and `wandb`.
 
 The deployment and local-cluster examples use repository files. Get them and run those examples from the repository root:
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-```
 
-For CLI development, use `pip install -e .` in this directory. For uv, create and activate a virtual environment with `uv venv` and `source .venv/bin/activate`, then use `uv pip install foretoken`.
+# For CLI development:
+# uv pip install -e .  # Or: pip install -e .
+```
 
 Service deployment needs `kubectl` and a kubeconfig for the target cluster. Platform installation and source development also need Helm 4.2.4 or later. Each platform or service command keeps its initial Kubernetes context. Benchmarking an existing URL and plotting local results do not require Kubernetes.
 
