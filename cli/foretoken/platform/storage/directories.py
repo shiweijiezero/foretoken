@@ -296,7 +296,7 @@ def _resolve_k3d_directory(
             raise DeploymentError(f"Docker container {container} does not belong to {context}")
         matches = []
         for mount in info.get("Mounts", []):
-            if mount.get("Type") != "bind":
+            if mount.get("Type") != "bind" or not os.path.isdir(mount["Source"]):
                 continue
             source = Path(mount["Source"]).resolve()
             try:

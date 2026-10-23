@@ -67,9 +67,26 @@ Keep each candidate's source directory and instance name across iterations. For 
 
 After each change, deploy the candidate, confirm a successful request, then measure performance and answer quality. Use the same `--name` for deployment and evaluation: `perf` and `eval` measure the deployed service without updating its code. Use the results to decide what to retain or try next.
 
+For example, run these commands from the candidate checkout to update and measure the single-GPU Quick Start. For another task, use its deployment directory and benchmark workload:
+
+```bash
+foretoken deploy examples/quickstart/qwen3-0.6b \
+  --name candidate-a -e . --timeout 20m
+foretoken perf examples/quickstart/qwen3-0.6b \
+  --name candidate-a --num-prompts 20 --output local
+```
+
+The benchmark saves results under `results/`.
+
 Environment and cache reuse usually make later code updates faster than initial setup. Record setup time separately from each iteration's build, publication, startup and measurement time.
 
-For [parallel candidates](../docs/deployment/source.md#run-candidates-in-parallel), share model downloads through the configured storage and keep runtime caches and results separate. Use `foretoken stop` to release GPUs between iterations while retaining the instance; delete it when no longer needed.
+For [parallel candidates](../docs/deployment/source.md#run-candidates-in-parallel), share model downloads through the configured storage and keep runtime caches and results separate. To release GPUs between iterations while retaining the instance and its caches:
+
+```bash
+foretoken stop candidate-a
+```
+
+Resume with the same deployment command. When the candidate is no longer needed, remove it with `foretoken delete candidate-a`.
 
 Use existing sweeps for fixed workload groups, and validate combined changes before delivery. See [exploration and decision-making](guidance/meta-knowledge/03-exploration-and-decision.md) for choosing experiments and interpreting results.
 

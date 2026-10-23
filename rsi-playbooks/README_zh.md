@@ -67,9 +67,26 @@ Experimenter 负责构建和评测这些方案，同时观察资源使用、保�
 
 每轮修改后，先部署候选并确认请求成功，再评测性能和回答质量，据此决定保留哪些改动、下一轮尝试什么。部署与评测使用同一个 `--name`；`perf`、`eval` 测量已部署的服务，不会替它更新代码。
 
+下面以单卡快速开始示例演示更新和评测，在候选源码目录执行。用于其他任务时，替换为该任务的部署目录和评测负载：
+
+```bash
+foretoken deploy examples/quickstart/qwen3-0.6b \
+  --name candidate-a -e . --timeout 20m
+foretoken perf examples/quickstart/qwen3-0.6b \
+  --name candidate-a --num-prompts 20 --output local
+```
+
+评测结果保存在 `results/` 下。
+
 复用环境和缓存后，后续代码更新通常比首次准备更快。记录时，将首次准备耗时与每轮的构建、发布、启动和评测耗时分开。
 
-[并行候选](../docs/deployment/source_zh.md#并行运行候选方案)通过配置的存储共享模型下载，各自保留独立的运行缓存和结果。迭代间用 `foretoken stop` 释放 GPU 并保留实例，不再需要时再删除。
+[并行候选](../docs/deployment/source_zh.md#并行运行候选方案)通过配置的存储共享模型下载，各自保留独立的运行缓存和结果。迭代间需要释放 GPU 时，暂停实例，保留配置和缓存：
+
+```bash
+foretoken stop candidate-a
+```
+
+继续时重新执行同一个部署命令。候选不再需要后，用 `foretoken delete candidate-a` 删除。
 
 负载组合确定后，可通过现有参数扫描比较候选；交付前再验证组合后的改动。选择实验和分析结果的方法见[探索与决策](guidance/meta-knowledge/03-exploration-and-decision_zh.md)。
 

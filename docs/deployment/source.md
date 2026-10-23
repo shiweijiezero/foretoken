@@ -33,7 +33,7 @@ foretoken install -e .
 
 This installs the shared Foretoken platform; builds run in the cluster. It can also replace a published platform installed through the CLI. For k3d GPU setup, follow [Deploy Foretoken with k3d](k3d.md). Other Kubernetes clusters need a registry reachable by the builder and nodes; [Deploy Foretoken on Kubernetes](kubernetes.md#2-install-foretoken-from-source) covers the installation command and registry authentication.
 
-The first source installation prepares toolchains and runtime environments. Later deployments reuse available images, downloaded dependencies and compatible compiler caches, so code updates usually take less time. Each source directory keeps its own incremental build state.
+The first source installation prepares toolchains and runtime environments. Later deployments reuse available images, downloaded dependencies and compatible compiler caches, so code updates usually take less time. Each source directory keeps its own incremental build state. After fixing an installation or deployment failure, rerun the same command from the same checkout and cluster to reuse retained build work.
 
 To store build artifacts on another StorageClass, set `development.build.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`; execution and compiler caches remain on automatically managed local storage. Dynamically provisioned native NFS and `nfs.csi.k8s.io` volumes are supported. Application files use the cluster's default StorageClass, or `applicationFiles.storageClassName` when specified. Existing volumes keep their StorageClass.
 
