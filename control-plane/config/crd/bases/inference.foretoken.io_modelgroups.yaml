@@ -1037,7 +1037,8 @@ spec:
                     - message: must be a positive duration
                       rule: duration(self) > duration('0s')
                   startup:
-                    description: Duration is a positive Go-style duration.
+                    description: Startup bounds preparation and serving initialization
+                      separately, from each stage's first model container start.
                     minLength: 2
                     pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
@@ -1145,6 +1146,10 @@ spec:
                 description: DrainStartedAt fixes the bounded deletion deadline across
                   controller retries.
                 format: date-time
+                type: string
+              observedWorkloadUID:
+                description: ObservedWorkloadUID binds availability observations to
+                  the current Deployment or LeaderWorkerSet.
                 type: string
               phase:
                 description: ModelGroupPhase summarizes the Group lifecycle.

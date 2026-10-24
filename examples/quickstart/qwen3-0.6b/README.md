@@ -15,7 +15,7 @@ Configure the model, replica count, resources, parallelism, and [inference param
 
 ## Deploy
 
-Install the [platform from source](../../../docs/deployment/source.md), then run from the repository root:
+Install the [Foretoken platform](../../../README.md#2-install-the-kubernetes-platform), then run from the repository root:
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m

@@ -122,6 +122,9 @@ image-model-server:
 		$(if $(UV_IMAGE),--build-arg UV_IMAGE="$(UV_IMAGE)",) \
 		--build-arg FORETOKEN_VLLM_PYTHON \
 		--build-arg FORETOKEN_GITHUB_MIRROR \
+		$(if $(filter-out undefined,$(origin FORETOKEN_GITHUB_MIRROR)),--secret id=FORETOKEN_GITHUB_MIRROR) \
+		$(if $(filter-out undefined,$(origin GOPROXY)),--secret id=GOPROXY) \
+		--build-arg GOSUMDB \
 		--build-arg FORETOKEN_CARGO_REGISTRY \
 		--build-arg CARGO_NET_GIT_FETCH_WITH_CLI \
 		--secret id=foretoken-build-jobs,env=BUILD_JOBS \

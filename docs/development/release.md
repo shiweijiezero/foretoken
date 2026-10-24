@@ -57,7 +57,7 @@ Use the [Release Description Template](release-template.md) when creating a GitH
 
 ## Build and push the release artifacts
 
-The NVIDIA build uses the checkout's [shared vLLM base-image setting](../deployment/source.md#select-a-different-runtime-environment). Prepare a compatible MetaX runtime, then set the destination registry and MetaX image:
+The NVIDIA build uses the checkout's [shared vLLM base-image setting](../deployment/source.md#select-a-different-runtime-environment). For the default release with both GPU runtimes, prepare a compatible MetaX runtime and set the destination registry and MetaX image:
 
 ```bash
 export REGISTRY=ghcr.io/your-org/foretoken
@@ -67,6 +67,15 @@ deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
 The command builds the runtime images and saves `foretoken-applications-<version>-linux-amd64.tar.gz`, the matching Helm Chart and exported build caches in `/tmp/foretoken-release`. All outputs stay local until publication. MetaX image tags use the `-metax` suffix. To use a different compatible NVIDIA base, set `INFERENCE_ENGINE_IMAGE` before building.
+
+For an NVIDIA-only release, select the shared components and NVIDIA runtime:
+
+```bash
+deploy/release-artifacts build --registry "$REGISTRY" \
+  --components control-plane,frontend,model-server,chart
+```
+
+Use the same component selection when pushing. When model-server variants are selected, the packaged Chart references only those variants; a Chart build without a model-server selection retains both runtime references.
 
 To export the application archive without rebuilding environments:
 

@@ -13,10 +13,6 @@ from benchmarks.datasets.conversations import (
     load_request_tasks,
 )
 from benchmarks.datasets.huggingface import same_dataset_source
-from benchmarks.datasets.synthetic import (
-    generate_synthetic_prefix_reuse_requests,
-    generate_trace_random_requests,
-)
 from benchmarks.datasets.traces import ArrivalTraceEvent
 from benchmarks.model_service import ModelService
 
@@ -39,6 +35,11 @@ def bind_arrival_trace_requests(
     workload = benchmark.resolved_workload
     trace = benchmark.trace
     if request_origin == "random":
+        from benchmarks.datasets.synthetic import (
+            generate_synthetic_prefix_reuse_requests,
+            generate_trace_random_requests,
+        )
+
         input_lengths = [event.input_tokens for event in events]
         has_input_lengths = [length is not None for length in input_lengths]
         if any(has_input_lengths) and not all(has_input_lengths):

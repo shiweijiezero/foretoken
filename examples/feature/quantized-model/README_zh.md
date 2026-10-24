@@ -7,11 +7,7 @@
 
 这些示例使用预量化 checkpoint，或在加载普通权重时进行量化，部署 Qwen2.5-0.5B-Instruct。每个目录都是完整的 Kustomize 部署，使用独立的实例名，包含自己的 FrontendService 和 ModelService。各套部署可以分别创建和清理，同时运行也不会发生资源名称冲突。目录中还提供相同基础模型的 BF16 参考部署，用于概率分布对比。
 
-部署前，先从当前源码目录[构建并安装平台](../../../docs/deployment/source_zh.md)：
-
-```bash
-foretoken install -e .
-```
+安装 [Foretoken 平台](../../../README_zh.md#2-安装-kubernetes-平台)后，在仓库根目录运行以下示例。
 
 每套部署中的模型和前端合计申请 1 张 GPU、3 核 CPU 和 9 GiB 主机内存，此外还需为 Foretoken 平台预留资源。
 

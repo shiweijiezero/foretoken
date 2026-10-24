@@ -54,8 +54,9 @@ def configure_logging(console_enabled: bool = True, *, full_tracebacks: bool = F
         if isinstance(target, logging.Logger)
     ]
     for target in targets:
-        # Native framework files retain their owner. Replace only console routes,
-        # and intercept non-propagating loggers at their own boundary exactly once.
+        # Native files and silent SDK loggers retain their owner. Intercept only
+        # existing console routes on loggers that do not propagate to the root.
+        had_console = False
         for handler in target.handlers[:]:
             if isinstance(handler, _InterceptHandler) or (
                 isinstance(handler, logging.StreamHandler)
@@ -64,7 +65,8 @@ def configure_logging(console_enabled: bool = True, *, full_tracebacks: bool = F
             ):
                 target.removeHandler(handler)
                 handler.close()
-        if target is root or not target.propagate:
+                had_console = True
+        if target is root or (not target.propagate and had_console):
             target.addHandler(bridge)
     for name in ("httpx", "httpcore", "fontTools"):
         logging.getLogger(name).setLevel(logging.WARNING)

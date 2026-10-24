@@ -13,30 +13,20 @@ from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import wandb
 from foretoken.diagnostics import configure_logging
 from foretoken.errors import DeploymentError
 from loguru import logger
 
 from benchmarks.config.benchmark import BenchmarkConfig, BenchmarkOutputConfig
 from benchmarks.config.cli import parse_benchmark_arguments
-from benchmarks.config.video_cli import parse_video_arguments
-from benchmarks.model_service import ModelService, ModelServiceResolver
-from benchmarks.results.experiment import experiment_output
-from benchmarks.results.output import ResultOutputs
 from benchmarks.results.recording.database import read_record
-from benchmarks.results.reporting.http import (
-    format_benchmark_config,
-    log_model_service,
-)
-from benchmarks.results.types import BenchmarkRun
-from benchmarks.runs.http import HttpBenchmark
-from benchmarks.runs.slo import SloAutoTuneBenchmark
-from benchmarks.runs.video import run_video_benchmark
-from benchmarks.sweeps.http import ParameterSweepBenchmark
-from benchmarks.sweeps.video import run_video_sweep
+
+if TYPE_CHECKING:
+    from benchmarks.model_service import ModelService
+    from benchmarks.results.output import ResultOutputs
+    from benchmarks.results.types import BenchmarkRun
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -46,8 +36,20 @@ def main(argv: Sequence[str] | None = None) -> None:
     if "--video" in options:
         _run_video(arguments)
         return
+    # Help and argument errors do not require measurement or publication backends.
     try:
         benchmark = parse_benchmark_arguments(arguments)
+    except (DeploymentError, OSError, sqlite3.Error, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+    import wandb
+
+    from benchmarks.model_service import ModelServiceResolver
+    from benchmarks.results.experiment import experiment_output
+    from benchmarks.results.output import ResultOutputs
+    from benchmarks.results.reporting.http import format_benchmark_config, log_model_service
+
+    try:
         quiet = benchmark.outputs.includes("quiet")
         configure_logging(not quiet)
         benchmark.outputs.validate()
@@ -58,6 +60,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             return
         with experiment_output(benchmark, "perf", arguments) as benchmark:
             if benchmark.sweep.path or len(benchmark.service_choices) > 1:
+                from benchmarks.sweeps.http import ParameterSweepBenchmark
+
                 run = ParameterSweepBenchmark(benchmark).run()
             else:
                 benchmark.validate()
@@ -86,14 +90,28 @@ def run_benchmark(
 ) -> BenchmarkRun:
     """Execute a measurement or search, acquiring the service only for new measurements."""
     if benchmark.slo.search:
+        from benchmarks.runs.slo import SloAutoTuneBenchmark
+
         return SloAutoTuneBenchmark(benchmark, prepare_service, outputs=outputs).run()
+    from benchmarks.runs.http import HttpBenchmark
+
     return HttpBenchmark(benchmark, prepare_service(), outputs=outputs).run()
 
 
 def _run_video(arguments: Sequence[str]) -> None:
     """Parse and run one request-only video-generation benchmark."""
+    from benchmarks.config.video_cli import parse_video_arguments
+
     try:
         command = parse_video_arguments(arguments)
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+    import wandb
+
+    from benchmarks.results.experiment import experiment_output
+
+    try:
         config = command.config
         configure_logging(not config.outputs.includes("quiet"))
         recovered = _recover_completed(config.sweep.resume, config.outputs, arguments, config.to_dict())
@@ -102,11 +120,14 @@ def _run_video(arguments: Sequence[str]) -> None:
                 raise SystemExit(recovered.exit_code)
             return
         with experiment_output(config, "perf", arguments) as config:
-            result = (
-                run_video_sweep(config, dry_run=command.dry_run)
-                if config.sweep.path
-                else asyncio.run(run_video_benchmark(config, dry_run=command.dry_run))
-            )
+            if config.sweep.path:
+                from benchmarks.sweeps.video import run_video_sweep
+
+                result = run_video_sweep(config, dry_run=command.dry_run)
+            else:
+                from benchmarks.runs.video import run_video_benchmark
+
+                result = asyncio.run(run_video_benchmark(config, dry_run=command.dry_run))
             if result["exit_code"]:
                 raise SystemExit(result["exit_code"])
     except (OSError, sqlite3.Error, ValueError, wandb.errors.Error) as exc:

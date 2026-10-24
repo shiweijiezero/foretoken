@@ -36,7 +36,7 @@
   verbs: [get]
 - apiGroups: [batch]
   resources: [jobs]
-  verbs: [get, list, watch, create, delete]
+  verbs: [get, list, watch, create, patch, delete]
 - apiGroups: [leaderworkerset.x-k8s.io]
   resources: [leaderworkersets]
   verbs: [get, list, watch, create, update, patch, delete]

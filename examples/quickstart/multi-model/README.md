@@ -14,7 +14,7 @@ The initial deployment requests two GPUs, 12 CPU cores, and 100 GiB memory. At f
 
 ## Deploy
 
-Install the [platform from source](../../../docs/deployment/source.md), then run from the repository root:
+Install the [Foretoken platform](../../../README.md#2-install-the-kubernetes-platform), then run from the repository root:
 
 ```bash
 foretoken deploy examples/quickstart/multi-model --timeout 20m

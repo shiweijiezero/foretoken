@@ -236,7 +236,13 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- $tag = printf "%s-metax" $tag -}}
 {{- $backend = "metax" -}}
 {{- end -}}
-{{- default (printf "ghcr.io/shiweijiezero/foretoken/model-server:%s" $tag) (index .Values.runtime.vllm.environmentImages $backend) -}}
+{{- $environments := .Values.runtime.vllm.environmentImages -}}
+{{- $environment := default "" (index $environments $backend) -}}
+{{/* Published applications need a matching environment; source bootstrap clears releaseURL. */}}
+{{- if and .Values.applicationFiles.releaseURL (or $environments.nvidia $environments.metax) (not $environment) -}}
+{{- fail (printf "This release does not include a %s runtime image; set runtime.vllm.image to a compatible image" $backend) -}}
+{{- end -}}
+{{- default (printf "ghcr.io/shiweijiezero/foretoken/model-server:%s" $tag) $environment -}}
 {{- else -}}
 {{- $image -}}
 {{- end -}}

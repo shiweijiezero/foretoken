@@ -21,7 +21,6 @@ from benchmarks.config.video import (
     VideoEndpointConfig,
     VideoParameterSweepConfig,
 )
-from benchmarks.datasets.video.loader import load_video_dataset, video_dataset_name
 
 
 @dataclass(frozen=True)
@@ -89,6 +88,8 @@ def parse_video_arguments(argv: Sequence[str]) -> VideoBenchCommand:
         help="Validate and print the workload without sending requests",
     )
     parsed = parser.parse_args(list(argv))
+    from benchmarks.datasets.video.loader import load_video_dataset, video_dataset_name
+
     dataset_path, requests = load_video_dataset(
         parsed.dataset,
         defaults=VideoDatasetDefaults(

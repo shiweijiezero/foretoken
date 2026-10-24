@@ -16,7 +16,7 @@ The example requests two GPUs, 14 CPU cores, 44 GiB memory, and 21 GiB of dynami
 
 ## Deploy
 
-Use a [source-installed platform](../../../docs/deployment/source.md), a model-server image containing vLLM's `MooncakeStoreConnector` and `mooncake-transfer-engine`, and a default StorageClass. Storage choices are described in [Model storage](../../../docs/features/model-storage.md).
+Use the [Foretoken platform](../../../README.md#2-install-the-kubernetes-platform), a model-server image containing vLLM's `MooncakeStoreConnector` and `mooncake-transfer-engine`, and a default StorageClass. Storage choices are described in [Model storage](../../../docs/features/model-storage.md).
 
 Build the Store image from the repository root. For a local k3d cluster, import it into the active cluster:
 

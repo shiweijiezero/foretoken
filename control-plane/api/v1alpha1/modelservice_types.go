@@ -28,6 +28,7 @@ type InstanceAdmissionConfig struct {
 
 // ModelTimeouts defines ModelService lifecycle budgets.
 type ModelTimeouts struct {
+	// Startup bounds preparation and serving initialization separately, from each stage's first model container start.
 	Startup Duration `json:"startup"`
 	Drain   Duration `json:"drain"`
 }

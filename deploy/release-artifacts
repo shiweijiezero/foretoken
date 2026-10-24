@@ -249,10 +249,17 @@ from pathlib import Path
 import sys
 import tarfile
 
+def release_member(member: tarfile.TarInfo) -> tarfile.TarInfo:
+    """Package application files without the publisher's local ownership metadata."""
+    member.uid = member.gid = 0
+    member.uname = member.gname = ""
+    return member
+
+
 payload, output = map(Path, sys.argv[1:])
 with tarfile.open(output, "w:gz") as archive:
     for component in ("control-plane", "frontend", "model-server"):
-        archive.add(payload / component, arcname=component)
+        archive.add(payload / component, arcname=component, filter=release_member)
 print(f"Application release asset: {output}")
 PY
   fi
@@ -265,22 +272,25 @@ PY
       # The checkout remains usable with already-published image-only releases.
       chart_root=$(mktemp -d "$OUTPUT_DIR/chart.XXXXXX")
       cp -R "$ROOT/deploy/charts/foretoken" "$chart_root/foretoken"
-      "$PYTHON" - "$ROOT" "$chart_root/foretoken/values.yaml" "$SOURCE_URL" "$PYTHON_VERSION" "$OCI_VERSION" "$REGISTRY" <<'PY'
+      "$PYTHON" - "$ROOT" "$chart_root/foretoken/values.yaml" "$SOURCE_URL" "$PYTHON_VERSION" "$OCI_VERSION" "$REGISTRY" "$COMPONENTS" <<'PY'
 from pathlib import Path
 import sys
 import yaml
 sys.path.insert(0, str(Path(sys.argv[1]) / "cli"))
 from foretoken import environment_image_reference
 path = Path(sys.argv[2])
-source, python_version, version, registry = sys.argv[3:]
+source, python_version, version, registry, components = sys.argv[3:]
 values = yaml.safe_load(path.read_text())
 values["applicationFiles"]["releaseURL"] = f"{source}/releases/download/v{python_version}/foretoken-applications-{version}-linux-amd64.tar.gz"
 values["image"]["repository"] = environment_image_reference(registry, version, "control-plane").rsplit(":", 1)[0]
 values["frontend"]["image"] = environment_image_reference(registry, version, "frontend")
 values["runtime"]["vllm"]["image"] = "auto"
+variants = {"model-server": "nvidia", "model-server-metax": "metax"}
+selected = set(components.split(",")) & variants.keys()
 values["runtime"]["vllm"]["environmentImages"] = {
-    "nvidia": environment_image_reference(registry, version, "model-server"),
-    "metax": environment_image_reference(registry, version, "model-server-metax"),
+    backend: environment_image_reference(registry, version, component)
+    for component, backend in variants.items()
+    if not selected or component in selected
 }
 path.write_text(yaml.safe_dump(values, sort_keys=False))
 PY
@@ -359,6 +369,7 @@ Options:
   --components LIST         Environment/chart selection for build or push. Defaults to all:
                             control-plane,frontend,model-server,
                             model-server-metax,chart
+                            Selected model-server variants also select the chart's runtime defaults.
   --output-dir DIRECTORY    Release artifact directory (default: /tmp/foretoken-release).
   --dry-run                 Print commands for supplementary parsing only.
   --plain-http              Allow a local HTTP registry for artifact publication.

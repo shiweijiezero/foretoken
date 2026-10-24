@@ -24,23 +24,18 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 ### 安装命令行工具
 
 ```bash
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
 uv venv --python 3.12 --seed  # 使用 pip 时：python3 -m venv .venv（Python 3.11+）
 source .venv/bin/activate
-uv pip install foretoken  # 或 pip install foretoken
+uv pip install -e .  # 或 pip install -e .
+
+# 使用发布的 CLI：
+# uv pip install foretoken  # 或 pip install foretoken
 foretoken --version
 ```
 
-运行 `foretoken` 和 `wandb` 时保持环境激活。
-
-部署和本地集群示例使用仓库中的配置文件。获取仓库后，从仓库根目录执行这些示例：
-
-```bash
-git clone https://github.com/shiweijiezero/foretoken.git
-cd foretoken
-
-# 开发 CLI 时：
-# uv pip install -e .  # 或 pip install -e .
-```
+运行 `foretoken` 和 `wandb` 时保持环境激活。部署和本地集群示例从仓库根目录执行。
 
 部署服务需要 `kubectl` 和目标集群的 kubeconfig。安装平台或开发源码时，还需 Helm 4.2.4 或更高版本。平台和服务命令会始终使用启动时选定的 Kubernetes context。评测已有 URL、绘制本地结果时无需 Kubernetes。
 

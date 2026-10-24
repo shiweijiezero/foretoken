@@ -15,7 +15,7 @@
 
 ## 部署
 
-从源码[安装平台](../../../docs/deployment/source_zh.md)后，在仓库根目录部署：
+安装 [Foretoken 平台](../../../README_zh.md#2-安装-kubernetes-平台)后，在仓库根目录部署：
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m

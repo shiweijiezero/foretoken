@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"time"
 
@@ -50,6 +51,10 @@ func (reconciler *GroupReconciler) reconcilePreparation(ctx context.Context, gro
 	if err := reconciler.reconcilePreparationSource(ctx, group, pool); err != nil {
 		return false, err
 	}
+	startupSeconds, err := runtimeconfig.WholeDurationSeconds(group.Spec.Timeouts.Startup)
+	if err != nil {
+		return false, fmt.Errorf("parse model preparation timeout: %w", err)
+	}
 	desired, err := desiredPreparationJob(group, reconciler.ImagePullSecrets, reconciler.ModelDistribution, reconciler.ApplicationFiles)
 	if err != nil {
 		return false, err
@@ -83,7 +88,7 @@ func (reconciler *GroupReconciler) reconcilePreparation(ctx context.Context, gro
 		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
 			// Preserve the failed attempt before retiring its diagnostics. Recovery
 			// continues, but cannot turn an observed failure back into unknown readiness.
-			failure := reconciler.preparationFailure(ctx, current, condition.Reason, condition.Message)
+			failure := reconciler.preparationFailure(ctx, current, group.Spec.Timeouts.Startup, condition.Reason, condition.Message)
 			if err := reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(failure)); err != nil {
 				return false, errors.Join(failure, err)
 			}
@@ -98,28 +103,60 @@ func (reconciler *GroupReconciler) reconcilePreparation(ctx context.Context, gro
 			return true, nil
 		}
 	}
+	// Recent Job controllers publish the cause before all Pods finish terminating.
+	for _, condition := range current.Status.Conditions {
+		if condition.Type == batchv1.JobFailureTarget && condition.Status == corev1.ConditionTrue {
+			failure := reconciler.preparationFailure(ctx, current, group.Spec.Timeouts.Startup, condition.Reason, condition.Message)
+			return false, errors.Join(failure, reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(failure)))
+		}
+	}
+	if err := reconciler.startPreparationDeadline(ctx, current, startupSeconds); err != nil {
+		return false, err
+	}
 	// Native Job backoff continues recovery without hiding an already failed attempt.
 	if current.Status.Failed > 0 && !meta.IsStatusConditionFalse(group.Status.Conditions, workload.ConditionTargetReady) {
-		failure := reconciler.preparationFailure(ctx, current, "ContainerFailed", "A preparation container exited unsuccessfully")
+		failure := reconciler.preparationFailure(ctx, current, group.Spec.Timeouts.Startup, "ContainerFailed", "A preparation container exited unsuccessfully")
 		return false, errors.Join(failure, reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(failure)))
 	}
 	return false, nil
+}
+
+// startPreparationDeadline gives the first preparation process its budget; the native Job owns enforcement across retries.
+func (reconciler *GroupReconciler) startPreparationDeadline(ctx context.Context, job *batchv1.Job, startupSeconds int64) error {
+	if job.Spec.ActiveDeadlineSeconds != nil || job.Status.StartTime == nil {
+		return nil
+	}
+	var pods corev1.PodList
+	if err := reconciler.List(ctx, &pods, client.InNamespace(job.Namespace), client.MatchingLabels{"batch.kubernetes.io/controller-uid": string(job.UID)}); err != nil {
+		return fmt.Errorf("observe model preparation startup: %w", err)
+	}
+	started := firstContainerStart(pods.Items, job.Spec.Template.Spec.Containers[0].Name)
+	if started.IsZero() {
+		return nil
+	}
+	// Job deadlines are relative to Job startTime, which includes image pulls and scheduling.
+	deadline := started.Add(time.Duration(startupSeconds) * time.Second)
+	seconds := max(int64(1), int64(math.Ceil(deadline.Sub(job.Status.StartTime.Time).Seconds())))
+	base := job.DeepCopy()
+	job.Spec.ActiveDeadlineSeconds = &seconds
+	if err := reconciler.Patch(ctx, job, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+		return fmt.Errorf("start model preparation deadline: %w", err)
+	}
+	return nil
 }
 
 // Error retains the preparation cause for status publication and reconciliation logs.
 func (failure *modelPreparationFailure) Error() string { return failure.message }
 
 // preparationFailure captures the latest attempt's container diagnostics before Job retirement.
-func (reconciler *GroupReconciler) preparationFailure(ctx context.Context, job *batchv1.Job, reason, message string) error {
+func (reconciler *GroupReconciler) preparationFailure(ctx context.Context, job *batchv1.Job, startup inferencev1alpha1.Duration, reason, message string) error {
 	failure := &modelPreparationFailure{
 		reason:  "ModelPreparationFailed",
 		message: fmt.Sprintf("Model preparation Job %q failed: %s: %s", job.Name, reason, message),
 	}
 	if reason == "DeadlineExceeded" {
 		failure.reason = "ModelPreparationDeadlineExceeded"
-		if job.Spec.ActiveDeadlineSeconds != nil {
-			failure.message = fmt.Sprintf("Model preparation Job %q exceeded its %s budget from spec.timeouts.startup", job.Name, time.Duration(*job.Spec.ActiveDeadlineSeconds)*time.Second)
-		}
+		failure.message = fmt.Sprintf("Model preparation Job %q exceeded its %s budget from spec.timeouts.startup", job.Name, startup)
 	}
 	var pods corev1.PodList
 	if err := reconciler.List(ctx, &pods, client.InNamespace(job.Namespace), client.MatchingLabels{"batch.kubernetes.io/controller-uid": string(job.UID)}); err != nil {
@@ -187,10 +224,6 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 	}
 	env = append(env, vllmconfig.RuntimeCacheEnv(cache, group.Namespace, group.Labels[inferencev1alpha1.DeploymentUIDLabel], "", group.Spec.Runtime.PreparationVersion)...)
 	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
-	startupSeconds, err := runtimeconfig.WholeDurationSeconds(group.Spec.Timeouts.Startup)
-	if err != nil {
-		return nil, fmt.Errorf("parse model preparation timeout: %w", err)
-	}
 	volumes := []corev1.Volume{{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}
 	mounts := []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}}
 	command := "resolve"
@@ -217,7 +250,6 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 		TypeMeta:   metav1.TypeMeta{APIVersion: batchv1.SchemeGroupVersion.String(), Kind: "Job"},
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: group.Namespace, Labels: workload.ModelGroupLabels(group)},
 		Spec: batchv1.JobSpec{
-			ActiveDeadlineSeconds: &startupSeconds,
 			Template: corev1.PodTemplateSpec{
 				// Preparation Pods must not match serving member or cache-observer selectors.
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{workload.ModelPreparationGroupLabel: group.Name}},

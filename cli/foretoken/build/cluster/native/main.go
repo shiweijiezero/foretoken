@@ -18,6 +18,7 @@ import (
 
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/core/content"
+	"github.com/containerd/containerd/v2/core/content/proxy"
 	"github.com/containerd/containerd/v2/core/leases"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/continuity"
@@ -25,9 +26,11 @@ import (
 	"github.com/containerd/platforms"
 	"github.com/docker/cli/cli/config"
 	bkclient "github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/moby/buildkit/session/secrets/secretsprovider"
+	"github.com/moby/buildkit/util/contentutil"
 	"github.com/moby/buildkit/util/progress/progresswriter"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/tonistiigi/fsutil"
@@ -145,6 +148,14 @@ func solve(ctx context.Context, node *containerd.Client, input request, matcher 
 		return err
 	}
 	defer client.Close()
+	secretValues := map[string][]byte{
+		"foretoken-build-jobs": []byte(input.FrontendAttrs["build-arg:BUILD_JOBS"]),
+	}
+	for _, name := range []string{"FORETOKEN_GITHUB_MIRROR", "GOPROXY"} {
+		if value, present := input.FrontendAttrs["build-arg:"+name]; present {
+			secretValues[name] = []byte(value)
+		}
+	}
 	options := bkclient.SolveOpt{
 		Frontend: "dockerfile.v0", FrontendAttrs: make(map[string]string),
 		LocalMounts: make(map[string]fsutil.FS), OCIStores: make(map[string]content.Store),
@@ -152,10 +163,7 @@ func solve(ctx context.Context, node *containerd.Client, input request, matcher 
 			authprovider.NewDockerAuthProvider(authprovider.DockerAuthProviderConfig{
 				AuthConfigProvider: authprovider.LoadAuthConfig(config.LoadDefaultConfigFile(os.Stderr)),
 			}),
-			// Execution budgets remain effective without changing runtime image cache keys.
-			secretsprovider.FromMap(map[string][]byte{
-				"foretoken-build-jobs": []byte(input.FrontendAttrs["build-arg:BUILD_JOBS"]),
-			}),
+			secretsprovider.FromMap(secretValues),
 		},
 	}
 	for _, reference := range input.CacheImports {
@@ -182,23 +190,58 @@ func solve(ctx context.Context, node *containerd.Client, input request, matcher 
 		options.FrontendAttrs["context:"+alias] = "oci-layout://" + alias + "@" + descriptor.Digest.String()
 	}
 	export := bkclient.ExportEntry{Type: input.Output.Type, Attrs: input.Output.Attrs}
+	var destination *sessionStore
 	if export.Type == bkclient.ExporterOCI {
-		export.OutputStore = &sessionStore{
+		destination = &sessionStore{
 			store: node.ContentStore(), leaseManager: node.LeasesService(), namespace: input.ContainerdNamespace, lease: input.LeaseID, writable: true,
 		}
+		// OCI export materializes every cached layer before it checks the destination.
+		// Resolve the image first so native ingestion can reuse the node's existing blobs.
+		attributes := make(map[string]string, len(export.Attrs)+2)
+		maps.Copy(attributes, export.Attrs)
+		delete(attributes, "tar")
+		attributes["store"] = "false"
+		attributes["push"] = "false"
+		export = bkclient.ExportEntry{Type: bkclient.ExporterImage, Attrs: attributes}
 	}
 	options.Exports = []bkclient.ExportEntry{export}
-	// Drain the native progress channel even after cancellation so the last failure is not lost.
-	progress, err := progresswriter.NewPrinter(context.WithoutCancel(ctx), os.Stderr, "plain")
+	response, err := solveWithProgress(ctx, client, options)
 	if err != nil {
 		return err
 	}
-	response, solveErr := client.Solve(ctx, nil, options, progress.Status())
-	<-progress.Done()
-	if err := errors.Join(solveErr, progress.Err()); err != nil {
-		return err
+	if destination != nil {
+		encoded, err := base64.StdEncoding.DecodeString(response.ExporterResponse[exptypes.ExporterImageDescriptorKey])
+		if err != nil {
+			return fmt.Errorf("decode solved image descriptor: %w", err)
+		}
+		var descriptor ocispec.Descriptor
+		if err := json.Unmarshal(encoded, &descriptor); err != nil {
+			return fmt.Errorf("read solved image descriptor: %w", err)
+		}
+		err = contentutil.CopyChain(ctx, destination, proxy.NewContentStore(client.ContentClient()), descriptor)
+		if errdefs.IsNotFound(err) {
+			// Registry caches can leave layers absent from both local stores. The
+			// original exporter owns fetching that content from its lazy providers.
+			fmt.Fprintln(os.Stderr, "Materializing image content not yet available on the node")
+			options.Exports = []bkclient.ExportEntry{{Type: input.Output.Type, Attrs: input.Output.Attrs, OutputStore: destination}}
+			response, err = solveWithProgress(ctx, client, options)
+		}
+		if err != nil {
+			return err
+		}
 	}
 	return writeMetadata(input.MetadataFile, response.ExporterResponse)
+}
+
+// solveWithProgress drains native diagnostics even after cancellation, preserving the solve's original failure.
+func solveWithProgress(ctx context.Context, client *bkclient.Client, options bkclient.SolveOpt) (*bkclient.SolveResponse, error) {
+	progress, err := progresswriter.NewPrinter(context.WithoutCancel(ctx), os.Stderr, "plain")
+	if err != nil {
+		return nil, err
+	}
+	response, solveErr := client.Solve(ctx, nil, options, progress.Status())
+	<-progress.Done()
+	return response, errors.Join(solveErr, progress.Err())
 }
 
 // writeMetadata preserves buildctl's JSON/base64 response representation for existing Python consumers.

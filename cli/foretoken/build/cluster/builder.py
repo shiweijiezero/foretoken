@@ -197,12 +197,18 @@ class ClusterBuilder(AbstractContextManager):
                 "--metadata-file", metadata, "--progress", "plain",
                 "--secret", "id=foretoken-build-jobs,env=BUILD_JOBS",
             ]
+            transport = {key: arguments[key] for key in ("FORETOKEN_GITHUB_MIRROR", "GOPROXY") if key in arguments}
+            for key in transport:
+                args += ["--secret", f"id={key},env={key}"]
             for key, value in frontend.items():
                 args += ["--opt", f"{key}={value}"]
             for reference in cache_imports:
                 args += ["--import-cache", "type=registry,ref=" + reference]
             export = {"type": output["type"], **output["attrs"]}
-            self.run([*args, "--output", ",".join(f"{key}={value}" for key, value in export.items())], capture=capture)
+            self.run(
+                [*args, "--output", ",".join(f"{key}={value}" for key, value in export.items())],
+                capture=capture, environment=transport,
+            )
         result = self.read_json(metadata)
         logger.info(
             "Build completed: {} target={} output={} in {:.1f}s",
@@ -402,11 +408,13 @@ class ClusterBuilder(AbstractContextManager):
         capture: bool = False,
         container: str = "builder",
         input_text: str | None = None,
+        environment: dict[str, str] | None = None,
     ) -> str:
         """Execute a build stage, preserving live compiler and daemon diagnostics on failure."""
         started = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        command = ["env", *(f"{key}={value}" for key, value in environment.items()), *args] if environment else args
         result = self.cancellation.run(
-            self.command(args, container=container),
+            self.command(command, container=container),
             text=True,
             capture_output=capture,
             input=input_text,

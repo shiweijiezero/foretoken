@@ -121,12 +121,19 @@ RUN --mount=type=secret,id=foretoken-build-jobs,env=BUILD_JOBS \
     && "$python_path" -c 'import compileall, os, site; raise SystemExit(not all(compileall.compile_dir(path, quiet=1, workers=int(os.environ.get("BUILD_JOBS") or 1)) for path in site.getsitepackages()))' \
     && rm /tmp/foretoken-engine-constraints.txt
 
-# Keep application changes out of the native wheel's build inputs. The required
-# license also permits an absent optional third_party directory in source archives.
+# Keep application changes and checkout permissions out of the native wheel's
+# inputs, matching source snapshots without changing the caller's files.
+FROM patch-tool AS mooncake-source
+COPY deploy/mooncake/ /input/deploy/mooncake/
+COPY data-plane/patches/vllm/mooncake.version /input/data-plane/patches/vllm/mooncake.version
+# The required license also permits an absent optional third_party directory.
+COPY LICENSE third_party* /input/third_party/
+RUN find /input -type d -exec chmod 00755 {} + \
+    && find /input -type f -perm -100 -exec chmod 0755 {} + \
+    && find /input -type f ! -perm -100 -exec chmod 0644 {} +
+
 FROM scratch AS mooncake-inputs
-COPY deploy/mooncake/ /deploy/mooncake/
-COPY data-plane/patches/vllm/mooncake.version /data-plane/patches/vllm/mooncake.version
-COPY LICENSE third_party* /third_party/
+COPY --from=mooncake-source /input/ /
 
 # Build against the selected Python/CUDA ABI. Runtime images consume the complete
 # wheel and do not retain native compilers or build-time system packages.
@@ -135,12 +142,20 @@ USER root
 COPY --from=uv /uv /usr/local/bin/uv
 COPY --from=mooncake-go /usr/local/go /usr/local/go
 ARG UV_DEFAULT_INDEX
-ARG FORETOKEN_GITHUB_MIRROR
-ARG GOPROXY
 ARG GOSUMDB
+# Session download settings leave native cache inputs unchanged; absent overrides
+# preserve the base image's environment.
 RUN --mount=type=secret,id=foretoken-build-jobs,env=BUILD_JOBS \
+    --mount=type=secret,id=FORETOKEN_GITHUB_MIRROR \
+    --mount=type=secret,id=GOPROXY \
     --mount=type=bind,from=mooncake-inputs,target=/input \
     --mount=type=cache,id=foretoken-mooncake-source,target=/var/cache/foretoken/mooncake \
+    set -eu; \
+    for name in FORETOKEN_GITHUB_MIRROR GOPROXY; do \
+      if [ -f "/run/secrets/$name" ]; then \
+        value=$(cat "/run/secrets/$name"); export "$name=$value"; \
+      fi; \
+    done; \
     "${FORETOKEN_VLLM_PYTHON:-python3}" -I /input/deploy/mooncake/build-cuda-wheel \
       --output /out --cache /var/cache/foretoken/mooncake --jobs "${BUILD_JOBS:-2}"
 
@@ -151,8 +166,8 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "${FORETOKEN_VLLM_PYTHON:-python3}" -c \
       'from pathlib import Path; from vllm_patches import install_mooncake_dependencies, check_installed_dependencies; install_mooncake_dependencies(Path("/tmp/mooncake-wheels")); check_installed_dependencies()'
 COPY --from=mooncake-build /out/licenses/ /usr/local/share/licenses/
-COPY deploy/mooncake/NOTICE /usr/local/share/foretoken-mooncake/NOTICE
-COPY deploy/mooncake/patches/ /usr/local/share/foretoken-mooncake/patches/
+COPY --from=mooncake-inputs /deploy/mooncake/NOTICE /usr/local/share/foretoken-mooncake/NOTICE
+COPY --from=mooncake-inputs /deploy/mooncake/patches/ /usr/local/share/foretoken-mooncake/patches/
 
 FROM engine-runtime AS environment
 ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken

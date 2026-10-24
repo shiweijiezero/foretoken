@@ -60,7 +60,7 @@ class BuildSourceSelection:
 def platform_image_reference(
     reference: str, registry: str | None = None, *, previous: str | None = None
 ) -> str:
-    """Resolve a platform image default, retaining an available prior source for the same image.
+    """Resolve a platform image default through its origin or an available public fallback.
 
     An explicit registry replaces the original host. Automatic public proxies
     use their upstream-specific repository paths. Callers omit user-selected images.
@@ -80,7 +80,7 @@ def select_platform_image_sources(
     previous: Mapping[str, str] | None = None,
     installed_images: Collection[str] = (),
 ) -> dict[str, str]:
-    """Resolve image defaults concurrently, retaining matching installed sources while reachable."""
+    """Resolve image defaults concurrently, retaining installed fallbacks when their origins are unavailable."""
     previous = previous or {}
     with ThreadPoolExecutor() as executor:
         # Coalesce shared images before submission; the per-image cache does not
@@ -116,9 +116,9 @@ def select_platform_image_sources(
 def select_platform_oci_reference(reference: str, previous: str | None = None) -> str:
     """Select an anonymous source for a CLI-owned public image or OCI chart default.
 
-    Callers retain explicit user overrides. Preserve the original registry path,
-    tag or digest when selecting the public proxy, and reuse the decision within
-    this CLI invocation. A matching prior reference remains selected while reachable.
+    Callers retain explicit user overrides. Prefer a reachable origin; manifest
+    latency does not establish layer availability or transfer speed. If the origin
+    is unavailable, retain an available prior proxy and preserve the image identity.
     """
     scheme = "oci://" if reference.startswith("oci://") else ""
     value = reference.removeprefix(scheme) if scheme else reference
@@ -132,29 +132,17 @@ def select_platform_oci_reference(reference: str, previous: str | None = None) -
     else:
         repository, revision = path, "latest"
     official_host = "registry-1.docker.io" if host == "docker.io" else host
+    if _measure("oci", official_host, repository, revision) is not None:
+        return reference
     mirrors = _oci_mirrors(host, repository, revision)
-    preferred = (
-        ""
-        if previous == reference
-        else next(
-            (
-                mirror.value
-                for mirror in mirrors
-                if previous == f"{scheme}{mirror.value}/{path}"
-            ),
-            None,
-        )
+    preferred = next(
+        (mirror.value for mirror in mirrors if previous == f"{scheme}{mirror.value}/{path}"),
+        None,
     )
-    with ThreadPoolExecutor(max_workers=1 + len(mirrors)) as executor:
-        official = executor.submit(
-            copy_context().run, _measure, "oci", official_host, repository, revision
-        )
+    with ThreadPoolExecutor(max_workers=len(mirrors)) as executor:
         futures = tuple(executor.submit(copy_context().run, mirror.measure) for mirror in mirrors)
         selected = _select_mirror(
-            official.result(),
-            mirrors,
-            tuple(future.result() for future in futures),
-            preferred=preferred,
+            None, mirrors, tuple(future.result() for future in futures), preferred=preferred,
         )
     return f"{scheme}{selected[0].value}/{path}" if selected else reference
 

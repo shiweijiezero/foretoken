@@ -7,11 +7,7 @@ English | [简体中文](README_zh.md)
 
 These examples serve Qwen2.5-0.5B-Instruct with a prequantized checkpoint or quantize ordinary weights while loading. Each directory is a complete Kustomize deployment with its own instance name, frontend and model service. The deployments can be created and removed independently without resource-name conflicts. A matching BF16 reference is included for distribution comparisons.
 
-Build and install the [platform from this source checkout](../../../docs/deployment/source.md) before deploying an example:
-
-```bash
-foretoken install -e .
-```
+Install the [Foretoken platform](../../../README.md#2-install-the-kubernetes-platform), then run these examples from the repository root.
 
 Each deployment requests one GPU, 3 CPU, and 9 GiB of host memory across the model and frontend, plus capacity for the Foretoken platform.
 

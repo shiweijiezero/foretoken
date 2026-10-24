@@ -7,9 +7,9 @@ package model
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
-	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
@@ -19,25 +19,26 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 )
 
-// modelGroupWorkloadState reports materialization and complete readiness for the Group lifecycle.
+// modelGroupWorkloadState reports persisted workload identity and its controller's availability.
 type modelGroupWorkloadState struct {
-	createdAt time.Time
+	uid       types.UID
 	available bool
 }
 
-// reconcileWorkload returns the persisted workload creation time and complete Group availability.
+// reconcileWorkload returns the persisted workload identity and native controller availability.
 func (reconciler *GroupReconciler) reconcileWorkload(ctx context.Context, group *inferencev1alpha1.ModelGroup, deployment *appsv1.Deployment) (modelGroupWorkloadState, error) {
 	if group.Spec.NodeCount == 1 {
 		deployment, err := reconciler.reconcileDeployment(ctx, group, deployment)
 		if err != nil {
 			return modelGroupWorkloadState{}, err
 		}
-		return modelGroupWorkloadState{createdAt: deployment.CreationTimestamp.Time, available: modelGroupDeploymentAvailable(deployment)}, nil
+		return modelGroupWorkloadState{uid: deployment.UID, available: modelGroupDeploymentAvailable(deployment)}, nil
 	}
 	workloadName := workload.ModelGroupLeaderWorkerSetName(group)
 	if workloadName != group.Name {
@@ -116,31 +117,43 @@ func (reconciler *GroupReconciler) reconcileWorkload(ctx context.Context, group 
 	// An older cohort keeps its original Pod template while the Pool rolls out the new contract.
 	if group.Spec.Runtime.PreparationVersion > 0 || current.ResourceVersion == "" {
 		if err := reconciler.requireLeaderWorkerQueueAdmission(ctx, desired, group.Spec.Runtime.LeaderWorkerScheduling); err != nil {
-			return modelGroupWorkloadState{createdAt: current.CreationTimestamp.Time}, err
+			return modelGroupWorkloadState{uid: current.UID}, err
 		}
 		if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(modelGroupFieldOwner), client.ForceOwnership); err != nil {
 			return modelGroupWorkloadState{}, fmt.Errorf("apply LeaderWorkerSet: %w", err)
 		}
 		current = desired
 	}
-	state := modelGroupWorkloadState{createdAt: current.CreationTimestamp.Time}
-	if current.Status.ObservedGeneration != current.Generation || current.Status.ReadyReplicas != 1 ||
-		!meta.IsStatusConditionTrue(current.Status.Conditions, string(lwsv1.LeaderWorkerSetAvailable)) {
-		return state, nil
+	return modelGroupWorkloadState{
+		uid: current.UID,
+		available: current.Status.ObservedGeneration == current.Generation && current.Status.ReadyReplicas == 1 &&
+			meta.IsStatusConditionTrue(current.Status.Conditions, string(lwsv1.LeaderWorkerSetAvailable)),
+	}, nil
+}
+
+// currentWorkloadPods returns proven members of the selected execution workload for status observation.
+func (reconciler *GroupReconciler) currentWorkloadPods(ctx context.Context, group *inferencev1alpha1.ModelGroup, uid types.UID) ([]corev1.Pod, error) {
+	if uid == "" {
+		return nil, nil
 	}
-	// Pod events can arrive before LWS has withdrawn its Available condition.
-	var pods corev1.PodList
-	if err := reconciler.List(ctx, &pods, client.InNamespace(group.Namespace), client.MatchingLabels(workload.ModelGroupLabels(group))); err != nil {
-		return modelGroupWorkloadState{}, fmt.Errorf("list Group members: %w", err)
+	var candidates corev1.PodList
+	if err := reconciler.List(ctx, &candidates, client.InNamespace(group.Namespace), client.MatchingLabels(workload.ModelGroupLabels(group))); err != nil {
+		return nil, fmt.Errorf("observe Group Pods: %w", err)
 	}
-	if len(pods.Items) != int(group.Spec.MemberCount) {
-		return state, nil
-	}
-	for index := range pods.Items {
-		if !pods.Items[index].DeletionTimestamp.IsZero() || !workload.PodReady(&pods.Items[index]) {
-			return state, nil
+	// Stable Group labels also match Pods retiring from a replaced workload.
+	pods := make([]corev1.Pod, 0, len(candidates.Items))
+	for index := range candidates.Items {
+		pod := &candidates.Items[index]
+		owner, err := workload.ModelGroupForPod(ctx, reconciler.APIReader, pod)
+		if apierrors.IsNotFound(err) || errors.Is(err, workload.ErrUnprovenBackendOwner) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if owner.Workload.GetUID() == uid {
+			pods = append(pods, *pod)
 		}
 	}
-	state.available = true
-	return state, nil
+	return pods, nil
 }

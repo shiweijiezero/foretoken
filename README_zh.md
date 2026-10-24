@@ -66,11 +66,11 @@ uv pip install -e .  # 或 pip install -e .
 # 使用 nvidia-smi 显示的 GPU 编号 0。若使用两张 GPU，传入 --gpus 0,1。
 foretoken cluster create k3d --name foretoken-dev --gpus 0
 
-# 从当前源码构建：
-foretoken install -e .
+# 安装已发布的平台：
+foretoken install
 
-# 使用已发布的平台：
-# foretoken install
+# 若需从当前源码构建：
+# foretoken install -e .
 ```
 
 平台在集群中安装一次。各部署实例拥有独立的控制器和服务，默认通过共享 Gateway 提供 HTTP 访问。
@@ -87,7 +87,7 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 实例包含一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB。模型文件和运行时缓存使用平台默认存储，本机示例对应创建集群时准备的 `./data`。更多部署配置见 [`examples/`](examples/)。
 
-同时尝试不同代码改动，见[并行运行候选方案](docs/deployment/source_zh.md#并行运行候选方案)；修改 vLLM，见[使用本地引擎源码](docs/deployment/source_zh.md#修改推理引擎)。
+修改代码或并行比较候选方案时，按[源码部署](docs/deployment/source_zh.md)流程更新平台和目标实例。
 
 ### 4. 发送测试请求
 

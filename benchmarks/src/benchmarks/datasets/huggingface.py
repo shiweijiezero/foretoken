@@ -12,12 +12,6 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-from datasets import (
-    get_dataset_config_names,
-    get_dataset_split_names,
-    load_dataset,
-    load_dataset_builder,
-)
 from foretoken.downloads.sources import select_huggingface_endpoint
 from huggingface_hub import hf_hub_download, parse_hf_uri, snapshot_download
 from huggingface_hub.errors import LocalEntryNotFoundError
@@ -207,6 +201,8 @@ def resolve_hf_dataset_spec(spec: str) -> tuple[str, str, str]:
     The resolved identity is also used when binding trace rows to dataset rows.
     """
     dataset_id, selection = parse_hf_dataset_spec(spec)
+    from datasets import get_dataset_config_names, get_dataset_split_names, load_dataset_builder
+
     configs = get_dataset_config_names(dataset_id)
     if selection in configs:
         config = selection
@@ -240,6 +236,8 @@ def same_dataset_source(left: str, right: str) -> bool:
 
 def iter_hf_rows(spec: str) -> Iterator[tuple[int, Any]]:
     """Stream rows from the selected Hugging Face configuration and split."""
+    from datasets import load_dataset
+
     dataset_id, config, split = resolve_hf_dataset_spec(spec)
     data = load_dataset(dataset_id, name=config, split=split, streaming=True)
     for row_index, row in enumerate(data):

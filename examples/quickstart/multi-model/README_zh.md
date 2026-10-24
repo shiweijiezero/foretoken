@@ -14,7 +14,7 @@
 
 ## 部署
 
-从源码[安装平台](../../../docs/deployment/source_zh.md)后，在仓库根目录运行：
+安装 [Foretoken 平台](../../../README_zh.md#2-安装-kubernetes-平台)后，在仓库根目录运行：
 
 ```bash
 foretoken deploy examples/quickstart/multi-model --timeout 20m

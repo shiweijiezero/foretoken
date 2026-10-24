@@ -381,6 +381,10 @@ type ModelGroupStatus struct {
 	// +optional
 	Phase ModelGroupPhase `json:"phase,omitempty"`
 
+	// ObservedWorkloadUID binds availability observations to the current Deployment or LeaderWorkerSet.
+	// +optional
+	ObservedWorkloadUID string `json:"observedWorkloadUID,omitempty"`
+
 	// DrainStartedAt fixes the bounded deletion deadline across controller retries.
 	// +optional
 	DrainStartedAt *metav1.Time `json:"drainStartedAt,omitempty"`

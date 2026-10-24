@@ -9,7 +9,7 @@ import itertools
 import random
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.datasets.conversations import (
@@ -20,10 +20,12 @@ from benchmarks.datasets.conversations import (
 )
 from benchmarks.datasets.huggingface import resolve_tokenizer_path
 from benchmarks.datasets.replay import bind_arrival_trace_requests
-from benchmarks.datasets.synthetic import RandomRequestSource
 from benchmarks.datasets.traces import ArrivalTraceEvent, ArrivalTraceReader
 from benchmarks.integrations.openai import PreparedRequest, RequestBuilder
 from benchmarks.model_service import ModelService
+
+if TYPE_CHECKING:
+    from benchmarks.datasets.synthetic import RandomRequestSource
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,8 @@ class HttpWorkload:
             )
             self.tasks = [event.request for event in self.trace_events]
         elif self.dataset.dataset_selectors == ["random"]:
+            from benchmarks.datasets.synthetic import RandomRequestSource
+
             self.random_source = RandomRequestSource(benchmark, service)
             self.tasks = (
                 list(

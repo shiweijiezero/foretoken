@@ -52,7 +52,7 @@ uv venv --python 3.12 --seed  # With pip: python3 -m venv .venv (Python 3.11+)
 source .venv/bin/activate
 uv pip install -e .  # Or: pip install -e .
 
-# For the published CLI instead:
+# Use the published CLI instead:
 # uv pip install foretoken  # Or: pip install foretoken
 ```
 
@@ -66,11 +66,11 @@ Create a local k3d cluster named `foretoken-dev` and install Foretoken:
 # Use GPU index 0 from nvidia-smi. To use two GPUs, pass --gpus 0,1.
 foretoken cluster create k3d --name foretoken-dev --gpus 0
 
-# Build from the current source checkout:
-foretoken install -e .
+# Install the published platform:
+foretoken install
 
-# Use the published platform instead:
-# foretoken install
+# Build from the current source checkout instead:
+# foretoken install -e .
 ```
 
 Install the platform once for the cluster. Each deployment instance has its own controller and services, with a shared Gateway for HTTP access by default.
@@ -87,7 +87,7 @@ Without `--name`, the instance name comes from `metadata.name` of the `FrontendS
 
 The instance contains one frontend service and one `Qwen/Qwen3-0.6B` model replica. The model requests 1 GPU, 4 CPU, and 48 GiB memory, with limits of 8 CPU and 64 GiB. Model files and runtime cache use the platform's default storage, backed by `./data` in this local setup. More deployments are available in [`examples/`](examples/).
 
-To try different code changes side by side, see [parallel candidates](docs/deployment/source.md#run-candidates-in-parallel); to modify vLLM, see [local engine source](docs/deployment/source.md#edit-an-inference-engine).
+For code changes and parallel experiments, use [source deployment](docs/deployment/source.md).
 
 ### 4. Send a test request
 
