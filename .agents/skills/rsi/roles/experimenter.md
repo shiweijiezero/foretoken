@@ -11,15 +11,15 @@ An Experimenter builds and deploys prepared candidates, then evaluates them with
 
 ## Take a candidate for evaluation
 
-The Experimenter first learns Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then reviews the question, code version, reference results, workload and expected change, and confirms that the required resources are assigned. If execution requirements are unclear, the developer supplies the missing details. Other candidates with complete inputs and available resources can proceed in the meantime.
+The Experimenter first learns Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then takes the Worker's fixed version, hypothesis, reference and comparison commands, workload, resource needs and expected rebuild or restart scope. Resolve missing execution details directly with the Worker while other ready candidates proceed.
 
-The Experimenter takes evaluations in the agreed priority order and keeps the delivered code and comparison conditions unchanged. Implementation problems go back to the Worker; changes to resources or shared environments go to the lead. The Worker can prepare the next version in another checkout while evaluation continues. The [team guidance](common.md) describes this handoff.
+Maintain waiting, running and completed evaluations in the same task records used by the lead and Workers. Within the lead's priorities and assigned resource budget, choose ready candidates that fit available GPU, CPU, memory and build capacity. Once execution ownership is assigned in the shared queue, launch without waiting for another instruction. Keep the delivered code and comparison conditions unchanged. Implementation problems go back to the Worker; additional resources, changed priorities or shared environment changes go to the lead. The [team guidance](common.md) describes the handoff.
 
 ## Run and record the experiment
 
 The Experimenter uses existing tools to synchronize, build, deploy, diagnose and measure each candidate. Fixed workload groups and repetitions can run through sweeps without a new instruction for each point. Each run retains its commands, code version, service configuration, logs and results, including failures and interruptions, so later analysis and recovery have the necessary evidence.
 
-Follow the [iteration workflow](../../../../rsi-playbooks/README.md#reuse-the-environment-across-iterations) for source candidates. In the first iteration, deploy a small intended change with `-e`, confirm a successful request, then benchmark it. Check that the update matches its intended scope: for example, a frontend-only edit should leave model Pod UIDs unchanged.
+Follow the [iteration workflow](../../../../rsi-playbooks/README.md#reuse-the-environment-across-iterations) for source candidates. Deploy the intended candidate with `-e`, reusing compatible images and build caches, and confirm the updated code through its startup and requests. Check that the update matches its intended scope: for example, a frontend-only edit should leave model Pod UIDs unchanged. Investigate a concrete deployment failure with the smallest relevant check, then return to the candidate's measurement.
 
 Record initial environment preparation separately from each iteration's compilation, application publication, startup, first response and measurement. If a routine edit triggers an unexpected environment rebuild or full-image transfer, share the command and timings with the Worker and lead so they can correct the next iteration's deployment path.
 
@@ -27,10 +27,12 @@ Result analysis distinguishes measurement completion, request success and accept
 
 GPU collection continues throughout the experiment. The Experimenter reuses [collectors](../SKILL.md#collect-gpu-usage) covering the assigned devices, with one collection owner chosen by the lead for each device set. Utilization is interpreted alongside build, measurement and waiting periods, and missing intervals are reported. When collection spans several experiments, it is handed over with the resources and stopped when no longer needed.
 
-After each group of measurements, the Experimenter sends results directly to the Worker, lead and reviewer and updates the assigned iteration notes. The lead chooses one author for the report, and other members send their contributions to that author. The [experiment records guide](../../../../rsi-playbooks/experiment-records.md) explains what to retain.
+As each evaluation finishes, record its actual outcome and resource state, send the original results directly to the Worker, lead and reviewer, and update the assigned iteration notes. The lead chooses one author for the report, and other members send their contributions to that author. The [experiment records guide](../../../../rsi-playbooks/experiment-records.md) explains what to retain.
 
 ## Continue with ready work
 
-As resources become available, the Experimenter continues assigned evaluations with complete inputs. Reports of actual durations, queue wait and available capacity help the lead adjust preparation and evaluation. New findings may also make a waiting candidate less useful, in which case the Experimenter raises that with the lead.
+When GPUs are idle and the queue has no runnable candidate, ask Workers for a testable version and its expected delivery time. Report what is missing and how long resources have been waiting, so the responsible Worker can finish the handoff or the lead can redirect preparation. When several candidates are ready, use their resource needs and the agreed priorities to keep evaluations moving; the number of Workers need not match the number of GPUs.
+
+After an evaluation, start the next suitable job or stop idle serving processes and release the GPUs after confirming exit. Preserve reusable workspaces, model files and build caches for later iterations, following the task's cleanup arrangements. Report actual build and measurement durations, queue wait and delivery bottlenecks to the team. If new findings make a queued candidate less useful, raise that with the lead.
 
 On pause, deadline or handoff, the Experimenter stops or transfers owned jobs and collectors, confirms resource state and preserves results. Independent review and working-agent counts follow the team guidance.

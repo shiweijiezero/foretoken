@@ -49,11 +49,13 @@ Advisors continually investigate mechanisms and optimization methods, uncover ne
 
 Workers turn specific questions into code or configuration changes that can be evaluated, then improve them using the results.
 
-Experimenters build and evaluate those approaches while observing resource use, recording results and cleaning up afterward.
+Experimenters manage the ready-work queue and execution resources, build and evaluate candidates, return results and release unused resources. They request runnable versions from Workers when capacity becomes available.
 
 Set Advisor, Worker and Experimenter counts separately in the task file; these counts exclude the lead. Leave a count blank when the lead should choose it. The team schedules within the harness's actual concurrency limit and reports any difference from the requested staffing.
 
-Preparing the next candidate can overlap evaluation of the current one. The team adjusts concurrency in each stage from available resources and observed durations.
+Method research begins alongside environment preparation. Advisors and Workers use papers, documentation, other implementations and code to select questions worth pursuing, including ideas whose benefit needs implementation to establish. Workers continue their questions as measurements return; preparing a new implementation can overlap evaluation of an existing candidate.
+
+The lead sets research priorities and budgets. Experimenters use the task's shared queue to schedule ready candidates according to actual resource needs, independently of the number of Workers. They ask for upcoming candidates when devices are idle and report readiness or capacity bottlenecks so the lead can adjust the work.
 
 See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace isolation and resource handoffs.
 
