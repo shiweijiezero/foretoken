@@ -51,6 +51,8 @@ Workers turn specific questions into code or configuration changes that can be e
 
 Experimenters build and evaluate those approaches while observing resource use, recording results and cleaning up afterward.
 
+Set Advisor, Worker and Experimenter counts separately in the task file; these counts exclude the lead. Leave a count blank when the lead should choose it. The team schedules within the harness's actual concurrency limit and reports any difference from the requested staffing.
+
 Preparing the next candidate can overlap evaluation of the current one. The team adjusts concurrency in each stage from available resources and observed durations.
 
 See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace isolation and resource handoffs.

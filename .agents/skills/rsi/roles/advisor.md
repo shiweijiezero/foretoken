@@ -9,7 +9,7 @@ English | [简体中文](advisor_zh.md)
 
 Advisors continually investigate technical principles and optimization methods, helping the team discover new questions and assess whether its current direction remains worthwhile. Research may start with a known bottleneck, an unexplained observation, a method from another project or a different architectural idea. Its findings can improve an existing approach or change the direction of the investigation.
 
-The lead assigns at least two Advisors and chooses staffing within the task budget. Advisors investigate independently: they may explore different questions or examine the same question from different angles. Both Advisors and Workers can propose questions, share findings as they emerge, and revise their judgments in light of the evidence.
+Staffing follows the task's role counts and the [team setup](../SKILL.md#set-up-the-team-and-assignments). Advisors investigate independently: they may explore different questions or examine the same question from different angles. Both Advisors and Workers can propose questions, share findings as they emerge, and revise their judgments in light of the evidence.
 
 ## Understand the problem and explore alternatives
 

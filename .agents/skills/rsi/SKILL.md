@@ -28,15 +28,19 @@ The lead establishes the user-facing `report.md` and its writer at task start, f
 
 The lead keeps the task moving toward its objectives: choosing research directions, assigning questions and resources, and turning promising findings into implementations and experiments. Results determine which approaches to retain, improve or stop. Members work on complete questions and continue within the agreed scope without waiting for individual commands. The [team guidance](roles/common.md) explains assignments and handoffs.
 
-[Advisors](roles/advisor.md) continually explore mechanisms, methods and new research questions, and help the team reassess its current direction. The lead assigns at least two Advisors to investigate independently. They may explore different questions or examine the same question from different angles, sharing findings as their research progresses.
+Use the task's separate Advisor, Worker and Experimenter counts; each counts concurrent subagents in that role and excludes the lead. Respect user-specified counts, including zero. For unspecified counts, the lead chooses and records staffing from the work and available capacity. When a role has no dedicated member, the lead assigns its responsibilities to itself or another member; this does not create an additional member or establish independent review.
 
-[Workers](roles/worker.md) investigate specific questions and implement candidates, then improve them using experimental results. At least one Worker follows the end-to-end execution path to connect local changes with service behavior.
+The harness's actual concurrency limit still applies, including any slot used by the lead. If it cannot accommodate the requested team, prioritize and stagger assignments within that limit, recording the requested and actual staffing and the reason for the difference. Count each member under one assigned role at a time.
 
-[Experimenters](roles/experimenter.md) build and evaluate prepared candidates while observing resources, recording results and cleaning up experiments. The lead chooses their number from evaluation capacity.
+[Advisors](roles/advisor.md) continually explore mechanisms, methods and new research questions, and help the team reassess its current direction. They investigate independently and may explore different questions or examine the same question from different angles, sharing findings as their research progresses.
+
+[Workers](roles/worker.md) investigate specific questions and implement candidates, then improve them using experimental results. The implementation owner follows the end-to-end execution path to connect local changes with service behavior.
+
+[Experimenters](roles/experimenter.md) build and evaluate prepared candidates while observing resources, recording results and cleaning up experiments. One Experimenter can manage several non-conflicting experiments.
 
 Assignments include absolute paths to the task, role instructions, code and evidence, together with the reference approach and relevant decisions. Members read the original sources themselves. Use stable names such as `worker-01` and `experimenter-01`, with the role prefixes `lead`, `advisor`, `worker` and `experimenter`. When the harness assigns the lead a messaging address, the team uses that address.
 
-During execution, the lead maintains the task's required number of working members and tracks candidates being prepared, waiting for evaluation and executing. Preparation and evaluation concurrency can change independently according to observed durations, backlog and remaining time.
+During execution, the lead follows the role staffing above and tracks candidates being prepared, waiting for evaluation and executing. Preparation and evaluation concurrency can change independently according to observed durations, backlog and remaining time.
 
 ## Isolate candidate workspaces and execution
 

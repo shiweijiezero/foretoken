@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](experimenter.md) | 简体中文
 
-Experimenter 负责把准备好的方案构建、部署到实验环境中，再按约定的负载进行评测。执行期间，它同时观察资源使用并保存结果；实验结束后，继续负责相关环境的清理和交接。主 Agent 根据评测容量安排 Experimenter，一名成员可以管理多个互不冲突的实验。
+Experimenter 负责把准备好的方案构建、部署到实验环境中，再按约定的负载进行评测。执行期间，它同时观察资源使用并保存结果；实验结束后，继续负责相关环境的清理和交接。人数遵循任务的分角色设置与[组建团队说明](../SKILL_zh.md#组建团队与派工)，一名成员可以管理多个互不冲突的实验。
 
 ## 接手待测方案
 

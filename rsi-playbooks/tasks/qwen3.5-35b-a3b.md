@@ -11,8 +11,9 @@ Deployment layout: agent-selected within the final single-node GPU budget, inclu
 Final deployment budget: 4 GPUs on one node; at most 32 CPU cores and 250G host memory in total for the model and frontend workloads
 Experiment sizing: service candidates fit the final budget; focused kernel, compilation, or correctness experiments may use fewer resources, including one GPU
 Available resources: 2 nodes, each with 8 available GPUs, 64 CPU cores, and 1 TiB memory
-Minimum concurrently working subagents: 6
-Maximum concurrently working subagents: 20
+Advisor count: 2
+Worker count: 2
+Experimenter count: 2
 Minimum parallel experiments: 4 independent experiment groups across the two nodes
 Maximum parallel experiments: not fixed at four; determine and record the limit from actual GPU, CPU, memory, and storage needs, including smaller experiments
 Parallel scheduling: reserve capacity for platform services, builds and benchmark clients, then place four-GPU candidates and smaller experiments according to their resource requests. If fewer than four groups can run, record and address the preparation or resource constraints.

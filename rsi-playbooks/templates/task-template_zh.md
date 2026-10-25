@@ -18,6 +18,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 部署形态：<如聚合部署、预填充/解码分离，或不限>
 最终部署预算：<保留方案的节点安排、GPU／CPU／内存总上限，说明涵盖的工作负载；也可由 Agent 选择>
 可用资源：<节点数与每节点可用的 GPU、CPU 核数、内存，如 2*8 卡 C500，每节点 64 核 CPU、512 GiB 内存>
+Advisor 数量：<该角色并行子 Agent 数，不含主 Agent；非负整数，留空由主 Agent 安排>
+Worker 数量：<该角色并行子 Agent 数，不含主 Agent；非负整数，留空由主 Agent 安排>
+Experimenter 数量：<该角色并行子 Agent 数，不含主 Agent；非负整数，留空由主 Agent 安排>
 最大并行实验数：<同时运行的独立实验上限，如 4；或由 Agent 根据资源预算确定并记录>
 评测负载：<指定数据集、长度、并发等负载组，或由 Agent 选择>
 优化目标：<主指标与目标值、需保持的条件、按各组或整体判断；也可开放探索>

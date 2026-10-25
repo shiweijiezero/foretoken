@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](experimenter_zh.md)
 
-An Experimenter builds and deploys prepared candidates, then evaluates them with the agreed workloads. During execution, they also observe resource use and save results; afterward, they remain responsible for cleanup and handoff. The lead chooses staffing from evaluation capacity. One member can manage several non-conflicting experiments.
+An Experimenter builds and deploys prepared candidates, then evaluates them with the agreed workloads. During execution, they also observe resource use and save results; afterward, they remain responsible for cleanup and handoff. Staffing follows the task's role counts and the [team setup](../SKILL.md#set-up-the-team-and-assignments). One member can manage several non-conflicting experiments.
 
 ## Take a candidate for evaluation
 
