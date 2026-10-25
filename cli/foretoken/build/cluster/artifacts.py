@@ -241,6 +241,7 @@ def _bind_artifact_claim(
         )
     except BaseException as exc:
         error = exc
+        cancellation.cancel(exc)
         raise
     finally:
         try:

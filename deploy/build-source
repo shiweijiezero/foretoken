@@ -201,7 +201,7 @@ def export_cache(
 def restore_cache(
     seed: Path | None, workspace: Path, cache: Path, environment: dict[str, str], component: str,
 ) -> None:
-    """Retire interrupted restoration and optionally seed a new workspace before publishing its input receipt."""
+    """Seed missing native state before prepare_workspace reapplies the captured source inputs."""
     receipt = workspace.with_suffix(".json")
     target = (
         (workspace / "data-plane" / environment.get("CARGO_TARGET_DIR", "target")).resolve()
@@ -211,7 +211,8 @@ def restore_cache(
     staging = workspace.with_name(".compiler-cache")
     if staging.exists():
         shutil.rmtree(staging)
-    if seed is None or receipt.exists() or workspace.exists() or target is not None and target.exists():
+    native_state = target if target is not None else receipt
+    if seed is None or native_state.exists():
         return
     staging.mkdir(parents=True)
     try:
@@ -227,6 +228,11 @@ def restore_cache(
         else:
             for name, variable in (("go-build", "GOCACHE"), ("go-modules", "GOMODCACHE")):
                 restore_shared_cache(seed / name, Path(environment.get(variable, cache / name)))
+        # Captured inputs own user edits. Invalidate the receipt before replacing
+        # a Python-only workspace that has not initialized its Rust target yet.
+        receipt.unlink(missing_ok=True)
+        if workspace.exists():
+            shutil.rmtree(workspace)
         source.rename(workspace)
         (staging / "source.json").replace(receipt)
     finally:

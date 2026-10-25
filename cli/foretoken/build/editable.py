@@ -630,7 +630,7 @@ class EditableDeployment:
                 component: image for component in missing
                 if (image := build["images"].get("compiler-cache-" + component))
                 and set(self.state["bundles"][component].get("parts", APPLICATION_PARTS[component])).intersection({"go", "rust"})
-                and not builder.has_source_state(component)
+                and not builder.has_native_state(component)
             }
             cache_seeds = {}
             cache_builder = None

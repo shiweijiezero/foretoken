@@ -370,6 +370,8 @@ class ClusterBuilder(AbstractContextManager):
             )
             self._prepare_outputs()
         except BaseException as error:
+            # Report the startup failure and stop peers before retirement can block.
+            self.cancellation.cancel(error)
             self.__exit__(type(error), error, error.__traceback__)
             raise
         return self
