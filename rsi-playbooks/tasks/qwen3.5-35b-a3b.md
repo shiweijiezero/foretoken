@@ -22,7 +22,9 @@ Accuracy evaluation: run foretoken eval as needed for changes that may affect ac
 Allowed changes: implementation and configuration at any layer, within the precision and resource constraints above
 Measurement budget per iteration: default to 10 minutes of perf/eval measurement to keep iterations fast; adjust the measurement budget and request count to the actual workload, recording the reason and time spent
 Work duration: a total budget of 24 hours from the start of task execution
-Expected outcome / completion criteria: maximize throughput and minimize TPOT without fixed metric thresholds; continue method research, implementation and experiments until the selected research questions are answered and current evidence supports no further investment, the time budget expires, or the user explicitly asks to stop. State the basis for stopping and distinguish measured lack of benefit, an unavailable implementation and unimplemented or unmeasured directions; finishing configuration search does not establish that all optimization opportunities are exhausted.
+Expected outcome / completion criteria: keep increasing throughput and reducing TPOT without fixed metric thresholds.
+  Continue researching methods, changing implementations and running experiments. Finish when the selected questions are answered and evidence shows that further work is not worthwhile, when the time budget expires, or when the user asks to stop.
+  Explain why the task ended. Distinguish approaches tested without benefit, implementations that could not run, and ideas not yet implemented or tested. Finishing a parameter search alone does not show that no other optimization opportunities remain.
 Deliverables (<iteration> is the approach name passed to --iteration):
   - Changes and commands: record each iteration's code/configuration changes and full foretoken perf commands in the "Changes and commands" section of results/qwen3.5-35b-a3b/iterations/<iteration>/notes/iteration.md.
   - Performance metrics: record output throughput (tokens/s) and mean TPOT (ms/token) at concurrency 1 and 16 for each workload in the "Performance metrics" table in the same iteration.md.

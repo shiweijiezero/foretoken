@@ -18,7 +18,7 @@ Before starting, every role [learns how Foretoken works](roles/common.md#learn-t
 
 The team starts experiments only when the user requests execution or resumption. A new task records its start and deadline; a resumed task first checks existing jobs and results and keeps the original time budget. A supplied configuration is a starting point that can evolve with evidence. If none is supplied, the team records an initial approach for comparison. The team builds on existing findings and continues until the task's end conditions are met.
 
-Start method research alongside the minimum environment preparation needed for experiments. Advisors and Workers read relevant papers, official documentation, community implementations and local source to develop research questions; the Experimenter prepares the runtime and initial measurements. Research that can use existing knowledge or source does not wait for GPU readiness or a complete profile.
+While the Experimenter prepares the runtime and initial measurements, Advisors and Workers begin reading papers, official documentation, community implementations and local source to identify worthwhile questions. Work that can use these sources need not wait for available GPUs or a complete profile.
 
 Before allocating resources, the lead checks the task's nodes, current users and available GPU windows, following the [resource coordination guidance](roles/common.md#coordinate-resources-and-environments). If a node cannot be used, the lead records the reason and addresses problems that can be resolved.
 
@@ -28,7 +28,7 @@ The lead establishes the user-facing `report.md` and its writer at task start, f
 
 ## Set up the team and assignments
 
-The lead chooses research priorities and budgets, assigns complete questions to continuing owners, and turns findings into implementations and experiments. A worthwhile question can receive implementation time while its benefit is still uncertain; measured results determine retention. The Experimenter schedules ready candidates within those priorities and resources. Members continue within the agreed scope without waiting for individual commands. The [team guidance](roles/common.md) explains assignments, the experiment queue and handoffs.
+The lead chooses which questions to pursue, gives each one time and resources, and keeps an owner following it. Ideas that need an implementation before their benefits can be judged may receive a trial; measurements determine whether to keep them. The Experimenter tests ready approaches within these arrangements. Members continue within the agreed scope without waiting for instructions at every step. See the [team guidance](roles/common.md) for assignments and handoffs.
 
 Use the task's separate Advisor, Worker and Experimenter counts; each counts concurrent subagents in that role and excludes the lead. Respect user-specified counts, including zero. For unspecified counts, the lead chooses and records staffing from the work and available capacity. When a role has no dedicated member, the lead assigns its responsibilities to itself or another member; this does not create an additional member or establish independent review.
 
@@ -42,7 +42,7 @@ The harness's actual concurrency limit still applies, including any slot used by
 
 Assignments include absolute paths to the task, role instructions, code and evidence, together with the reference approach and relevant decisions. Members read the original sources themselves. Use stable names such as `worker-01` and `experimenter-01`, with the role prefixes `lead`, `advisor`, `worker` and `experimenter`. When the harness assigns the lead a messaging address, the team uses that address.
 
-During execution, the lead follows the role staffing above and tracks progress through shared records and substantive updates. Preparation and evaluation concurrency can change independently according to observed durations, backlog and remaining time. Give members complete assignments and stable counterparts; use the [communication guidance](roles/common.md#communicate-without-blocking-independent-work) to reduce repeated context, relayed messages and waits unrelated to the next action.
+The lead follows the staffing above and reads experiment records and new results to track progress. Use observed durations, the number of candidates waiting and the remaining budget to adjust preparation work and concurrent experiments separately. Keep members who know a question working together; see [sharing findings and continuing work](roles/common.md#share-findings-and-keep-working).
 
 ## Isolate candidate workspaces and execution
 
@@ -60,7 +60,7 @@ At the start of an iteration, use research, code and earlier results to select t
 
 When preparation or measurement is blocked, the lead assigns an owner to resolve it while other members continue research, implementation or local validation that does not depend on that result. Candidates and validation methods can be prepared from available evidence before a full baseline or profile is available; measurements then determine whether to adopt them.
 
-The Worker delivers a reproducible candidate to the assigned Experimenter. Prefer disjoint available GPU groups so Experimenters can independently deploy and evaluate their candidates; coordinate scheduling where resources overlap. Each Experimenter records the candidate, confirms that the intended change ran, and returns results directly to the Worker and assigned reviewer. When capacity becomes available, check recorded readiness and ask for missing updates. Fixed workload groups and repetitions can run through sweeps.
+The Worker gives a runnable, reproducible version to the assigned Experimenter. Prefer a separate group of available GPUs for each experiment, arranging a shared schedule only when experiments need the same devices. The Experimenter deploys the change, confirms it took effect, records the measurements and sends results directly to the Worker and assigned reviewer. When GPUs are free, check which approaches are ready before asking for missing information. Fixed workload groups and repetitions can run through sweeps.
 
 Before retaining or integrating a change, the lead reads the implementation and relevant call paths and reviews the independent assessment. The combined approach is still validated under the task's workload.
 

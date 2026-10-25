@@ -20,7 +20,7 @@ Choose results relevant to the question, and check request lengths, actual batch
 
 ## Capture and inspect with Foretoken
 
-For execution bottlenecks, prefer existing metrics, logs and Foretoken's profiling entry points to observe the target workload. Ad hoc timers, per-step logging, forced synchronization or extra diagnostic requests can change execution order, batching and cache state, producing a bottleneck that differs from ordinary execution. If existing traces lack an event needed to answer the question, add only the necessary markers or instrumentation, make them removable or switchable, and record their scope and possible effects.
+Start with existing metrics, logs and Foretoken's profiling tools to see how the actual workload executes. Adding timers, per-step logging, forced synchronization or diagnostic requests can change execution order, batching and cache state, so the observed behavior may differ from an ordinary run. Add markers or other instrumentation only when existing traces lack information needed to answer the question. Make that code removable or switchable, and explain what it records and how it may affect execution.
 
 - [PyTorch Profiler](https://docs.pytorch.org/tutorials/beginner/profiler.html): capture CPU/GPU events during model execution and inspect operator costs and timelines with `--profile-engine pytorch`.
 - [Nsight Systems](https://docs.nvidia.com/nsight-systems/UserGuide/index.html): inspect work submission, CUDA calls, communication, and execution overlap on NVIDIA with `--profile-engine nsight`.
@@ -33,7 +33,7 @@ When capturing:
 - Start with a few representative samples and bound the window with `--profile-duration`. For concurrent or mixed workloads, retain the batch characteristics needed for the investigation while shortening the observation window.
 - Capture steady-state execution after model loading, compilation, graph capture, and warmup. Analyze startup costs separately using startup logs. Confirm that the trace covers the phase of interest.
 - Repeated inputs may hit the prefix cache. Choose separate workloads for cold prefill and cache reuse. Record generation settings and graph execution mode to explain differences.
-- Profiling also adds overhead; select the events and capture window needed for the question. Measure latency and throughput in separate runs without profiling or temporary instrumentation, using the same workload, warmup and cache conditions. Restore the target execution settings first if diagnosis required changes such as disabling CUDA Graph or adding synchronization; label those diagnostic results separately.
+- Profiling also adds overhead, so collect only the events and time window needed for the question. Compare latency and throughput in separate runs with profiling and temporary instrumentation disabled, keeping workload, warmup and cache conditions the same. If diagnosis required disabling CUDA Graph or adding synchronization, restore the intended deployment settings first and label the diagnostic results separately.
 - Match multi-GPU data by process, rank, device, and the same unit of work, accounting for clock skew across nodes. Inspect compute/communication overlap and overlap between streams before judging the impact of a cost.
 - For large traces, inspect file size and an event overview first, then filter by interval, process, or operator. Preserve the original file and extract relevant statistics and slices through a viewer or query tool.
 

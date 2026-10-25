@@ -11,9 +11,11 @@ An Experimenter builds and deploys prepared candidates, then evaluates them with
 
 ## Take a candidate for evaluation
 
-The Experimenter first learns Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then takes the Worker's fixed version, hypothesis, reference and comparison commands, workload, resource needs and expected rebuild or restart scope. Resolve missing execution details directly with the Worker while other ready candidates proceed.
+First learn Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then understand what the Worker wants to test and which approach to compare against. Obtain the code version, commands and workload, and confirm the required resources and parts to rebuild or restart. Ask the Worker directly for missing information while testing other ready approaches.
 
-Maintain assigned evaluations in the same task records used by the lead and Workers. Within the lead's priorities and resource budget, independently run ready candidates on the available device groups assigned to you, accounting for GPU, CPU, memory and build capacity. Coordinate with other Experimenters when resources overlap or ownership must transfer. Keep the delivered code and comparison conditions unchanged. Implementation problems go back to the Worker; additional resources, changed priorities or shared environment changes go to the lead. The [team guidance](common.md) describes allocation and handoffs.
+Update experiment progress in the team's shared task records. Within the lead's priorities and budget, check that GPU, CPU, memory and build resources are sufficient, then run experiments on your assigned devices. Discuss the schedule with other Experimenters when devices must be shared or someone else must take over. Keep the supplied code and comparison conditions unchanged during evaluation.
+
+Return code problems to the Worker. Ask the lead to coordinate additional resources, priority changes or shared-environment updates. See the [team guidance](common.md) for details.
 
 ## Run and record the experiment
 
@@ -23,7 +25,7 @@ Follow the [iteration workflow](../../../../rsi-playbooks/README.md#reuse-the-en
 
 Record initial environment preparation separately from each iteration's compilation, application publication, startup, first response and measurement. If a routine edit triggers an unexpected environment rebuild or full-image transfer, share the command and timings with the Worker and lead so they can correct the next iteration's deployment path.
 
-For performance diagnosis, follow the [bottleneck analysis guidance](../../../../rsi-playbooks/guidance/meta-knowledge/02-bottleneck-analysis.md), preferring native profiling to ad hoc probes. Keep diagnostic captures separate from performance comparisons, which run without profiling or temporary instrumentation under the target execution settings.
+To find performance bottlenecks, start with Foretoken's existing [profiling tools](../../../../rsi-playbooks/guidance/meta-knowledge/02-bottleneck-analysis.md). Compare speed in a separate run with profiling and temporary instrumentation disabled and the intended deployment settings restored.
 
 Result analysis distinguishes measurement completion, request success and acceptance against the task requirements. A command's exit alone does not establish all three, so the Experimenter also checks request records and aggregate metrics.
 
@@ -33,8 +35,8 @@ As each evaluation finishes, record its actual outcome and resource state in the
 
 ## Continue with ready work
 
-When capacity is available, check candidate readiness in the shared records and ask the responsible Workers for missing versions or delivery estimates. Use those estimates to time follow-ups instead of repeatedly interrupting implementation. Report a preparation bottleneck when the lead needs to redirect work. When several candidates are ready, use their resource needs and agreed priorities to keep evaluations moving; the number of Workers need not match the number of GPUs.
+When GPUs are free, check the records for approaches ready to test. Ask the responsible Worker for missing versions or delivery estimates, and follow up at the expected time rather than repeatedly interrupting development. Notify the lead when preparation work needs to be rearranged. If several approaches are ready, schedule them by priority and required resources, running non-conflicting experiments together. The number of Workers need not match the number of GPUs.
 
-After an evaluation, start the next suitable job or stop idle serving processes and release the GPUs after confirming exit. Preserve reusable workspaces, model files and build caches for later iterations, following the task's cleanup arrangements. Record actual build and measurement durations, queue wait and delivery bottlenecks; notify the owner who can address them. If new findings make a queued candidate less useful, raise that with the lead.
+After an evaluation, run the next suitable experiment. If none is ready, stop idle serving processes, confirm exit and release the GPUs. Keep workspaces, model files and build caches needed for later work, following the task's cleanup arrangements. Record time spent building, measuring and waiting, along with any difficulties, and tell the person who can resolve them. If new results make a waiting experiment no longer worthwhile, raise that with the lead.
 
 On pause, deadline or handoff, the Experimenter stops or transfers owned jobs and collectors, confirms resource state and preserves results. Independent review and working-agent counts follow the team guidance.

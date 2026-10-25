@@ -76,7 +76,7 @@ The lead provides all members with a readable experiment directory, its host and
 
 Code stays in its assigned checkout or worktree. The proposal names its owner, host, absolute code path, branch and revision, links relevant files or a saved diff, and notes any uncommitted changes.
 
-Share a summary and complete document paths with the members whose work is affected. Later messages describe new findings, changes or questions without repeating the full background. Discuss unresolved choices directly with their owners and record decisions in the notes; independent work continues while replies are pending. Members can browse one another's documents and code as needed. Each document has one writer, with substantial reviews or alternative proposals saved in their authors' files.
+Send a summary and complete file paths to the people who need the findings. Later messages add new findings, changes or questions without repeating all the background. Discuss open choices directly with the person responsible, record decisions in the notes, and continue other work while waiting for replies. Members can read one another's documents and code as needed. Each document has one writer; save substantial reviews or alternative proposals in the author's own files.
 
 Supporting research, scripts, preparation logs and cleanup records also belong under the iteration's `notes/`, organized as needed. Filenames such as `plan.md` and `analysis.md` are examples. Benchmark commands create missing iteration notes without replacing existing content; members maintain the report and additional files. Keep original run artifacts under `runs/`. Before deleting a referenced checkout, preserve its required code and update the links; retain cited evidence.
 

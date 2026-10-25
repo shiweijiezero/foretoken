@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](worker_zh.md)
 
-A Worker owns a mechanism question through research, implementation and analysis across iterations. Once a version is ready, the Worker hands it to an Experimenter and continues investigating the question or preparing the next version while evaluation runs. Resource arrangements follow the [team guidance](common.md).
+A Worker follows a specific optimization question from reading the relevant work through implementation and analysis of results. When code is ready, the Worker gives it to an Experimenter to test and continues research or prepares the next version while waiting. See the [team guidance](common.md) for resource arrangements.
 
 ## Understand and implement the approach
 
@@ -19,7 +19,9 @@ Turn that understanding into a runnable candidate or concrete evidence supportin
 
 ## Deliver a version and interpret the results
 
-Give the assigned Experimenter the fixed version, hypothesis, reference and comparison commands, workloads, resource needs and expected rebuild or restart scope. Keep this counterpart across iterations and link the existing context, describing only changes and open questions in later handoffs. State when the version will be ready, and update that estimate when preparation changes. These inputs let the Experimenter record the candidate and run it when resources fit. The delivered version stays unchanged while queued or running; further development uses another checkout or a separately preserved evaluation copy.
+Give the assigned Experimenter the code version to test, explaining the question and the reference approach to compare against. Include the workload, comparison commands, required resources, and which parts need rebuilding or restarting.
+
+Keep the same Experimenter with the direction where possible. Later handoffs can link to the existing background and describe the changes and open questions. Give an expected delivery time and update it when plans change. Keep the evaluation version unchanged while it waits or runs; use another checkout or preserve a separate evaluation copy before continuing development.
 
 When results return, the Worker uses the logs, metrics and profiles to explain the change and decide what to revise. Failed results are retained because they can rule out incorrect explanations. A promising but temporarily slower implementation may justify further work, as described in [exploration and decision-making](../../../../rsi-playbooks/guidance/meta-knowledge/03-exploration-and-decision.md).
 

@@ -29,9 +29,9 @@ Research continues alongside environment preparation and measurement. Before a f
 
 ## Revise the direction as evidence changes
 
-Advisors send important discoveries directly to the members whose research, implementation or evaluation they affect, linking the evidence and explaining what it changes. Other members can consult the shared notes without receiving every update. Research proceeds independently while feedback is pending unless the next step requires that answer. After an improvement takes effect, Advisors revisit the bottlenecks and explain which assumptions still hold, which need revision and what evidence would be useful next.
+Send important findings directly to the people researching, implementing or testing the affected approach. Link the evidence and explain how it changes their work; other members can consult the shared notes. Continue independent research while waiting for feedback, stopping only when the next step needs that answer. After an improvement takes effect, revisit the bottlenecks and explain which judgments still hold, which need revision and what to investigate next.
 
-Advisors proactively alert the lead when the team repeatedly investigates the same issue without learning anything new, relies on a judgment contradicted by new findings, or leaves independent work waiting. Explain the deviation, give the relevant evidence and propose a concrete next action, such as changing the method, running a discriminating comparison or reassigning work. Request the decision needed and continue unaffected research while it is pending. Record the outcome and unresolved disagreements.
+Alert the lead if the team keeps investigating without learning anything new, uses a judgment that evidence has contradicted, or leaves independent work waiting. Explain the problem and evidence, and suggest a next step: another method, a comparison or a change in assignments. Say what the lead needs to decide, continue other research while waiting, and record the decision and remaining disagreements.
 
 ## Review results when needed
 

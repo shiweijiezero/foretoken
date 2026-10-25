@@ -20,13 +20,13 @@ Start from the task objective, model principles and hardware constraints. Read r
 
 Choose directions by their importance and potential benefit. Do not limit work to superficial tuning and easy changes because deeper work is large or difficult. Invest the research and implementation effort needed for worthwhile algorithmic, operator, or architectural innovation; use effort estimates to plan stages and collaboration.
 
-A research trial tests an uncertain benefit. A relevant problem, a plausible mechanism and an informative next comparison can justify implementation work. Retaining an approach is a later decision based on correctness, quality and measured service behavior. Lack of a demonstrated speedup before implementation is not evidence against the research question.
+Some ideas need code before anyone can tell whether they are faster. A trial is worthwhile when the idea addresses the task, has a plausible explanation and can be tested in an informative comparison. Once measurements are available, use correctness, quality and service performance to decide whether to keep it.
 
 ## Turn findings into research tasks
 
 Use references, source code, and measurements to formulate concrete questions. Investigate unexplained mechanisms, seek alternative methods, and look for counterexamples to current assumptions. New questions can emerge independently of the candidates already being implemented.
 
-For each investigation, connect the sources actually read and the code examined to a specific hypothesis and implementation path. Explain what the methods already solve, where their assumptions differ from this task, and what the next step should establish. If no ready-made switch, script or tuner exists, use reusable components to build the part needed to test the hypothesis. The owner continues through the results and subsequent revisions within the assigned scope and budget.
+Explain how the sources and code you studied led to the current idea: what existing methods solve, how their assumptions differ from this task, and what remains to be learned. If no ready-made switch, script or tuning tool exists, build the part needed for the comparison using existing components. The owner continues analyzing results and revising the approach within the agreed scope and budget.
 
 ## Keep digging as results emerge
 
@@ -41,19 +41,19 @@ Larger changes can be divided into key hypotheses, a core implementation, and fu
 
 A promising implementation may be slower at first. For example, a layout change can add conversions that a later fusion removes, reducing the main memory cost. Continue investigating when code analysis, profiles or measurements support that explanation. Explain the current slowdown and what the next experiment should establish, then set a budget for pursuing the new path.
 
-Keep the best validated candidate available while exploring the new path, and record regressions alongside gains. Reconsider or stop a direction when its question is answered, evidence contradicts its mechanism, or the allocated budget is exhausted. State whether a method was measured without benefit, the current implementation could not run, or the proposed implementation remains untested. These outcomes support different next actions; none establishes that all optimization opportunities are exhausted. Preserve the task's correctness and quality requirements throughout exploration.
+Keep the best validated approach available while exploring, and record slowdowns as well as gains. Reconsider a direction when its question is answered, evidence contradicts the explanation, or the budget is exhausted. If you stop, explain whether testing showed no benefit, the current implementation could not run, or the idea has not been implemented or tested. These are different outcomes, and none shows that all other directions lack value. The task's correctness and quality requirements apply throughout exploration.
 
 ## Maintain the research direction
 
 Choose experiments by the decision they can inform. For example, when a candidate shows no gain, distinguish an inactive code path from an optimization whose savings are offset elsewhere; select diagnostics or comparisons that separate those explanations. Reuse retained approaches and comparable results. Move on when existing evidence answers the question; repeat or expand measurements to resolve a specific uncertainty, such as variation, tail latency, or stability.
 
-Environment checks address concrete preparation failures. For performance questions, follow the [bottleneck analysis guidance](02-bottleneck-analysis.md): use existing profiling tools first, adding temporary instrumentation only for missing evidence. Once the question is answered, proceed to the implementation or comparison it enables. Advisors and Workers continue independent reading and analysis while the execution owner resolves infrastructure problems.
+Use environment checks to investigate specific preparation failures. For performance questions, follow the [bottleneck analysis guidance](02-bottleneck-analysis.md): start with existing profiling tools and add temporary instrumentation only when important information is missing. Once the problem is understood, continue implementing or comparing approaches. Advisors and Workers keep reading and analyzing source while the executor resolves environment problems.
 
 Reuse Foretoken's existing entry points, caches, and artifacts for execution, including [incremental source updates](../../../docs/deployment/source.md); temporary tools serve questions the existing facilities cannot answer. When the same obstacle recurs across candidates, distinguish incorrect usage or environment configuration from a framework defect. Use the observed delay, likely recurrence, and repair cost to prioritize a focused fix within the task scope. Validate the affected workflow before reusing the fix.
 
 Keep research and delivery moving together. Update records, validate retained changes, and release unused resources as results arrive. Near the deadline, use observed build, run, analysis, and delivery times to choose work that can finish within the budget. A long experiment may give way to a shorter comparison, source investigation, or analysis of saved results. Continue independent work while final validation runs, and stop according to the task's end conditions.
 
-After a group of experiments, repeated similar results, or before ending a direction, reassess which important questions have been answered and which require a different implementation. An Advisor can challenge a stop decision by distinguishing a rejected hypothesis from work that has not been implemented, and proposing the most useful next step within the remaining budget. Completing a parameter search or validating the current best candidate does not answer those remaining research questions.
+After a group of experiments, repeated similar results, or before stopping a direction, ask which questions are understood and which need a different implementation to answer. An Advisor can point out overlooked evidence or an approach that has not been tried, and suggest the most useful next step in the remaining time. Finishing a parameter search or validating the current best approach does not settle these questions.
 
 ## Explore and exchange findings in parallel
 

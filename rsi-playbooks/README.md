@@ -49,15 +49,15 @@ Advisors continually investigate mechanisms and optimization methods, uncover ne
 
 Workers turn specific questions into code or configuration changes that can be evaluated, then improve them using the results.
 
-Experimenters manage the ready-work queue and execution resources, build and evaluate candidates, return results and release unused resources. They request runnable versions from Workers when capacity becomes available.
+Experimenters schedule experiments, build and deploy approaches, run evaluations and save results. They release unused resources afterward. When GPUs are available, they check which approaches are ready and ask Workers for missing versions or information.
 
 Set Advisor, Worker and Experimenter counts separately in the task file; these counts exclude the lead. Leave a count blank when the lead should choose it. The team schedules within the harness's actual concurrency limit and reports any difference from the requested staffing.
 
-Method research begins alongside environment preparation. Advisors and Workers use papers, documentation, other implementations and code to select questions worth pursuing, including ideas whose benefit needs implementation to establish. Workers continue their questions as measurements return; preparing a new implementation can overlap evaluation of an existing candidate.
+While the environment is being prepared, Advisors and Workers begin reading relevant work and source code to find methods worth trying. Some ideas need an implementation before their benefits can be judged; allow time to test them too. While one version is being evaluated, Workers can continue research or prepare the next version, then revise it as results return.
 
-The lead sets research priorities and budgets. Experimenters own deployment and evaluation, preferably on separate groups of available GPUs so they can proceed independently; only competing work needs shared scheduling. One Experimenter can serve several Workers or manage several device groups. Available capacity determines experiment concurrency.
+The lead sets research priorities and budgets, and Experimenters arrange the runs. When enough GPUs are available, give each experiment its own group. Arrange an order only when experiments need the same devices. One Experimenter can test approaches from several Workers and manage several GPU groups; available resources determine how many experiments can run at once.
 
-Keep complete findings and progress in shared records. Members send useful changes, deliverables and questions directly to those affected, continue work that does not depend on a reply, and involve the lead when direction or resources need to change. Stable assignments reduce repeated handoffs and context sharing.
+Keep research findings and experiment progress in shared records. Send new results, ready code or questions directly to the person who needs to act, with links to those records. Continue other work while waiting for a reply, and ask the lead to decide changes in direction or resources. Keep members who know a question working together to avoid repeated handoffs.
 
 See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace isolation and resource handoffs.
 
