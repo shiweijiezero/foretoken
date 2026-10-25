@@ -7,6 +7,7 @@ use std::io;
 use std::process::{Command, Output};
 
 use super::Config;
+use crate::engine::python_module_directory;
 
 pub(crate) fn session_name(runtime_id: &str) -> String {
     format!("foretoken-{runtime_id}")
@@ -86,7 +87,7 @@ pub(super) async fn validate_report(config: &Config) -> io::Result<bool> {
     .await?;
     let output = run(
         tokio::process::Command::new(&config.python)
-            .arg("/opt/foretoken/python/foretoken_nsys.py")
+            .arg(python_module_directory().join("foretoken_nsys.py"))
             .arg(database),
         "report validation",
     )

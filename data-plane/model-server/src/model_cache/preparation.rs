@@ -17,7 +17,7 @@ use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
-use crate::engine::PYTHON_MODULE_PATH;
+use crate::engine::python_module_directory;
 use crate::model_cache::kubernetes::Kubernetes;
 use crate::runtime_cache;
 
@@ -482,9 +482,7 @@ fn provider_command(
             ));
         }
     };
-    let directory = std::env::var_os(foretoken_artifacts::source::ACTIVE_DIRECTORY_ENV)
-        .map(|directory| PathBuf::from(directory).join("python"))
-        .unwrap_or_else(|| PathBuf::from(PYTHON_MODULE_PATH));
+    let directory = python_module_directory();
     let mut command = Command::new(python);
     command
         .arg(directory.join("foretoken_prepare.py"))

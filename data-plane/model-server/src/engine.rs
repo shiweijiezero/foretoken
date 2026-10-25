@@ -3,6 +3,7 @@
 
 //! Owns native engine processes and the launch primitives shared by model-server adapters.
 
+use std::path::PathBuf;
 use std::process::{Command, ExitStatus};
 use std::time::Duration;
 
@@ -92,6 +93,13 @@ pub fn python_executable() -> String {
         .ok()
         .filter(|python| !python.is_empty())
         .unwrap_or_else(|| DEFAULT_VLLM_PYTHON.into())
+}
+
+/// Resolves Python helpers for preparation and report workers from the active application or image.
+pub fn python_module_directory() -> PathBuf {
+    std::env::var_os(foretoken_artifacts::source::ACTIVE_DIRECTORY_ENV)
+        .map(|directory| PathBuf::from(directory).join("python"))
+        .unwrap_or_else(|| PathBuf::from(PYTHON_MODULE_PATH))
 }
 
 /// Appends one controller-normalized engine option to a shell-free command line.
