@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "foretoken"
-version = "0.0.7"
+version = "0.0.8"
 description = "Command-line tools for installing and operating Foretoken"
 readme = "cli/README.md"
 license = "Apache-2.0"
