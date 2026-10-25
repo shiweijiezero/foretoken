@@ -41,9 +41,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 每名 Worker 使用独立工作区、任务分支和固定实例名，跨轮复用。交付的版本在构建和评测期间保持不变，具体安排见[候选交接](roles/common_zh.md#分开候选准备与评测)。
 
-按[迭代流程](../../../rsi-playbooks/README_zh.md#复用环境持续迭代)选择部署方式。只调整参数时，复用已安装的应用；修改代码时，准备一次源码平台，涉及共享平台更新则与管理员协调。首次准备解决依赖、模型与数据集访问，后续复用平台和构建缓存。
+遵循仓库的[部署与迭代要求](../../../AGENTS.md#deployment-and-iteration)，优先复用已有兼容镜像和准备好的环境。只调整参数时，复用已安装的应用；修改代码时，沿用已有源码平台，缺少时再准备一次，涉及共享平台更新则与管理员协调。首次准备解决模型与数据集访问。
 
-日常 Go、Rust、Python 改动通过 `deploy -e` 指定候选源码目录，增量更新。Foretoken 会选择需要重建的应用和环境。候选沿用[并行源码部署](../../../docs/deployment/source_zh.md#并行运行候选方案)，部署与评测使用同一个实例名。
+日常 Go、Rust、Python 改动通过 `deploy -e` 指定候选源码目录，增量更新。按[迭代流程](../../../rsi-playbooks/README_zh.md#复用环境持续迭代)和[并行源码部署](../../../docs/deployment/source_zh.md#并行运行候选方案)共享镜像引用，各候选的代码与可写构建状态保持独立。部署与评测使用同一个实例名。
 
 各候选选择同一个共享[数据目录](../../../docs/features/model-storage_zh.md)复用模型下载，运行缓存和结果分别保存。任务仍需要起始模型时，空闲实例用 `foretoken stop` 暂停，任务结束再用 `foretoken delete` 删除。
 

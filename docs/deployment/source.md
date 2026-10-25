@@ -7,6 +7,8 @@
 
 Build Foretoken from a local source directory and deploy changes to Kubernetes. Ordinary folders, clones and worktrees use the same commands; build dependencies are prepared automatically from the versions declared with the source.
 
+Prefer existing compatible images and build caches, then update application code within that environment. Ordinary source edits use incremental compilation and publication; missing environments or changes to their dependencies and build inputs can require new images.
+
 ## Install from source
 
 Prepare kubectl and [Helm 4](../../cli/README.md#before-you-start), and select a GPU-enabled Kubernetes cluster with a default StorageClass. On a shared cluster, ask the administrator for [source-build access](../../cli/README.md#prepare-a-namespace-for-members).
@@ -23,7 +25,7 @@ uv pip install -e .  # Or: pip install -e .
 
 Keep the environment active for the commands below.
 
-The platform needs one source installation for the cluster. If it is already installed from source, continue with [deployment](#deploy-a-model-service); another workstation only needs the CLI and a source checkout.
+The platform needs one source installation for the cluster. If it is already installed from source, continue with [deployment](#deploy-a-model-service); another workstation only needs the CLI and a source checkout. An existing published platform needs the source installation step once before `deploy -e`; that preparation also reuses available images and build caches.
 
 For the initial installation on a local kind or k3d cluster, build and install without a registry:
 
@@ -73,6 +75,8 @@ foretoken delete qwen3-0-6b
 ### Run candidates in parallel
 
 Use a separate source checkout and instance name for each candidate. Candidates share one installed platform and can run in the same Kubernetes namespace, with independently updated controllers and serving code. The default Gateway provides one HTTP entry point for all candidates.
+
+Candidates with matching environments reuse runtime and compiler images by reference; each keeps its own code and writable build state. The node's image cache is shared across these instances, so adding an agent does not require copying an image. A different node still needs to fetch any required image it does not already have.
 
 From the repository root:
 

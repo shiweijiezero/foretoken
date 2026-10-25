@@ -46,9 +46,9 @@ During execution, the lead follows the role staffing above and tracks candidates
 
 Give each Worker a separate checkout, task branch and stable instance name, and reuse them across iterations. Keep the delivered version unchanged through build and evaluation, following the [candidate handoff](roles/common.md#prepare-candidates-while-evaluations-run).
 
-Follow the [iteration workflow](../../../rsi-playbooks/README.md#reuse-the-environment-across-iterations). Parameter-only experiments can reuse installed applications. For code changes, prepare the source platform once, coordinating any update to a shared platform with its administrator. Resolve dependencies and model/dataset access during preparation, then reuse the platform and build caches.
+Follow the repository's [deployment and iteration guidance](../../../AGENTS.md#deployment-and-iteration), reusing available compatible images and prepared environments first. Parameter-only experiments reuse installed applications. For code changes, use an existing source platform or prepare it once, coordinating any shared-platform update with its administrator. Resolve model and dataset access during preparation.
 
-Deploy Go, Rust and Python edits incrementally with `-e` pointing to the candidate's source directory. Foretoken selects the applications and environments that need rebuilding. Follow [parallel source deployment](../../../docs/deployment/source.md#run-candidates-in-parallel), keeping the same candidate name for deployment and evaluation.
+Deploy Go, Rust and Python edits incrementally with `-e` pointing to the candidate's source directory. Follow the [iteration workflow](../../../rsi-playbooks/README.md#reuse-the-environment-across-iterations) and [parallel source deployment](../../../docs/deployment/source.md#run-candidates-in-parallel), sharing image references while keeping candidate code and writable build state separate. Deployment and evaluation use the same candidate name.
 
 Candidates select the same shared [data directory](../../../docs/features/model-storage.md) for model downloads; runtime caches and results remain separate. Keep the baseline instance while its model files are needed: use `foretoken stop` when idle, then `foretoken delete` when the task ends.
 
