@@ -47,6 +47,10 @@ pub(crate) struct ResolvedArtifacts {
     pub(crate) artifacts: ModelArtifacts,
     pub(crate) model_revision: String,
     pub(crate) tokenizer_revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) draft_artifacts: Option<ModelArtifacts>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) draft_revision: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -54,6 +58,7 @@ pub(crate) struct ResolvedArtifacts {
 struct ResolvedRevisions {
     model_revision: String,
     tokenizer_revision: String,
+    draft_revision: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,8 +67,12 @@ pub struct PreparedArtifacts {
     source: ResolvedArtifacts,
     pub model: PathBuf,
     pub tokenizer: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<PathBuf>,
     model_files: Vec<String>,
     tokenizer_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    draft_files: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -71,8 +80,11 @@ pub struct PreparedArtifacts {
 struct DownloadedArtifacts {
     model: PathBuf,
     tokenizer: PathBuf,
+    draft: Option<PathBuf>,
     model_files: Vec<String>,
     tokenizer_files: Vec<String>,
+    #[serde(default)]
+    draft_files: Vec<String>,
 }
 
 /// Resolves a local model or tokenizer to the UTF-8 path consumed by native engine startup.
@@ -94,7 +106,11 @@ pub fn local_artifact_path(identifier: &str) -> io::Result<String> {
 }
 
 /// Freezes source revisions for a controller-owned resolve-only Job without downloading weights.
-pub async fn resolve(artifacts: &ModelArtifacts, python: &str) -> io::Result<()> {
+pub async fn resolve(
+    artifacts: &ModelArtifacts,
+    draft: Option<&ModelArtifacts>,
+    python: &str,
+) -> io::Result<()> {
     let name = std::env::var(SOURCE_CONFIG_MAP_ENV).map_err(io::Error::other)?;
     let model_root = foretoken_artifacts::model_cache_root().unwrap_or_else(std::env::temp_dir);
     let state_root =
@@ -105,13 +121,17 @@ pub async fn resolve(artifacts: &ModelArtifacts, python: &str) -> io::Result<()>
         reusable_roots: None,
         environment: &[],
     };
-    publish_source(artifacts, python, &storage, &name, None).await?;
+    publish_source(artifacts, draft, python, &storage, &name, None).await?;
     Ok(())
 }
 
 /// Runs a controller-owned download Job, including cache observation and signal shutdown.
 /// Both inference-engine entrypoints use this lifecycle before allocating accelerator workloads.
-pub async fn prepare_job(artifacts: &ModelArtifacts, python: &str) -> io::Result<()> {
+pub async fn prepare_job(
+    artifacts: &ModelArtifacts,
+    draft: Option<&ModelArtifacts>,
+    python: &str,
+) -> io::Result<()> {
     let model_root = foretoken_artifacts::model_cache_root().ok_or_else(|| {
         io::Error::other("FORETOKEN_MODEL_CACHE_ROOT must be set for model preparation")
     })?;
@@ -138,7 +158,7 @@ pub async fn prepare_job(artifacts: &ModelArtifacts, python: &str) -> io::Result
             None
         };
     let result = tokio::select! {
-        result = prepare(artifacts, python, &storage, &scope, false) => result.map(|_| ()),
+        result = prepare(artifacts, draft, python, &storage, &scope, false) => result.map(|_| ()),
         reason = runtime_cache::wait_for_server(&mut observer) => Err(io::Error::other(reason)),
         signal = crate::shutdown_signal() => signal.and_then(|()| {
             Err(io::Error::new(io::ErrorKind::Interrupted, "model preparation cancelled"))
@@ -156,6 +176,7 @@ pub async fn prepare_job(artifacts: &ModelArtifacts, python: &str) -> io::Result
 /// `require_publication` prevents a restart from choosing a new moving source revision.
 pub async fn prepare(
     artifacts: &ModelArtifacts,
+    draft: Option<&ModelArtifacts>,
     python: &str,
     storage: &PreparationStorage<'_>,
     scope: &str,
@@ -169,7 +190,7 @@ pub async fn prepare(
     let mut published_cache = None;
     let source = if let Ok(name) = std::env::var(SOURCE_CONFIG_MAP_ENV) {
         published_cache = Some(identity.clone());
-        Some(publish_source(artifacts, python, storage, &name, Some(&identity)).await?)
+        Some(publish_source(artifacts, draft, python, storage, &name, Some(&identity)).await?)
     } else if let Some(path) = std::env::var_os(SOURCE_RECORD_ENV) {
         let path = Path::new(&path);
         published_cache = match fs::read_to_string(path.with_file_name(CACHE_ROOT_KEY)) {
@@ -187,14 +208,14 @@ pub async fn prepare(
                 "mounted model source publication belongs to another cache directory",
             ));
         }
-        Some(read_source(path, artifacts)?.ok_or_else(|| {
+        Some(read_source(path, artifacts, draft)?.ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
                 "mounted model source publication is missing",
             )
         })?)
     } else {
-        read_source(&directory.join(SOURCE_KEY), artifacts)?
+        read_source(&directory.join(SOURCE_KEY), artifacts, draft)?
     };
     if let Some(source) = &source {
         // Compile-cache write failure does not invalidate readable model snapshots.
@@ -236,10 +257,10 @@ pub async fn prepare(
     let _lock = lock;
     let source = match source {
         Some(source) => source,
-        None => match read_source(&directory.join(SOURCE_KEY), artifacts)? {
+        None => match read_source(&directory.join(SOURCE_KEY), artifacts, draft)? {
             Some(source) => source,
             None => {
-                let source = resolve_revisions(artifacts, python, storage).await?;
+                let source = resolve_revisions(artifacts, draft, python, storage).await?;
                 publish_json(&directory, SOURCE_KEY, &source)?;
                 source
             }
@@ -248,7 +269,7 @@ pub async fn prepare(
     if let Some(result) = load_result(&directory, &source)? {
         return Ok(result);
     }
-    let mut command = provider_command(artifacts, python, storage)?;
+    let mut command = provider_command(artifacts, draft, python, storage)?;
     command
         .env("FORETOKEN_PREPARE_ACTION", "download")
         .env("FORETOKEN_PREPARE_MODEL_REVISION", &source.model_revision)
@@ -256,13 +277,18 @@ pub async fn prepare(
             "FORETOKEN_PREPARE_TOKENIZER_REVISION",
             &source.tokenizer_revision,
         );
+    if let Some(revision) = &source.draft_revision {
+        command.env("FORETOKEN_PREPARE_DRAFT_REVISION", revision);
+    }
     let downloaded: DownloadedArtifacts = run_provider(&mut command).await?;
     let result = PreparedArtifacts {
         source,
         model: downloaded.model,
         tokenizer: downloaded.tokenizer,
+        draft: downloaded.draft,
         model_files: downloaded.model_files,
         tokenizer_files: downloaded.tokenizer_files,
+        draft_files: downloaded.draft_files,
     };
     publish_json(&directory, "result.json", &result)?;
     Ok(result)
@@ -360,6 +386,14 @@ impl PreparedArtifacts {
                 .tokenizer_files
                 .iter()
                 .all(|file| self.tokenizer.join(file).is_file())
+            && match (&self.source.draft_artifacts, &self.draft) {
+                (Some(_), Some(directory)) => self
+                    .draft_files
+                    .iter()
+                    .all(|file| directory.join(file).is_file()),
+                (None, None) => true,
+                _ => false,
+            }
     }
 }
 
@@ -369,6 +403,11 @@ pub(crate) fn source_publication(bytes: &[u8]) -> io::Result<ResolvedArtifacts> 
     if source.version != 1
         || source.model_revision.is_empty()
         || source.tokenizer_revision.is_empty()
+        || source.draft_artifacts.is_some()
+            != source
+                .draft_revision
+                .as_ref()
+                .is_some_and(|revision| !revision.is_empty())
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -379,9 +418,13 @@ pub(crate) fn source_publication(bytes: &[u8]) -> io::Result<ResolvedArtifacts> 
 }
 
 // The mounted record and ConfigMap carry source identity, never container-local paths.
-fn decode_source(bytes: &[u8], artifacts: &ModelArtifacts) -> io::Result<ResolvedArtifacts> {
+fn decode_source(
+    bytes: &[u8],
+    artifacts: &ModelArtifacts,
+    draft: Option<&ModelArtifacts>,
+) -> io::Result<ResolvedArtifacts> {
     let source = source_publication(bytes)?;
-    if &source.artifacts != artifacts {
+    if &source.artifacts != artifacts || source.draft_artifacts.as_ref() != draft {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "model source publication does not match the selected artifacts",
@@ -390,9 +433,13 @@ fn decode_source(bytes: &[u8], artifacts: &ModelArtifacts) -> io::Result<Resolve
     Ok(source)
 }
 
-fn read_source(path: &Path, artifacts: &ModelArtifacts) -> io::Result<Option<ResolvedArtifacts>> {
+fn read_source(
+    path: &Path,
+    artifacts: &ModelArtifacts,
+    draft: Option<&ModelArtifacts>,
+) -> io::Result<Option<ResolvedArtifacts>> {
     match fs::read(path) {
-        Ok(bytes) => decode_source(&bytes, artifacts).map(Some),
+        Ok(bytes) => decode_source(&bytes, artifacts, draft).map(Some),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
@@ -420,6 +467,7 @@ fn load_result(
 // Provider imports happen in a child so transfer tuning does not affect the serving engine.
 fn provider_command(
     artifacts: &ModelArtifacts,
+    draft: Option<&ModelArtifacts>,
     python: &str,
     storage: &PreparationStorage<'_>,
 ) -> io::Result<Command> {
@@ -447,6 +495,8 @@ fn provider_command(
         .env("FORETOKEN_PREPARE_SOURCE", source)
         .env("FORETOKEN_PREPARE_MODEL", &artifacts.model)
         .env("FORETOKEN_PREPARE_TOKENIZER", &artifacts.tokenizer)
+        .env_remove("FORETOKEN_PREPARE_DRAFT_MODEL")
+        .env_remove("FORETOKEN_PREPARE_DRAFT_REVISION")
         .envs(
             storage
                 .environment
@@ -463,6 +513,9 @@ fn provider_command(
         )
         .stderr(Stdio::inherit())
         .kill_on_drop(true);
+    if let Some(draft) = draft {
+        command.env("FORETOKEN_PREPARE_DRAFT_MODEL", &draft.model);
+    }
     Ok(command)
 }
 
@@ -487,10 +540,11 @@ async fn run_provider<T: serde::de::DeserializeOwned>(command: &mut Command) -> 
 /// Acquisition later downloads these exact revisions rather than resolving the moving input again.
 async fn resolve_revisions(
     artifacts: &ModelArtifacts,
+    draft: Option<&ModelArtifacts>,
     python: &str,
     storage: &PreparationStorage<'_>,
 ) -> io::Result<ResolvedArtifacts> {
-    let mut command = provider_command(artifacts, python, storage)?;
+    let mut command = provider_command(artifacts, draft, python, storage)?;
     command
         .env("FORETOKEN_PREPARE_ACTION", "resolve")
         .env("FORETOKEN_PREPARE_MODEL_REVISION", &artifacts.revision)
@@ -498,16 +552,22 @@ async fn resolve_revisions(
             "FORETOKEN_PREPARE_TOKENIZER_REVISION",
             &artifacts.tokenizer_revision,
         );
+    if let Some(draft) = draft {
+        command.env("FORETOKEN_PREPARE_DRAFT_REVISION", &draft.revision);
+    }
     let revisions: ResolvedRevisions = run_provider(&mut command).await?;
     let source = ResolvedArtifacts {
         version: 1,
         artifacts: artifacts.clone(),
         model_revision: revisions.model_revision,
         tokenizer_revision: revisions.tokenizer_revision,
+        draft_artifacts: draft.cloned(),
+        draft_revision: revisions.draft_revision,
     };
     decode_source(
         &serde_json::to_vec(&source).map_err(io::Error::other)?,
         artifacts,
+        draft,
     )
 }
 
@@ -515,6 +575,7 @@ async fn resolve_revisions(
 // A competing publisher adopts the winner instead of resolving or overwriting another version.
 async fn publish_source(
     artifacts: &ModelArtifacts,
+    draft: Option<&ModelArtifacts>,
     python: &str,
     storage: &PreparationStorage<'_>,
     name: &str,
@@ -545,7 +606,7 @@ async fn publish_source(
             .as_str()
             .filter(|record| !record.is_empty())
         {
-            let source = decode_source(record.as_bytes(), artifacts)?;
+            let source = decode_source(record.as_bytes(), artifacts, draft)?;
             if cache_identity.is_none() || cache_identity == recorded_root {
                 return Ok(source);
             }
@@ -554,7 +615,7 @@ async fn publish_source(
             match &candidate {
                 Some(source) => source.clone(),
                 None => candidate
-                    .insert(resolve_revisions(artifacts, python, storage).await?)
+                    .insert(resolve_revisions(artifacts, draft, python, storage).await?)
                     .clone(),
             }
         };

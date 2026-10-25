@@ -51,6 +51,13 @@ func (reconciler *GroupReconciler) reconcileDelete(ctx context.Context, group *i
 	if !controllerutil.ContainsFinalizer(group, modelGroupDrainFinalizer) {
 		return ctrl.Result{}, nil
 	}
+	pending, err := reconciler.retireDraftConsumers(ctx, group)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if pending {
+		return ctrl.Result{RequeueAfter: modelGroupDrainPollInterval}, nil
+	}
 
 	workloads, err := reconciler.groupWorkloads(ctx, group)
 	if err != nil {

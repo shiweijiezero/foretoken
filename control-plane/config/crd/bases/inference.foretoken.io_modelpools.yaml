@@ -204,6 +204,13 @@ spec:
                     - vllm
                     - vllm-omni
                     type: string
+                  draftPools:
+                    description: DraftPools retains this Target's same-service discovery
+                      scope.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
                   ecProfile:
                     description: ECProfile is the controller-owned platform EC profile
                       selected for encoder and prefill Pools.
@@ -845,6 +852,12 @@ spec:
                   sourceRevision:
                     description: SourceRevision pins the CLI-published source bundle
                       used by this Pool's Groups.
+                    type: string
+                  speculationRole:
+                    description: SpeculationRole is assigned by the ModelService compiler.
+                    enum:
+                    - draft
+                    - target
                     type: string
                   timeouts:
                     description: ModelTimeouts defines ModelService lifecycle budgets.

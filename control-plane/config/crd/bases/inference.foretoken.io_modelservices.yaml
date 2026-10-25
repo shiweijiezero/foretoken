@@ -434,6 +434,13 @@ spec:
                       format: int32
                       minimum: 1
                       type: integer
+                    model:
+                      description: |-
+                        Model selects proposal weights for a referenced Draft Pool.
+                        The source and tokenizer remain those of the ModelService.
+                      maxLength: 1024
+                      minLength: 1
+                      type: string
                     name:
                       description: Name is the stable identity of this Pool within
                         one ModelService.
@@ -559,6 +566,20 @@ spec:
                       - prefill
                       - decode
                       type: string
+                    speculation:
+                      description: Speculation selects same-service Draft Pools for
+                        this Target Pool.
+                      properties:
+                        draftPools:
+                          items:
+                            type: string
+                          maxItems: 32
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                      required:
+                      - draftPools
+                      type: object
                   required:
                   - name
                   - resources
@@ -1048,6 +1069,17 @@ spec:
               rule: '!has(self.kvTransfer) || (has(self.modelPools) && self.modelPools.exists(pool,
                 has(pool.role) && pool.role == ''prefill'') && self.modelPools.exists(pool,
                 has(pool.role) && pool.role == ''decode''))'
+            - message: Target speculation must reference aggregate Draft Pools with
+                proposal model weights
+              rule: '!has(self.modelPools) || self.modelPools.all(pool, !has(pool.speculation)
+                || (!has(pool.model) && (!has(pool.role) || pool.role == ''aggregate'')
+                && pool.speculation.draftPools.all(name, self.modelPools.exists(draft,
+                draft.name == name && has(draft.model) && !has(draft.speculation)
+                && (!has(draft.role) || draft.role == ''aggregate'')))))'
+            - message: Pool model overrides require a referencing Target speculation.draftPools
+              rule: '!has(self.modelPools) || self.modelPools.all(pool, !has(pool.model)
+                || self.modelPools.exists(target, has(target.speculation) && pool.name
+                in target.speculation.draftPools))'
             - message: spec.modelPools is mutually exclusive with top-level replicas,
                 nodes, resources, maxInputTokens, kvCache, and features
               rule: '!has(self.modelPools) || !(has(self.replicas) || has(self.nodes)

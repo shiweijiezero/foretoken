@@ -3,6 +3,7 @@
 
 //! Composes process-local services before handing serving ownership to a leader or worker.
 
+mod draft;
 mod leader;
 mod worker;
 
@@ -47,7 +48,6 @@ async fn run_runtime(
     cache_config: Option<runtime_cache::Config>,
     background: &BackgroundTasks,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let request_ledger = foretoken_request_ledger::RequestLedger::from_env()?.map(Arc::new);
     let cache_shutdown = background.shutdown.child_token();
     let profiling_config = if let Some(cache) = &cache_config {
         let workers = config.launch.parallelism.tp
@@ -79,6 +79,19 @@ async fn run_runtime(
         None
     };
 
+    if config.launch.dt.as_ref().is_some_and(|dt| {
+        dt.role == foretoken_model_server::backend::vllm::launch::SpeculationRole::Draft
+    }) {
+        return draft::run(
+            config,
+            cache_config,
+            profiling_config,
+            cache_server,
+            cache_shutdown,
+        )
+        .await;
+    }
+
     // Workers own local execution only; the leader owns the group handshake and request ingress.
     if config
         .member
@@ -94,6 +107,7 @@ async fn run_runtime(
         )
         .await;
     }
+    let request_ledger = foretoken_request_ledger::RequestLedger::from_env()?.map(Arc::new);
     leader::Leader::start(
         config,
         cache_config,

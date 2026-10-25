@@ -180,6 +180,55 @@ spec:
                 - tokenizer
                 - tokenizerRevision
                 type: object
+              draftGroups:
+                description: |-
+                  DraftGroups contains the prepared candidates for this immutable Target revision.
+                  SelectedDraftGroup owns the process-lifetime assignment used by runtime and lifecycle consumers.
+                items:
+                  description: |-
+                    DraftGroupBinding pins a Target cohort to one prepared Draft Group.
+                    Native startup and retirement share this immutable instance dependency.
+                  properties:
+                    endpoint:
+                      type: string
+                    groupRef:
+                      description: LocalObjectReference identifies an object in the
+                        same namespace by stable UID.
+                      properties:
+                        name:
+                          minLength: 1
+                          type: string
+                        uid:
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - uid
+                      type: object
+                    poolRef:
+                      description: LocalObjectReference identifies an object in the
+                        same namespace by stable UID.
+                      properties:
+                        name:
+                          minLength: 1
+                          type: string
+                        uid:
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - uid
+                      type: object
+                    revision:
+                      type: string
+                  required:
+                  - endpoint
+                  - groupRef
+                  - poolRef
+                  - revision
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               ecRuntime:
                 description: ECRuntime is the controller-owned resolved encoder/prefill
                   transfer configuration.
@@ -1025,6 +1074,13 @@ spec:
                 - internalGenerateRequestBodyLimitBytes
                 - port
                 type: object
+              speculationRole:
+                description: SpeculationRole is the controller-assigned speculative
+                  decoding responsibility.
+                enum:
+                - draft
+                - target
+                type: string
               timeouts:
                 description: ModelTimeouts defines ModelService lifecycle budgets.
                 properties:

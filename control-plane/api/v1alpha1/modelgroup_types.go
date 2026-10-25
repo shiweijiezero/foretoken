@@ -298,6 +298,15 @@ type ModelGroupRuntime struct {
 	InternalGenerateRequestBodyLimitBytes int64 `json:"internalGenerateRequestBodyLimitBytes"`
 }
 
+// DraftGroupBinding pins a Target cohort to one prepared Draft Group.
+// Native startup and retirement share this immutable instance dependency.
+type DraftGroupBinding struct {
+	PoolRef  LocalObjectReference `json:"poolRef"`
+	Revision string               `json:"revision"`
+	GroupRef LocalObjectReference `json:"groupRef"`
+	Endpoint string               `json:"endpoint"`
+}
+
 // ModelGroupSpec is an immutable execution specification compiled by the Pool controller.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ModelGroup spec is immutable"
 // +kubebuilder:validation:XValidation:rule="self.memberCount == self.nodeCount",message="memberCount must equal nodeCount in v1alpha1"
@@ -317,6 +326,16 @@ type ModelGroupSpec struct {
 	Ordinal int32 `json:"ordinal"`
 
 	Role ModelRole `json:"role"`
+
+	// SpeculationRole is the controller-assigned speculative decoding responsibility.
+	// +optional
+	SpeculationRole SpeculationRole `json:"speculationRole,omitempty"`
+
+	// DraftGroups contains the prepared candidates for this immutable Target revision.
+	// SelectedDraftGroup owns the process-lifetime assignment used by runtime and lifecycle consumers.
+	// +optional
+	// +listType=atomic
+	DraftGroups []DraftGroupBinding `json:"draftGroups,omitempty"`
 
 	Artifacts ModelGroupArtifacts `json:"artifacts"`
 	Runtime   ModelGroupRuntime   `json:"runtime"`
@@ -447,6 +466,15 @@ func (allocation *RDMAAllocation) Canonical() *RDMAAllocation {
 	result.RequiredNodeAffinity = allocation.RequiredNodeAffinity.DeepCopy()
 	result.Networks = slices.Clone(allocation.Networks)
 	return &result
+}
+
+// SelectedDraftGroup returns this Target's fixed Draft assignment for launch, readiness, and retirement.
+// The binding is borrowed from the immutable Group spec; other roles and unbound Targets return nil.
+func (spec ModelGroupSpec) SelectedDraftGroup() *DraftGroupBinding {
+	if spec.SpeculationRole != SpeculationRoleTarget || len(spec.DraftGroups) == 0 {
+		return nil
+	}
+	return &spec.DraftGroups[int(spec.Ordinal)%len(spec.DraftGroups)]
 }
 
 func init() {

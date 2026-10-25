@@ -34,7 +34,7 @@ import (
 )
 
 // desiredDeployment builds the isolated model-server workload from a resolved ModelGroup contract.
-func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference, files runtimeconfig.ApplicationFiles) (*appsv1.Deployment, error) {
+func desiredDeployment(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, imagePullSecrets []corev1.LocalObjectReference, files runtimeconfig.ApplicationFiles) (*appsv1.Deployment, error) {
 	var launchJSON, launchEnv, command string
 	var startupSeconds, drainSeconds int64
 	switch group.Spec.Runtime.Backend {
@@ -64,6 +64,11 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		return nil, fmt.Errorf("unsupported inference backend %q", group.Spec.Runtime.Backend)
 	}
 	labels := workload.ModelGroupLabels(group)
+	podLabels := maps.Clone(labels)
+	if group.Spec.SpeculationRole != "" {
+		podLabels[workload.ModelGroupUIDLabel] = string(group.UID)
+		podLabels[workload.ModelServiceUIDLabel] = pool.Spec.ModelServiceRef.UID
+	}
 	var annotations map[string]string
 	if group.Spec.Network != "" {
 		annotations = map[string]string{multusNetworksAnnotation: group.Spec.Network}
@@ -102,6 +107,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	if group.Spec.Runtime.InstanceAdmissionProtocol == 0 && group.Spec.Runtime.InstanceAdmission != nil {
 		env = append(env, corev1.EnvVar{Name: "FORETOKEN_MAX_ACCEPTED_REQUESTS", Value: strconv.FormatUint(uint64(group.Spec.Runtime.InstanceAdmission.MaxConcurrentRequests), 10)})
 	}
+	env = append(env, vllmconfig.SpeculationEnv(group)...)
 	if group.Spec.NodeCount > 1 || group.Spec.PDRuntime != nil {
 		env = append(env, corev1.EnvVar{Name: "FORETOKEN_MEMBER_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}})
 	}
@@ -192,7 +198,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 			Strategy:                appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 			Selector:                &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: maps.Clone(labels), Annotations: annotations},
+				ObjectMeta: metav1.ObjectMeta{Labels: podLabels, Annotations: annotations},
 				Spec: corev1.PodSpec{
 					AutomountServiceAccountToken:  &automountToken,
 					EnableServiceLinks:            &enableServiceLinks,
@@ -423,7 +429,7 @@ func modelServerProbe(path string, periodSeconds, failureThreshold int32) *corev
 }
 
 // reconcileNetworkPolicy permits deployment-local traffic, runtime peers, and trusted metrics scrapers to reach a ModelGroup.
-func (reconciler *GroupReconciler) reconcileNetworkPolicy(ctx context.Context, group *inferencev1alpha1.ModelGroup) error {
+func (reconciler *GroupReconciler) reconcileNetworkPolicy(ctx context.Context, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) error {
 	deploymentUID := group.Labels[inferencev1alpha1.DeploymentUIDLabel]
 	if deploymentUID == "" {
 		return fmt.Errorf("ModelGroup %q has no deployment UID", group.Name)
@@ -495,6 +501,11 @@ func (reconciler *GroupReconciler) reconcileNetworkPolicy(ctx context.Context, g
 			})
 		}
 	}
+	draftIngress, err := reconciler.draftPeerIngress(ctx, group, pool)
+	if err != nil {
+		return err
+	}
+	ingress = append(ingress, draftIngress...)
 	ingress = append(ingress, vllmconfig.WeightSourceIngress(group.Spec)...)
 	desired := &networkingv1.NetworkPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: networkingv1.SchemeGroupVersion.String(), Kind: "NetworkPolicy"},

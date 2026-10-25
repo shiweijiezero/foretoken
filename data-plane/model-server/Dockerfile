@@ -114,7 +114,7 @@ RUN --mount=type=secret,id=foretoken-build-jobs,env=BUILD_JOBS \
       'from vllm_patches import repair_installed_dependencies; repair_installed_dependencies()' \
     && backend=$("$python_path" -c \
       'import torch; print("maca" if getattr(torch.version, "maca", None) else "cuda" if torch.version.cuda else "other")') \
-    && set -- modelscope==1.35.3 tzdata \
+    && set -- modelscope==1.35.3 tzdata 'websockets>=15.0.1' \
     && case "$backend" in cuda) set -- "$@" bitsandbytes==0.49.2 modelexpress==0.6.0 nixl==1.4.1 ;; esac \
     && PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python_path" -c \
       'from vllm_patches import runtime_constraints; print("\n".join(f"{name}==={version}" for name, version in sorted(runtime_constraints(set()).items())))' > /tmp/foretoken-engine-constraints.txt \

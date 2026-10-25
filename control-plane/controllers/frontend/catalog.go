@@ -60,7 +60,7 @@ func projectConfiguredModels(frontend *inferencev1alpha1.FrontendService, servic
 				}
 				for index := range groups {
 					group := &groups[index]
-					if servingconfig.ModelGroupOwnedBy(group, pool) && group.Spec.Revision == selected && !reflect.DeepEqual(group.Spec.Runtime.AdmissionStore, store) {
+					if servingconfig.ModelGroupOwnedBy(group, pool) && group.Spec.Revision == selected && group.Spec.SpeculationRole != inferencev1alpha1.SpeculationRoleDraft && !reflect.DeepEqual(group.Spec.Runtime.AdmissionStore, store) {
 						return nil, nil, &backendDeploymentRequiredError{service: service.Name}
 					}
 				}
@@ -100,6 +100,9 @@ func projectConfiguredModels(frontend *inferencev1alpha1.FrontendService, servic
 		} else {
 			// The same compilers used by the service and runtime resolve cold models before Pools or Groups exist.
 			for _, pool := range compiled {
+				if pool.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleDraft {
+					continue
+				}
 				identity, err := configuredTemplateIdentity(pool.Template)
 				if err != nil {
 					return nil, nil, fmt.Errorf("resolve ModelService %q Pool %q catalog: %w", service.Name, pool.Name, err)
@@ -128,7 +131,7 @@ func projectConfiguredModels(frontend *inferencev1alpha1.FrontendService, servic
 			providers[identity.Model] = contribution{service: service.Name, topology: topology, identity: identity}
 			admission[identity.Model] = config
 		}
-		targetSets := admissionTargetSetsForService(service, servicePools)
+		targetSets := admissionTargetSetsForService(service, servicePools, groups)
 		if targetSets == nil {
 			targetSets = make([][]servingconfig.ScalingTarget, 0)
 		}

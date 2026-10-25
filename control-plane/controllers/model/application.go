@@ -53,7 +53,7 @@ func (reconciler *ServiceReconciler) selectPoolApplications(ctx context.Context,
 				return nil, err
 			}
 		}
-		if template.Backend == "vllm" && selection != nil && selection.InstanceAdmissionProtocol == 0 {
+		if template.Backend == "vllm" && template.SpeculationRole != inferencev1alpha1.SpeculationRoleDraft && selection != nil && selection.InstanceAdmissionProtocol == 0 {
 			startupAdmission, err := reconciler.legacyInstanceAdmission(ctx, service, previous, selected.Name)
 			if err != nil {
 				return nil, err

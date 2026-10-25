@@ -87,6 +87,9 @@ func effectiveModelAdmission(frontend inferencev1alpha1.FrontendServiceSpec, mod
 			if poolIndex < 0 {
 				return servingconfig.Admission{}, fmt.Errorf("roleRules %q allowedPools references unknown Pool %q", rule.Role, name)
 			}
+			if pools[poolIndex].Template.SpeculationRole == inferencev1alpha1.SpeculationRoleDraft {
+				return servingconfig.Admission{}, fmt.Errorf("roleRules %q allowedPools must select request-serving Pools, not Draft Pool %q", rule.Role, name)
+			}
 			allowedRoles = append(allowedRoles, pools[poolIndex].Template.Role)
 		}
 		if len(rule.AllowedPools) == 0 {
@@ -116,9 +119,12 @@ func effectiveModelAdmission(frontend inferencev1alpha1.FrontendServiceSpec, mod
 }
 
 // admissionTargetSetsForService selects autoscaling targets that admit each service request.
-func admissionTargetSetsForService(service *inferencev1alpha1.ModelService, pools []*inferencev1alpha1.ModelPool) [][]servingconfig.ScalingTarget {
+func admissionTargetSetsForService(service *inferencev1alpha1.ModelService, pools []*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup) [][]servingconfig.ScalingTarget {
 	targets := make([]servingconfig.ScalingTarget, 0, len(pools))
 	for _, pool := range pools {
+		if servingconfig.ServingSpeculationRole(service, pool, groups) == inferencev1alpha1.SpeculationRoleDraft {
+			continue
+		}
 		role := pool.Spec.Template.Role
 		if role != inferencev1alpha1.ModelRoleAggregate && role != inferencev1alpha1.ModelRoleEncoder && role != inferencev1alpha1.ModelRolePrefill && role != inferencev1alpha1.ModelRoleDecode {
 			continue

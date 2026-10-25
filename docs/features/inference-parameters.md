@@ -222,6 +222,8 @@ spec:
 
 Methods and child fields follow vLLM. For methods using draft weights, `model` accepts a Hub ID or a container-visible absolute directory. vLLM downloads, loads and caches the draft; `spec.source: modelscope` applies to both target and draft Hub IDs.
 
+For separate Draft and Target GPUs, select the Draft checkpoint with `modelPools[].model` and reference its Pool name from the Target's `speculation.draftPools`. Foretoken prepares both checkpoints; keep the native algorithm configuration in the Draft Pool's `engineArgs.speculative-config`. The [Draft/Target example](../../examples/feature/draft-target/README.md) shows deployment and shared-Draft replica settings.
+
 ## Platform-managed options
 
 Use `spec.model`, `spec.tokenizer`, `nodes`, `kvCache`, `kvTransfer` and `ecProfile` for model selection, placement, cache storage and transfer. Foretoken supplies the corresponding startup settings. Profiling owns its native configuration when a runtime cache is enabled; mcTracer also selects its worker class. Multi-node replicas use the `mp` executor.

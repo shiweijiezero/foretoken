@@ -62,7 +62,7 @@ func projectableRouting(services []inferencev1alpha1.ModelService, pools []infer
 			}
 			for groupIndex := range modelGroups {
 				group := &modelGroups[groupIndex]
-				if !servingconfig.RoutingGroupOwnedBy(group, pool) || group.Spec.Revision != servingconfig.ServingRevision(service, pool) || !servingconfig.RoutingGroupReady(group) || group.Spec.Role != inferencev1alpha1.ModelRoleAggregate {
+				if !servingconfig.RoutingGroupOwnedBy(group, pool) || group.Spec.Revision != servingconfig.ServingRevision(service, pool) || !servingconfig.RoutingGroupReady(group) || group.Spec.Role != inferencev1alpha1.ModelRoleAggregate || group.Spec.SpeculationRole == inferencev1alpha1.SpeculationRoleDraft || !servingconfig.DraftDependenciesReady(group, service, servicePools, modelGroups) {
 					continue
 				}
 				groups = append(groups, servingconfig.RoutingGroupForService(service, pool, group))

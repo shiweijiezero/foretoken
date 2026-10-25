@@ -29,6 +29,7 @@ type EffectiveConfig struct {
 // LaunchPlanV1 is the versioned, private Go-to-Rust launch contract. Rust is
 // the only component that renders this contract into vLLM command-line flags.
 type LaunchPlanV1 struct {
+	DT                                    *LaunchDTPlan                      `json:"dt,omitempty"`
 	Version                               int                                `json:"version"`
 	NodeCount                             int32                              `json:"nodeCount"`
 	Artifacts                             runtimeconfig.ModelArtifacts       `json:"artifacts"`
@@ -39,6 +40,15 @@ type LaunchPlanV1 struct {
 	InternalGenerateRequestBodyLimitBytes int64                              `json:"internalGenerateRequestBodyLimitBytes"`
 	EngineArgs                            inferencev1alpha1.EngineArguments  `json:"engineArgs,omitempty"`
 	Profiling                             *inferencev1alpha1.ProfilingConfig `json:"profiling,omitempty"`
+}
+
+// LaunchDTPlan supplies native workers with resolved role, checkpoint, and discovery inputs.
+// Kubernetes references remain in the immutable Group contract rather than engine arguments.
+type LaunchDTPlan struct {
+	Role           inferencev1alpha1.SpeculationRole `json:"role"`
+	DraftArtifacts *runtimeconfig.ModelArtifacts     `json:"draftArtifacts,omitempty"`
+	DraftEndpoint  string                            `json:"draftEndpoint,omitempty"`
+	Protocol       string                            `json:"protocol,omitempty"`
 }
 
 type LaunchParallelism struct {
@@ -115,6 +125,15 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 	if capacity != ranks {
 		return EffectiveConfig{}, fmt.Errorf("vLLM topology requires %d workers but the Pool provides %d accelerators", ranks, capacity)
 	}
+	if template.SpeculationRole != "" {
+		p := effective.Parallelism
+		if template.NodeCount != 1 || p.TP != 1 || p.PP != 1 || p.DP != 1 || p.PCP != 1 || p.DCP != 1 {
+			return EffectiveConfig{}, fmt.Errorf("native DT requires one vLLM worker per Group; scale Pool replicas for additional Draft or Target instances")
+		}
+		if len(template.Features.Multimodal) > 0 {
+			return EffectiveConfig{}, fmt.Errorf("native DT supports text requests only")
+		}
+	}
 	return effective, nil
 }
 
@@ -137,7 +156,7 @@ func (config EffectiveConfig) RequiresRDMA() bool {
 // RequestsRDMA identifies consumers before transport discovery and after protocol resolution.
 // An omitted P/D protocol permits automatic RDMA; explicit TCP keeps optional NICs unallocated.
 func (config EffectiveConfig) RequestsRDMA(template inferencev1alpha1.NormalizedPoolTemplate, deviceResource string) bool {
-	return template.NodeCount > 1 || config.RequiresRDMA() ||
+	return template.SpeculationRole != "" || template.NodeCount > 1 || config.RequiresRDMA() ||
 		(template.KVTransfer != nil && template.KVTransfer.Protocol != "tcp") ||
 		config.RequestsWeightSharing(template, deviceResource)
 }
@@ -180,7 +199,11 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	if err != nil {
 		return LaunchPlanV1{}, err
 	}
-	return LaunchPlanV1{Version: 1, NodeCount: group.NodeCount, Artifacts: runtimeconfig.ProjectModelArtifacts(group.Artifacts), Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: lifecycle, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil
+	dt, err := buildDTPlan(group)
+	if err != nil {
+		return LaunchPlanV1{}, err
+	}
+	return LaunchPlanV1{DT: dt, Version: 1, NodeCount: group.NodeCount, Artifacts: runtimeconfig.ProjectModelArtifacts(group.Artifacts), Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: lifecycle, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil
 }
 
 // JSON returns deterministic output because LaunchPlanV1 uses only ordered structs and slices.
@@ -395,6 +418,7 @@ func compileEngineArgs(template inferencev1alpha1.NormalizedPoolTemplate) (infer
 		"hf-token":                             "configure Hugging Face credentials for model preparation, not only the engine process",
 		"download-dir":                         "model preparation and runtimeCache own the model download directory",
 		"headless":                             "the model-server connects directly to EngineCore without a Python API server",
+		"shutdown-timeout":                     "timeouts.drain supplies the native shutdown budget",
 		"api-server-count":                     "the model-server owns API serving",
 		"grpc":                                 "the model-server uses the EngineCore transport, not the Python gRPC server",
 		"host":                                 "configure the Foretoken service endpoint rather than the unused Python API server",
@@ -415,6 +439,11 @@ func compileEngineArgs(template inferencev1alpha1.NormalizedPoolTemplate) (infer
 		"kv-events-config":                     "the model-server owns the publisher and subscriber configuration",
 		"kv-transfer-config":                   "select P/D transport through kvTransfer and cache storage through kvCache",
 		"ec-transfer-config":                   "select encoder transfer through ecProfile and E/P/D modelPools",
+	}
+	if template.SpeculationRole == inferencev1alpha1.SpeculationRoleTarget {
+		reserved["worker-extension-cls"] = "the native DT adapter supplies the Target worker extension"
+	} else if template.SpeculationRole == inferencev1alpha1.SpeculationRoleDraft {
+		reserved["worker-cls"] = "the native DT adapter supplies the Draft worker"
 	}
 	if template.RuntimeCache != nil {
 		reserved["profiler-config"] = "Foretoken profiling owns capture configuration and output storage"
@@ -459,6 +488,21 @@ func compileEngineArgs(template inferencev1alpha1.NormalizedPoolTemplate) (infer
 		}
 		value := input[name]
 		args[key] = *value.DeepCopy()
+	}
+
+	if template.SpeculationRole != "" {
+		if template.Role != inferencev1alpha1.ModelRoleAggregate {
+			return nil, fmt.Errorf("speculation requires aggregate execution")
+		}
+		if value, exists := args["additional-config"]; exists {
+			var config map[string]json.RawMessage
+			if err := json.Unmarshal(value.Raw, &config); err != nil {
+				return nil, fmt.Errorf("engineArgs.additional-config must be an object")
+			}
+			if _, exists := config["foretoken_dt"]; exists {
+				return nil, fmt.Errorf("additional-config.foretoken_dt is supplied by the speculative runtime")
+			}
+		}
 	}
 
 	// The request transport serves generation and launches DP engines as local processes.

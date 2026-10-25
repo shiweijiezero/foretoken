@@ -8,7 +8,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::backend::vllm::config::RuntimeConfig;
-use crate::backend::vllm::launch::{KvPlan, PdProtocol};
+use crate::backend::vllm::draft::DraftClient;
+use crate::backend::vllm::launch::{KvPlan, SpeculationRole, TransferProtocol};
 use crate::backend::vllm::prefix_lookup;
 use crate::backend::vllm::transport::LOOPBACK_HOST;
 use crate::engine::{ManagedEngine, PYTHON_MODULE_PATH};
@@ -25,12 +26,18 @@ use vllm_managed_engine::ManagedEngineConfig;
 /// A connected leader's process and transport, retained together through serving and shutdown.
 pub struct ConnectedEngine {
     pub engine: ManagedEngine,
-    pub client: EngineCoreClient,
+    pub client: EngineClient,
     pub cache_mode: runtime_cache::Mode,
     pub prepared_tokenizer: Option<PreparedTokenizer>,
     pub kv_transfer: Option<RuntimeKvTransferMetadata>,
     // The adapter still drains ordinary P/D transfers when the active layout disables reuse.
     pub kv_connector_utility: bool,
+}
+
+/// Role-specific connection to the same managed engine lifetime.
+pub enum EngineClient {
+    Generation(Box<EngineCoreClient>),
+    Draft(DraftClient),
 }
 
 /// A spawned member before the leader establishes request transport.
@@ -149,11 +156,11 @@ pub async fn spawn_engine_attempt(
         config.launch.kv,
         KvPlan::Pd {
             connector: KvConnector::Mooncake,
-            protocol: PdProtocol::Rdma,
+            protocol: TransferProtocol::Rdma,
             ..
         } | KvPlan::MultiConnector {
             connector: KvConnector::Mooncake,
-            protocol: PdProtocol::Rdma,
+            protocol: TransferProtocol::Rdma,
             ..
         }
     );
@@ -203,6 +210,43 @@ pub async fn spawn_engine_attempt(
         &mut environment,
     )
     .await?;
+    if let Some(dt) = &config.launch.dt
+        && dt.role == SpeculationRole::Target
+    {
+        // Native model inference owns feature requirements. Apply them before
+        // EngineCore constructs its CPU scheduler and prefix-cache manager.
+        let endpoint = dt
+            .draft_endpoint
+            .as_deref()
+            .expect("validated Target endpoint");
+        let status =
+            tokio::time::timeout_at(startup_deadline.into(), DraftClient::wait_peer(endpoint))
+                .await
+                .map_err(|_| {
+                    EngineStartupFailure::Other(io::Error::other(
+                        "Draft readiness exceeded the startup deadline",
+                    ))
+                })?
+                .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+        if status.requires_target_features {
+            match config
+                .launch
+                .engine_args
+                .get("enable-prefix-caching")
+                .and_then(serde_json::Value::as_bool)
+            {
+                Some(true) => {
+                    return Err(EngineStartupFailure::Other(io::Error::other(
+                        "this Draft requires complete Target features; enable-prefix-caching=true is incompatible",
+                    )));
+                }
+                Some(false) => {}
+                None => managed_engine
+                    .python_args
+                    .push("--no-enable-prefix-caching".into()),
+            }
+        }
+    }
     if mode == runtime_cache::Mode::Persistent
         && let Some(profile) = profiling
     {
@@ -279,25 +323,19 @@ fn prepare_environment(
             cache_mode_failure(mode, "profiling storage preparation failed", error)
         })?;
     }
-    if config.member.is_some()
-        || config.launch.shared_prefix_lookup()
-        || matches!(config.launch.kv, KvPlan::Pd { .. })
-        || config.launch.ec.enabled()
-        || config.launch.profiling.engine == profiling::Engine::Mctracer
-    {
-        let mut python_paths = std::env::var_os("PYTHONPATH")
-            .map(|existing| std::env::split_paths(&existing).collect::<Vec<_>>())
-            .unwrap_or_default();
-        if std::env::var_os(foretoken_artifacts::source::ACTIVE_DIRECTORY_ENV).is_none() {
-            python_paths.insert(0, PathBuf::from(PYTHON_MODULE_PATH));
-        }
-        let python_path = std::env::join_paths(python_paths)
-            .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
-        environment.push((
-            "PYTHONPATH".into(),
-            python_path.to_string_lossy().into_owned(),
-        ));
+    // Application bundles supply their module root; full images use the installed adapters.
+    let mut python_paths = std::env::var_os("PYTHONPATH")
+        .map(|existing| std::env::split_paths(&existing).collect::<Vec<_>>())
+        .unwrap_or_default();
+    if std::env::var_os(foretoken_artifacts::source::ACTIVE_DIRECTORY_ENV).is_none() {
+        python_paths.insert(0, PathBuf::from(PYTHON_MODULE_PATH));
     }
+    let python_path = std::env::join_paths(python_paths)
+        .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+    environment.push((
+        "PYTHONPATH".into(),
+        python_path.to_string_lossy().into_owned(),
+    ));
     if config.launch.shared_prefix_lookup() {
         environment.push((
             prefix_lookup::LOOKUP_ENDPOINT_ENV.into(),
@@ -369,6 +407,11 @@ async fn prepare_model_artifacts(
             remaining,
             preparation::prepare(
                 &config.launch.artifacts,
+                config
+                    .launch
+                    .dt
+                    .as_ref()
+                    .and_then(|dt| dt.draft_artifacts.as_ref()),
                 &managed_engine.python,
                 &storage,
                 &scope,
@@ -383,6 +426,9 @@ async fn prepare_model_artifacts(
         })?
         .map_err(|error| classify_engine_startup_failure(cache, mode, error.to_string()))?;
         managed_engine.model = prepared.model.display().to_string();
+        if let Some(draft) = &prepared.draft {
+            bind_draft_model(managed_engine, &draft.to_string_lossy())?;
+        }
         managed_engine.python_args.retain(|argument| {
             !argument.starts_with("--revision=") && !argument.starts_with("--tokenizer-revision=")
         });
@@ -403,13 +449,55 @@ async fn prepare_model_artifacts(
         let tokenizer = preparation::local_artifact_path(&config.launch.artifacts.tokenizer)
             .map_err(EngineStartupFailure::Other)?;
         managed_engine.model = model;
+        if let Some(draft) = config
+            .launch
+            .dt
+            .as_ref()
+            .and_then(|dt| dt.draft_artifacts.as_ref())
+        {
+            let model = preparation::local_artifact_path(&draft.model)
+                .map_err(EngineStartupFailure::Other)?;
+            bind_draft_model(managed_engine, &model)?;
+        }
         for argument in &mut managed_engine.python_args {
             if argument.starts_with("--tokenizer=") {
                 *argument = format!("--tokenizer={tokenizer}");
             }
         }
     }
+    if config
+        .launch
+        .dt
+        .as_ref()
+        .is_some_and(|dt| dt.draft_artifacts.is_none())
+    {
+        let model = managed_engine.model.clone();
+        bind_draft_model(managed_engine, &model)?;
+    }
     Ok(prepared_tokenizer)
+}
+
+/// Bind native speculative loading to the same fixed files retained by model preparation.
+fn bind_draft_model(
+    engine: &mut ManagedEngineConfig,
+    model: &str,
+) -> Result<(), EngineStartupFailure> {
+    let argument = engine
+        .python_args
+        .iter_mut()
+        .find(|argument| argument.starts_with("--speculative-config="))
+        .ok_or_else(|| {
+            EngineStartupFailure::Other(io::Error::other("DT launch requires speculative-config"))
+        })?;
+    let mut configuration: serde_json::Value = serde_json::from_str(
+        argument
+            .strip_prefix("--speculative-config=")
+            .expect("matched speculative option"),
+    )
+    .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+    configuration["model"] = serde_json::json!(model);
+    *argument = format!("--speculative-config={configuration}");
+    Ok(())
 }
 
 /// Establish the leader's handshake and DP transport without exceeding the attempt deadline.
@@ -457,12 +545,27 @@ async fn start_engine_attempt(
             model_name: config.launch.artifacts.model.clone(),
             client_index: 0,
         };
-        // Upstream handshake waits are per phase; this owner bounds the complete connection.
+        // Both roles share preparation, handshake, transport and the managed-child startup budget.
+        let connection = async {
+            let client = EngineCoreClient::connect_with_protocol(client_config, protocol)
+                .await
+                .map_err(|error| io::Error::other(error.to_string()))?;
+            if config
+                .launch
+                .dt
+                .as_ref()
+                .is_some_and(|dt| dt.role == SpeculationRole::Draft)
+            {
+                DraftClient::new(client)
+                    .await
+                    .map(EngineClient::Draft)
+                    .map_err(io::Error::other)
+            } else {
+                Ok(EngineClient::Generation(Box::new(client)))
+            }
+        };
         tokio::select! {
-            result = EngineCoreClient::connect_with_protocol(client_config, protocol) => match result {
-                Ok(client) => Ok(client),
-                Err(error) => Err(classify_engine_startup_failure(cache, mode, format!("could not connect to EngineCore: {error}"))),
-            },
+            result = connection => result.map_err(|error| classify_engine_startup_failure(cache, mode, format!("could not connect to managed engine: {error}"))),
             status = engine.wait_for_exit() => Err(classify_engine_startup_failure(cache, mode, format!("managed EngineCore exited during startup: {status}"))),
             _ = tokio::time::sleep_until(startup_deadline.into()) => Err(EngineStartupFailure::Other(io::Error::other("EngineCore connection exceeded the startup deadline"))),
             reason = runtime_cache::wait_for_server(cache_server) => Err(EngineStartupFailure::Other(io::Error::other(format!("cache observation server stopped during startup: {reason}")))),
@@ -471,13 +574,24 @@ async fn start_engine_attempt(
     };
     match client {
         Ok(client) => {
+            // Only generation roles publish native P/D connector settings.
+            let EngineClient::Generation(client) = client else {
+                return Ok(ConnectedEngine {
+                    engine,
+                    client,
+                    cache_mode: mode,
+                    prepared_tokenizer,
+                    kv_transfer,
+                    kv_connector_utility: false,
+                });
+            };
             let kv_connector_utility = kv_transfer
                 .as_ref()
                 .is_some_and(|kv| kv.bidirectional_kv_xfer);
             match observe_kv_transfer(&client, kv_transfer, startup_deadline).await {
                 Ok(kv_transfer) => Ok(ConnectedEngine {
                     engine,
-                    client,
+                    client: EngineClient::Generation(client),
                     cache_mode: mode,
                     prepared_tokenizer,
                     kv_transfer,

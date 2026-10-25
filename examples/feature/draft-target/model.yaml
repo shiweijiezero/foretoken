@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Share an EAGLE3 Draft with independently replicated Target instances.
+apiVersion: inference.foretoken.io/v1alpha1
+kind: ModelService
+metadata:
+  name: qwen3-8b
+spec:
+  model: Qwen/Qwen3-8B
+  backend: vllm
+  timeouts:
+    startup: 20m
+    drain: 2m
+  modelPools:
+    - name: draft
+      model: AngelSlim/Qwen3-8B_eagle3
+      replicas: 1
+      resources:
+        requests:
+          cpu: "4"
+          memory: 48Gi
+          gpu:
+            count: 1
+        limits:
+          cpu: "8"
+          memory: 64Gi
+      engineArgs:
+        max-model-len: 8192
+        async-scheduling: true
+        speculative-config:
+          method: eagle3
+          num_speculative_tokens: 4
+    - name: target
+      replicas: 1
+      speculation:
+        draftPools: [draft]
+      resources:
+        requests:
+          cpu: "4"
+          memory: 48Gi
+          gpu:
+            count: 1
+        limits:
+          cpu: "8"
+          memory: 64Gi
+      engineArgs:
+        max-model-len: 8192
+        async-scheduling: true

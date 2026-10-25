@@ -426,11 +426,12 @@ func (reconciler *ServiceReconciler) reconcilePools(ctx context.Context, service
 	return desiredPools, nil
 }
 
-// replacementPoolsCapacityBlocked permits cohort retirement after every active replacement
-// reflects resolved current intent and at least one reports scheduler capacity pressure.
-// Unobserved targets and independent failures retain the serving topology.
+// replacementPoolsCapacityBlocked permits cohort retirement after current replacements report
+// scheduler pressure, including Targets waiting for those Drafts to acquire capacity.
+// Unobserved replacements and independent failures retain the serving topology.
 func replacementPoolsCapacityBlocked(compiledPools []compiler.ModelPool, pools map[string]*inferencev1alpha1.ModelPool) bool {
-	blocked := false
+	blocked := make(map[string]bool)
+	var waitingTargets []*inferencev1alpha1.ModelPool
 	for _, compiled := range compiledPools {
 		if compiled.DesiredGroups == 0 {
 			continue
@@ -441,21 +442,34 @@ func replacementPoolsCapacityBlocked(compiledPools []compiler.ModelPool, pools m
 			!reflect.DeepEqual(pool.Spec.InstanceAdmission, compiled.InstanceAdmission) || !apiequality.Semantic.DeepEqual(pool.Spec.Template, compiled.Template) {
 			return false
 		}
-		for _, name := range []string{conditionResolved, workload.ConditionGroupsMaterialized} {
-			condition := meta.FindStatusCondition(pool.Status.Conditions, name)
-			if condition == nil || condition.ObservedGeneration != pool.Generation || condition.Status != metav1.ConditionTrue {
-				return false
-			}
-		}
 		rollout := meta.FindStatusCondition(pool.Status.Conditions, conditionRolloutPending)
 		capacityBlocked := rollout != nil && rollout.ObservedGeneration == pool.Generation && rollout.Status == metav1.ConditionTrue && rollout.Reason == "InsufficientCapacity"
 		target := meta.FindStatusCondition(pool.Status.Conditions, workload.ConditionTargetReady)
 		if target == nil || target.ObservedGeneration != pool.Generation || target.Status == metav1.ConditionFalse && !capacityBlocked {
 			return false
 		}
-		blocked = blocked || capacityBlocked
+		if pool.Spec.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleTarget && target.Status == metav1.ConditionUnknown && target.Reason == draftPoolsNotReadyReason {
+			waitingTargets = append(waitingTargets, pool)
+			continue
+		}
+		for _, name := range []string{conditionResolved, workload.ConditionGroupsMaterialized} {
+			condition := meta.FindStatusCondition(pool.Status.Conditions, name)
+			if condition == nil || condition.ObservedGeneration != pool.Generation || condition.Status != metav1.ConditionTrue {
+				return false
+			}
+		}
+		if capacityBlocked {
+			blocked[compiled.Name] = true
+		}
 	}
-	return blocked
+	// A Target cannot materialize until a Draft is ready. Only pressure in its
+	// own dependencies justifies releasing the obsolete topology that blocks it.
+	for _, target := range waitingTargets {
+		if !slices.ContainsFunc(target.Spec.Template.DraftPools, func(name string) bool { return blocked[name] }) {
+			return false
+		}
+	}
+	return len(blocked) > 0
 }
 
 // reconcileServingCohort owns serving-cohort withdrawal and atomic replacement selection.
@@ -546,7 +560,10 @@ func (reconciler *ServiceReconciler) reconcileServingCohort(ctx context.Context,
 				revision := servingconfig.ServingRevision(candidate, pool)
 				for index := range groups.Items {
 					group := &groups.Items[index]
-					if servingconfig.RoutingGroupOwnedBy(group, pool) && group.Spec.Revision == revision && servingconfig.RoutingGroupReady(group) && group.Spec.Role == inferencev1alpha1.ModelRoleAggregate {
+					if servingconfig.RoutingGroupOwnedBy(group, pool) && group.Spec.Revision == revision && servingconfig.RoutingGroupReady(group) && group.Spec.Role == inferencev1alpha1.ModelRoleAggregate && group.Spec.SpeculationRole != inferencev1alpha1.SpeculationRoleDraft {
+						if !servingconfig.DraftDependenciesReady(group, candidate, servicePools, groups.Items) {
+							return nil
+						}
 						routes = append(routes, servingconfig.RoutingGroupForService(candidate, pool, group))
 					}
 				}
@@ -650,10 +667,25 @@ func (reconciler *ServiceReconciler) servingCohortReadiness(ctx context.Context,
 			return false, "PoolsNotReady", "The serving P/D generation is incomplete", nil
 		}
 	default:
+		servingTarget := false
 		for _, pool := range selectedPools {
-			if !poolRevisionServingReady(groups.Items, pool, servingconfig.ServingRevision(service, pool)) {
+			revision := servingconfig.ServingRevision(service, pool)
+			if !poolRevisionServingReady(groups.Items, pool, revision) {
 				return false, "PoolsNotReady", "One or more serving ModelPool revisions are not ready", nil
 			}
+			for index := range groups.Items {
+				group := &groups.Items[index]
+				if !servingconfig.ModelGroupOwnedBy(group, pool) || group.Spec.Revision != revision || !servingconfig.RoutingGroupReady(group) {
+					continue
+				}
+				if !servingconfig.DraftDependenciesReady(group, service, selectedPools, groups.Items) {
+					return false, draftPoolsNotReadyReason, "One or more serving Targets have unavailable Draft dependencies", nil
+				}
+				servingTarget = servingTarget || group.Spec.SpeculationRole != inferencev1alpha1.SpeculationRoleDraft
+			}
+		}
+		if !servingTarget {
+			return false, "TargetsNotReady", "No request-serving ModelGroup is ready", nil
 		}
 	}
 	if service.Status.ServingGeneration != service.Generation {

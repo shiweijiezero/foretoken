@@ -9,7 +9,6 @@ use std::path::PathBuf;
 use crate::backend::vllm::launch::LaunchPlanV1;
 use crate::backend::vllm::transport::RuntimePorts;
 
-const LAUNCH_PLAN_ENV: &str = "FORETOKEN_VLLM_LAUNCH_PLAN";
 const LISTEN_ENV: &str = "FORETOKEN_INTERNAL_LISTEN";
 /// Controller-projected ModelGroup identity shared by all member Pods.
 pub const MODEL_GROUP_UID_ENV: &str = "FORETOKEN_MODEL_GROUP_UID";
@@ -51,7 +50,7 @@ impl RuntimeConfig {
     ///
     /// Startup receives an owned configuration; environment values are not retained after parsing.
     pub fn from_env(cache_port: Option<u16>) -> Result<Self, String> {
-        let launch = LaunchPlanV1::parse(&required_env(LAUNCH_PLAN_ENV)?)?;
+        let launch = LaunchPlanV1::from_env()?;
         let listen_address: SocketAddr = required_env(LISTEN_ENV)?
             .parse()
             .map_err(|_| format!("{LISTEN_ENV} must be a socket address"))?;

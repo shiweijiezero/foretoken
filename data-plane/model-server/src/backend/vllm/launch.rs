@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::process::Command;
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use vllm_managed_engine::ManagedEngineConfig;
 
@@ -32,6 +32,8 @@ pub struct LaunchPlanV1 {
     pub kv: KvPlan,
     #[serde(default)]
     pub ec: EcTransferPlan,
+    #[serde(default)]
+    pub dt: Option<DraftTargetPlan>,
     pub lifecycle: Lifecycle,
     #[serde(default)]
     pub profiling: crate::profiling::Preparation,
@@ -39,6 +41,23 @@ pub struct LaunchPlanV1 {
     pub internal_generate_request_body_limit_bytes: usize,
     #[serde(default, rename = "engineArgs")]
     pub engine_args: BTreeMap<String, serde_json::Value>,
+}
+
+/// Controller-resolved speculative execution and its optional proposal checkpoint.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DraftTargetPlan {
+    pub role: SpeculationRole,
+    pub draft_artifacts: Option<ModelArtifacts>,
+    pub draft_endpoint: Option<String>,
+    pub protocol: Option<TransferProtocol>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpeculationRole {
+    Draft,
+    Target,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -70,7 +89,7 @@ pub enum KvPlan {
         #[serde(default = "KvPlan::legacy_connector")]
         connector: KvConnector,
         role: KvRole,
-        protocol: PdProtocol,
+        protocol: TransferProtocol,
         #[serde(default, rename = "deviceName")]
         device_name: String,
         events: bool,
@@ -97,7 +116,7 @@ pub enum KvPlan {
         #[serde(default = "KvPlan::legacy_connector")]
         connector: KvConnector,
         role: KvRole,
-        protocol: PdProtocol,
+        protocol: TransferProtocol,
         #[serde(default, rename = "deviceName")]
         device_name: String,
         events: bool,
@@ -112,8 +131,9 @@ pub enum KvRole {
     KvConsumer,
 }
 
+/// Selects the native network transport for P/D and Draft/Target tensor exchange.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-pub enum PdProtocol {
+pub enum TransferProtocol {
     #[serde(rename = "rdma")]
     Rdma,
     #[serde(rename = "tcp")]
@@ -148,6 +168,13 @@ pub enum EcRole {
 }
 
 impl LaunchPlanV1 {
+    /// Reads the controller's vLLM launch selection for serving or model preparation.
+    pub fn from_env() -> Result<Self, String> {
+        const NAME: &str = "FORETOKEN_VLLM_LAUNCH_PLAN";
+        let value = std::env::var(NAME).map_err(|error| format!("{NAME}: {error}"))?;
+        Self::parse(&value)
+    }
+
     /// Decodes the controller-projected launch plan used by model-server startup.
     ///
     /// Returns an owned, validated plan or a configuration error without retaining the input.
@@ -169,6 +196,19 @@ impl LaunchPlanV1 {
             return Err("launch plan requires a positive node count".into());
         }
         self.artifacts.validate()?;
+        if let Some(dt) = &self.dt {
+            if let Some(draft) = &dt.draft_artifacts {
+                draft.validate()?;
+                if draft.source != self.artifacts.source {
+                    return Err("Draft and Target must use the same model source".into());
+                }
+            }
+            if dt.role == SpeculationRole::Target
+                && dt.draft_endpoint.as_ref().is_none_or(String::is_empty)
+            {
+                return Err("Target launch requires a Draft endpoint".into());
+            }
+        }
         let p = &self.parallelism;
         if p.tp == 0 || p.pp == 0 || p.dp == 0 || p.pcp == 0 || p.dcp == 0 {
             return Err("launch plan topology values must be positive".into());
@@ -277,7 +317,26 @@ impl LaunchPlanV1 {
         ports: &RuntimePorts,
         startup_remaining: Duration,
     ) -> Command {
-        let command = engine.to_command();
+        let command = if self
+            .dt
+            .as_ref()
+            .is_some_and(|dt| dt.role == SpeculationRole::Draft)
+        {
+            let mut command = Command::new(&engine.python);
+            command
+                .args(["-m", "foretoken_dt", "--model"])
+                .arg(&engine.model)
+                .arg("--data-parallel-address")
+                .arg(&engine.handshake_host)
+                .arg("--data-parallel-rpc-port")
+                .arg(engine.handshake_port.to_string())
+                .arg("--data-parallel-size")
+                .arg(engine.data_parallel_size.to_string())
+                .args(&engine.python_args);
+            command
+        } else {
+            engine.to_command()
+        };
         let mut command = if let Some(member) = member {
             let distributed = ports
                 .distributed
@@ -318,8 +377,8 @@ impl LaunchPlanV1 {
                     .env_remove("MC_FORCE_TCP");
                 command.env(
                     match protocol {
-                        PdProtocol::Rdma => "MC_FORCE_HCA",
-                        PdProtocol::Tcp => "MC_FORCE_TCP",
+                        TransferProtocol::Rdma => "MC_FORCE_HCA",
+                        TransferProtocol::Tcp => "MC_FORCE_TCP",
                     },
                     "1",
                 );
@@ -336,11 +395,11 @@ impl LaunchPlanV1 {
                 command.env(
                     "UCX_TLS",
                     match protocol {
-                        PdProtocol::Tcp => "^ib",
-                        PdProtocol::Rdma => "^tcp",
+                        TransferProtocol::Tcp => "^ib",
+                        TransferProtocol::Rdma => "^tcp",
                     },
                 );
-                if *protocol == PdProtocol::Rdma && !device_name.is_empty() {
+                if *protocol == TransferProtocol::Rdma && !device_name.is_empty() {
                     command.env("UCX_NET_DEVICES", device_name);
                 }
             }
@@ -386,11 +445,38 @@ impl LaunchPlanV1 {
                 args.push("--enable-eplb".into());
             }
         }
+        let mut engine_args = self.engine_args.clone();
+        if let Some(dt) = &self.dt {
+            let mut settings = json!({"role": dt.role});
+            if let Some(endpoint) = &dt.draft_endpoint {
+                settings["endpoint"] = json!(endpoint);
+            }
+            if let Some(protocol) = dt.protocol {
+                settings["protocol"] = json!(protocol.as_str());
+            }
+            let additional = engine_args
+                .entry("additional-config".into())
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .ok_or("engineArgs.additional-config must be an object")?;
+            additional.insert("foretoken_dt".into(), settings);
+            if dt.role == SpeculationRole::Target {
+                engine_args.insert(
+                    "worker-extension-cls".into(),
+                    json!("foretoken_dt.worker.WorkerExtension"),
+                );
+            }
+        }
         // The controller has already normalized native option names.
         // Keep argument values intact: this command never goes through a shell.
-        for (name, value) in &self.engine_args {
+        for (name, value) in &engine_args {
             append_engine_arg(&mut args, name, value)?;
         }
+        // Retained Group arguments may predate controller-owned shutdown budgets.
+        args.push(format!(
+            "--shutdown-timeout={}",
+            self.lifecycle.drain_seconds
+        ));
         if self.kv.events() {
             args.push(format!("--kv-events-config={}", json!({"publisher":"zmq","endpoint":ports.kv_event_endpoint(member.map_or(LOOPBACK_HOST, |member| member.leader_address.as_str()), 0),"topic":KV_EVENT_TOPIC,"enable_kv_cache_events":true,"hwm":4096,"max_queue_size":4096})));
         }
@@ -434,7 +520,7 @@ impl KvRole {
     }
 }
 
-impl PdProtocol {
+impl TransferProtocol {
     fn as_str(self) -> &'static str {
         match self {
             Self::Rdma => "rdma",
@@ -554,7 +640,7 @@ impl KvPlan {
         model_group_uid: Option<&str>,
         kv_transfer: Option<&RuntimeKvTransferMetadata>,
     ) -> Option<serde_json::Value> {
-        let pd = |role: KvRole, protocol: PdProtocol, device_name: &str| {
+        let pd = |role: KvRole, protocol: TransferProtocol, device_name: &str| {
             let settings = kv_transfer.expect("P/D settings are resolved before argv rendering");
             let module = match settings.connector {
                 KvConnector::Mooncake => "connectors.mooncake.connector",

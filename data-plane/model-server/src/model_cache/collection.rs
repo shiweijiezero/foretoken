@@ -493,7 +493,7 @@ fn source_items(source: ResolvedArtifacts) -> Vec<CacheItem> {
     if source.artifacts.source == ModelSource::Local {
         return Vec::new();
     }
-    vec![
+    let mut items = vec![
         CacheItem {
             source: source.artifacts.source,
             repository: source.artifacts.model,
@@ -504,7 +504,17 @@ fn source_items(source: ResolvedArtifacts) -> Vec<CacheItem> {
             repository: source.artifacts.tokenizer,
             revision: source.tokenizer_revision,
         },
-    ]
+    ];
+    if let Some(draft) = source.draft_artifacts {
+        items.push(CacheItem {
+            source: draft.source,
+            repository: draft.model,
+            revision: source
+                .draft_revision
+                .expect("published draft has a fixed revision"),
+        });
+    }
+    items
 }
 
 fn group_source_name(group: &Value) -> io::Result<String> {

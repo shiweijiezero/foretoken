@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Serve the Target through the ordinary generation API.
+apiVersion: inference.foretoken.io/v1alpha1
+kind: FrontendService
+metadata:
+  name: qwen3-dt
+spec:
+  replicas: 1
+  resources:
+    requests:
+      cpu: "2"
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  timeouts:
+    request: 10m
+    streamIdle: 5m
+  routerPipeline:
+    filter:
+      algorithm: allow_all
+    scorer:
+      algorithm: least_loaded
+    picker:
+      algorithm: gamble_sampling

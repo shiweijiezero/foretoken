@@ -96,6 +96,31 @@
       "python": {}
     },
     {
+      "path": "common/signal-callback-reentry.patch",
+      "rust": true,
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-031/remote-proposer-lifecycle.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-031/mooncake-transfer-shutdown.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
       "path": "common/prefix-cache-lookup.patch",
       "rust": true,
       "python": {
@@ -388,6 +413,14 @@
     {
       "path": "rust/chat-token-metadata.patch",
       "rust": true
+    },
+    {
+      "path": "compatibility/v1-031/deferred-proposals.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
     }
   ]
 }

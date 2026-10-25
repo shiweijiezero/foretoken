@@ -329,7 +329,7 @@ class EditableDeployment:
                 time.sleep(min(2, max(0.0, deadline - time.monotonic())))
             if component == "model-server":
                 routes.setdefault(namespace, set()).update(
-                    route for _, _, _, route in writers
+                    route for _, _, _, route in writers if route
                 )
             if not code_changed:
                 continue
@@ -870,8 +870,11 @@ class EditableDeployment:
                 expected_image = runtime["image"]
                 pool_uid = pool["metadata"]["uid"]
                 pool_sizes[pool_uid] = pool["spec"]["desiredGroups"]
-                route_target = group["metadata"]["uid"]
-                group_sizes[route_target] = group["spec"]["memberCount"]
+                group_uid = group["metadata"]["uid"]
+                group_sizes[group_uid] = group["spec"]["memberCount"]
+                # Draft code belongs to the cohort but has no frontend route.
+                if group["spec"].get("speculationRole") != "draft":
+                    route_target = group_uid
             for container in pod["spec"]["containers"]:
                 if (
                     container["name"] == component
@@ -890,7 +893,7 @@ class EditableDeployment:
                     )
                     if component == "model-server":
                         members = ready_members.setdefault(pool_uid, {})
-                        members[route_target] = members.get(route_target, 0) + 1
+                        members[group_uid] = members.get(group_uid, 0) + 1
         if component == "model-server":
             if set(ready_members) != set(selected):
                 return []

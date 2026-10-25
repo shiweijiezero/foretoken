@@ -64,7 +64,7 @@ impl LaunchPlan {
         let scope = required_env(preparation::PREPARATION_SCOPE_ENV)?;
         Ok(tokio::time::timeout_at(
             deadline.into(),
-            preparation::prepare(&self.artifacts, python, &storage, &scope, true),
+            preparation::prepare(&self.artifacts, None, python, &storage, &scope, true),
         )
         .await
         .map_err(|_| "model preparation exceeded the startup deadline")??

@@ -17,7 +17,7 @@ use foretoken_model_server::backend::vllm::config::{MODEL_GROUP_UID_ENV, Runtime
 use foretoken_model_server::backend::vllm::kv_events::KvEventAdapter;
 use foretoken_model_server::backend::vllm::launch::KvPlan;
 use foretoken_model_server::backend::vllm::prefix_lookup;
-use foretoken_model_server::backend::vllm::startup::{self, ConnectedEngine};
+use foretoken_model_server::backend::vllm::startup::{self, ConnectedEngine, EngineClient};
 use foretoken_model_server::backend::vllm::transport::LOOPBACK_HOST;
 use foretoken_model_server::backend::{Backend, BackendError, VllmBackend};
 use foretoken_model_server::engine::ManagedEngine;
@@ -121,6 +121,10 @@ impl Leader {
             &mut cache_server,
         )
         .await?;
+        let EngineClient::Generation(client) = client else {
+            unreachable!("generation leader received a Draft connection");
+        };
+        let client = *client;
         health.set_process_alive(true);
         let client_health = client.subscribe_health();
         let (max_concurrent_requests, metadata) =
