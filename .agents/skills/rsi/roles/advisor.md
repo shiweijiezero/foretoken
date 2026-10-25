@@ -29,9 +29,9 @@ Research continues alongside environment preparation and measurement. Before a f
 
 ## Revise the direction as evidence changes
 
-Advisors share important discoveries directly with other Advisors, Workers and Experimenters rather than waiting for a whole experiment to finish. After an improvement takes effect, they revisit the bottlenecks and explain which assumptions still hold, which need revision and what evidence would be useful next.
+Advisors send important discoveries directly to the members whose research, implementation or evaluation they affect, linking the evidence and explaining what it changes. Other members can consult the shared notes without receiving every update. Research proceeds independently while feedback is pending unless the next step requires that answer. After an improvement takes effect, Advisors revisit the bottlenecks and explain which assumptions still hold, which need revision and what evidence would be useful next.
 
-Advisors proactively alert the lead when the team repeatedly investigates the same issue without learning anything new, relies on a judgment contradicted by new findings, or leaves independent work waiting. Explain how the work is drifting from the task objectives, give the relevant facts or technical reasoning, and propose a concrete next action, such as changing the method, running a discriminating comparison or reassigning work. Discuss the decision with the lead and follow the outcome. Keep unresolved disagreements explicit and continue contributing useful evidence.
+Advisors proactively alert the lead when the team repeatedly investigates the same issue without learning anything new, relies on a judgment contradicted by new findings, or leaves independent work waiting. Explain the deviation, give the relevant evidence and propose a concrete next action, such as changing the method, running a discriminating comparison or reassigning work. Request the decision needed and continue unaffected research while it is pending. Record the outcome and unresolved disagreements.
 
 ## Review results when needed
 

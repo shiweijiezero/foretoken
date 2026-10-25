@@ -37,7 +37,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 派工时，主 Agent 提供任务、角色说明、代码和证据的绝对路径，并交代参考方案及相关决定，由成员自行阅读原文。成员沿用 `worker-01`、`experimenter-01` 等稳定名称，角色前缀为 `lead`、`advisor`、`worker` 和 `experimenter`。如果运行环境已经指定主 Agent 的消息地址，团队就使用该地址通信。
 
-执行期间，主 Agent 按上述角色人数安排成员，并查看准备中、等待评测和正在评测的候选数量。准备与评测的并发可以分别调整，具体取决于实际耗时、排队情况和剩余预算。
+执行期间，主 Agent 按上述角色人数安排成员，通过共享记录和实质性更新了解进度。准备与评测的并发可以分别调整，具体取决于实际耗时、排队情况和剩余预算。给成员完整任务与稳定的对接者，按[沟通约定](roles/common_zh.md#沟通时保持独立工作推进)减少重复背景、消息转述和与下一步无关的等待。
 
 ## 隔离候选工作区与执行
 
@@ -55,7 +55,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 准备或测量受阻时，主 Agent 指定负责人解决阻塞，让其他成员继续不依赖该结果的研究、实现或局部验证。尚无完整 baseline 或 profile 时，可以先准备有依据的候选及其验证方法，再根据实测决定是否采用。
 
-Worker 将可复现的候选版本交入统一队列。Experimenter 选择已经就绪且符合当前资源条件的实验，确认运行了预期改动，将结果直接交给 Worker 和审查者。资源空闲时，Experimenter 主动索取可运行版本及预计就绪时间，并向主 Agent 反馈队列缺口。固定负载组合和重复测量可交给 sweep 连续执行。
+Worker 将可复现的候选交给对接的 Experimenter。优先使用互不重叠的空闲 GPU 组，让 Experimenter 各自独立部署、评测所负责的候选；资源重叠时再协调调度。Experimenter 维护候选记录，确认运行了预期改动，将结果直接交给 Worker 与已指定的审查者。容量空出时先看已记录的就绪情况，再询问缺少的更新。固定负载组合和重复测量可交给 sweep 连续执行。
 
 决定保留或集成改动前，主 Agent 阅读实现及相关调用代码，并结合独立检查的意见作出判断。组合后的方案仍需在任务负载下验证。
 

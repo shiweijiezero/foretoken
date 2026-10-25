@@ -55,7 +55,9 @@ Set Advisor, Worker and Experimenter counts separately in the task file; these c
 
 Method research begins alongside environment preparation. Advisors and Workers use papers, documentation, other implementations and code to select questions worth pursuing, including ideas whose benefit needs implementation to establish. Workers continue their questions as measurements return; preparing a new implementation can overlap evaluation of an existing candidate.
 
-The lead sets research priorities and budgets. Experimenters use the task's shared queue to schedule ready candidates according to actual resource needs, independently of the number of Workers. They ask for upcoming candidates when devices are idle and report readiness or capacity bottlenecks so the lead can adjust the work.
+The lead sets research priorities and budgets. Experimenters own deployment and evaluation, preferably on separate groups of available GPUs so they can proceed independently; only competing work needs shared scheduling. One Experimenter can serve several Workers or manage several device groups. Available capacity determines experiment concurrency.
+
+Keep complete findings and progress in shared records. Members send useful changes, deliverables and questions directly to those affected, continue work that does not depend on a reply, and involve the lead when direction or resources need to change. Stable assignments reduce repeated handoffs and context sharing.
 
 See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace isolation and resource handoffs.
 

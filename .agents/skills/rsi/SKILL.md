@@ -42,7 +42,7 @@ The harness's actual concurrency limit still applies, including any slot used by
 
 Assignments include absolute paths to the task, role instructions, code and evidence, together with the reference approach and relevant decisions. Members read the original sources themselves. Use stable names such as `worker-01` and `experimenter-01`, with the role prefixes `lead`, `advisor`, `worker` and `experimenter`. When the harness assigns the lead a messaging address, the team uses that address.
 
-During execution, the lead follows the role staffing above and tracks candidates being prepared, waiting for evaluation and executing. Preparation and evaluation concurrency can change independently according to observed durations, backlog and remaining time.
+During execution, the lead follows the role staffing above and tracks progress through shared records and substantive updates. Preparation and evaluation concurrency can change independently according to observed durations, backlog and remaining time. Give members complete assignments and stable counterparts; use the [communication guidance](roles/common.md#communicate-without-blocking-independent-work) to reduce repeated context, relayed messages and waits unrelated to the next action.
 
 ## Isolate candidate workspaces and execution
 
@@ -60,7 +60,7 @@ At the start of an iteration, use research, code and earlier results to select t
 
 When preparation or measurement is blocked, the lead assigns an owner to resolve it while other members continue research, implementation or local validation that does not depend on that result. Candidates and validation methods can be prepared from available evidence before a full baseline or profile is available; measurements then determine whether to adopt them.
 
-The Worker delivers a reproducible candidate to the shared queue. The Experimenter selects ready work that fits the available resources, confirms that the intended change ran, and returns results directly to the Worker and reviewer. When resources become idle, the Experimenter requests runnable versions and readiness estimates from Workers and updates the lead on gaps in the queue. Fixed workload groups and repetitions can run through sweeps.
+The Worker delivers a reproducible candidate to the assigned Experimenter. Prefer disjoint available GPU groups so Experimenters can independently deploy and evaluate their candidates; coordinate scheduling where resources overlap. Each Experimenter records the candidate, confirms that the intended change ran, and returns results directly to the Worker and assigned reviewer. When capacity becomes available, check recorded readiness and ask for missing updates. Fixed workload groups and repetitions can run through sweeps.
 
 Before retaining or integrating a change, the lead reads the implementation and relevant call paths and reviews the independent assessment. The combined approach is still validated under the task's workload.
 

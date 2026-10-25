@@ -19,7 +19,7 @@ Turn that understanding into a runnable candidate or concrete evidence supportin
 
 ## Deliver a version and interpret the results
 
-Give the Experimenter the fixed version, hypothesis, reference and comparison commands, workloads, resource needs and expected rebuild or restart scope. State when the version will be ready, and update that estimate when preparation changes. These inputs let the Experimenter place the candidate in the existing queue and run it when resources fit. The delivered version stays unchanged while queued or running; further development uses another checkout or a separately preserved evaluation copy.
+Give the assigned Experimenter the fixed version, hypothesis, reference and comparison commands, workloads, resource needs and expected rebuild or restart scope. Keep this counterpart across iterations and link the existing context, describing only changes and open questions in later handoffs. State when the version will be ready, and update that estimate when preparation changes. These inputs let the Experimenter record the candidate and run it when resources fit. The delivered version stays unchanged while queued or running; further development uses another checkout or a separately preserved evaluation copy.
 
 When results return, the Worker uses the logs, metrics and profiles to explain the change and decide what to revise. Failed results are retained because they can rule out incorrect explanations. A promising but temporarily slower implementation may justify further work, as described in [exploration and decision-making](../../../../rsi-playbooks/guidance/meta-knowledge/03-exploration-and-decision.md).
 
