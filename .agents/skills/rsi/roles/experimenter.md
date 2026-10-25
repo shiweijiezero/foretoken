@@ -23,6 +23,8 @@ Follow the [iteration workflow](../../../../rsi-playbooks/README.md#reuse-the-en
 
 Record initial environment preparation separately from each iteration's compilation, application publication, startup, first response and measurement. If a routine edit triggers an unexpected environment rebuild or full-image transfer, share the command and timings with the Worker and lead so they can correct the next iteration's deployment path.
 
+For performance diagnosis, follow the [bottleneck analysis guidance](../../../../rsi-playbooks/guidance/meta-knowledge/02-bottleneck-analysis.md), preferring native profiling to ad hoc probes. Keep diagnostic captures separate from performance comparisons, which run without profiling or temporary instrumentation under the target execution settings.
+
 Result analysis distinguishes measurement completion, request success and acceptance against the task requirements. A command's exit alone does not establish all three, so the Experimenter also checks request records and aggregate metrics.
 
 GPU collection continues throughout the experiment. The Experimenter reuses [collectors](../SKILL.md#collect-gpu-usage) covering the assigned devices, with one collection owner chosen by the lead for each device set. Utilization is interpreted alongside build, measurement and waiting periods, and missing intervals are reported. When collection spans several experiments, it is handed over with the resources and stopped when no longer needed.
