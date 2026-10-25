@@ -48,6 +48,9 @@ For example, when logged in to W&B, replace the recipe's output options with:
 ```text
 results/decode/parallelism/
 ├── report.md                  # Agent-maintained overall report
+├── team/                      # Agent-maintained team and observation notes
+│   ├── README.md              # Task, reminders and follow-up decisions
+│   └── observations/          # One dated note per Observer check
 └── iterations/tp2/
     ├── notes/
     │   ├── iteration.md       # Summaries, document links and decisions
@@ -76,9 +79,19 @@ The lead provides all members with a readable experiment directory, its host and
 
 Code stays in its assigned checkout or worktree. The proposal names its owner, host, absolute code path, branch and revision, links relevant files or a saved diff, and notes any uncommitted changes.
 
-Send a summary and complete file paths to the people who need the findings. Later messages add new findings, changes or questions without repeating all the background. Discuss open choices directly with the person responsible, record decisions in the notes, and continue other work while waiting for replies. Members can read one another's documents and code as needed. Each document has one writer; save substantial reviews or alternative proposals in the author's own files.
+Follow the [team's communication guidance](../.agents/skills/rsi/roles/common.md#share-findings-and-keep-working): brief coordination uses messages, while long explanations and material for several readers go in shared files. Send the summary and exact path, then describe later changes without repeating all the background. Discuss open choices directly with the person responsible, record decisions in the notes, and continue other work while waiting for replies. Each document has one writer; save substantial reviews or alternative proposals in the author's own files.
 
 Supporting research, scripts, preparation logs and cleanup records also belong under the iteration's `notes/`, organized as needed. Filenames such as `plan.md` and `analysis.md` are examples. Benchmark commands create missing iteration notes without replacing existing content; members maintain the report and additional files. Keep original run artifacts under `runs/`. Before deleting a referenced checkout, preserve its required code and update the links; retain cited evidence.
+
+## Keep team and session records
+
+An Observer needs to see what the team actually did, including how decisions were reached. It locates research notes, results and resource observations from the task and experiment directory, then finds the lead's and members' session files itself. The lead does not prepare a separate transcript index or search for files on its behalf.
+
+Use the session files written by Claude Code or Codex. Claude Code commonly stores JSONL transcripts under `~/.claude/projects/`, including a session's `subagents/` files. Codex commonly stores rollout JSONL files under `$CODEX_HOME/sessions/`, with `~/.codex` as the default home. The Observer uses working directories, timestamps, session IDs and parent/child metadata to identify this task's files, then records the actual paths in its note. Configuration and runtime versions may change the layout. See [Claude Code session records](https://code.claude.com/docs/en/sub-agents#resume-subagents) and [Codex state locations](https://learn.chatgpt.com/docs/config-file/config-advanced#config-and-state-locations).
+
+Prefer direct reading of those files. If the runtime provides transcripts through a read-only interface or export instead, the Observer uses that route and records it. Identify when only a summary or partial transcript is available; it is not a substitute for the original messages, tool calls and results. Inspect only this task's sessions, keep original files in the runtime's storage, and use existing task access information for remote hosts. Members do not need to find transcripts or repeat their work in status replies.
+
+The lead keeps the task link, check interval, next check time and reminder identity in `<output-dir>/team/README.md`. Each Observer writes its own dated file under `team/observations/`, including the sources it found. The lead links the note and records resulting actions and owners, or the reason for not taking a suggestion. Later checks use these records to see what changed. Link existing task records rather than maintaining another queue here. The overall report can link these team notes separately from performance measurements.
 
 ## Analyze results
 

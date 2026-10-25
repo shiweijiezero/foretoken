@@ -14,6 +14,8 @@ Available resources: 2 nodes, each with 8 available GPUs, 64 CPU cores, and 1 Ti
 Advisor count: 2
 Worker count: 2
 Experimenter count: 2
+Observer count: 1
+Observer check interval: 1h
 Minimum parallel experiments: 4 independent experiment groups across the two nodes
 Maximum parallel experiments: not fixed at four; determine and record the limit from actual GPU, CPU, memory, and storage needs, including smaller experiments
 Parallel scheduling: reserve capacity for platform services, builds and benchmark clients, then place four-GPU candidates and smaller experiments according to their resource requests. If fewer than four groups can run, record and address the preparation or resource constraints.

@@ -30,7 +30,7 @@ The lead establishes the user-facing `report.md` and its writer at task start, f
 
 The lead chooses which questions to pursue, gives each one time and resources, and keeps an owner following it. Ideas that need an implementation before their benefits can be judged may receive a trial; measurements determine whether to keep them. The Experimenter tests ready approaches within these arrangements. Members continue within the agreed scope without waiting for instructions at every step. See the [team guidance](roles/common.md) for assignments and handoffs.
 
-Use the task's separate Advisor, Worker and Experimenter counts; each counts concurrent subagents in that role and excludes the lead. Respect user-specified counts, including zero. For unspecified counts, the lead chooses and records staffing from the work and available capacity. When a role has no dedicated member, the lead assigns its responsibilities to itself or another member; this does not create an additional member or establish independent review.
+Use the task's separate Advisor, Worker, Experimenter and Observer counts; none includes the lead. Advisor, Worker and Experimenter counts describe concurrent members. For these three roles, the lead chooses unspecified counts and assigns any unstaffed responsibilities to itself or another member; this does not create another member or establish independent review. Observer count means new agents per check and defaults to 1 when omitted or blank. Respect explicit counts, including 0, which disables Observer checks rather than replacing them with the lead's self-review.
 
 The harness's actual concurrency limit still applies, including any slot used by the lead. If it cannot accommodate the requested team, prioritize and stagger assignments within that limit, recording the requested and actual staffing and the reason for the difference. Count each member under one assigned role at a time.
 
@@ -40,9 +40,19 @@ The harness's actual concurrency limit still applies, including any slot used by
 
 [Experimenters](roles/experimenter.md) manage the experiment queue and execution resources, request ready candidates from Workers, build and evaluate them, record results and release resources. One Experimenter can manage several non-conflicting experiments.
 
-Assignments include absolute paths to the task, role instructions, code and evidence, together with the reference approach and relevant decisions. Members read the original sources themselves. Use stable names such as `worker-01` and `experimenter-01`, with the role prefixes `lead`, `advisor`, `worker` and `experimenter`. When the harness assigns the lead a messaging address, the team uses that address.
+[Observers](roles/observer.md) read work and session records to check the team's progress, use of resources and research depth. Each check starts with new agents that have no inherited conversation history. They send findings to the lead without questioning or interrupting other members.
+
+Research and execution assignments include absolute paths to the task, role instructions, code and evidence, together with the reference approach and relevant decisions. Members read the original sources themselves and use stable names such as `worker-01` and `experimenter-01`. Observers receive the task file, role instructions and working directory, find the records themselves, and use a new name each round, such as `observer-r03-01`. When the harness assigns the lead a messaging address, the team uses that address.
 
 The lead follows the staffing above and reads experiment records and new results to track progress. Use observed durations, the number of candidates waiting and the remaining budget to adjust preparation work and concurrent experiments separately. Keep members who know a question working together; see [sharing findings and continuing work](roles/common.md#share-findings-and-keep-working).
+
+## Arrange periodic team checks
+
+Read `Observer count` and `Observer check interval` from the task. For example, a count of `1` and an interval of `1h` means the lead creates one new Observer each hour while the task is running. If checks are enabled but no interval is supplied, choose and write one into the task before starting. Record the next check time and a task-owned reminder in the [team records](../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records). The reminder prompts the lead to create the requested agents; it does not resume an old Observer. Without a reminder facility, use bounded waits during the active session to check when the next round is due, and record that checks cannot run while the session is inactive.
+
+Create each round without inherited conversation history, following the [Observer instructions](roles/observer.md). Observers occupy ordinary agent slots while working, so arrange members' work stages to give due checks a chance to run within the harness limit. If a round needs more agents than the available slots, create them in batches and complete that round before starting the next. If slots are full or the previous check is still running, record the delay and run the check when capacity is available instead of accumulating missed rounds or interrupting experiments.
+
+The lead reads the findings, records its response and assigns any corrections. On resumption, inspect existing reminders and checks before scheduling another; on pause, stop, deadline or completion, stop the reminder and finish or stop active checks.
 
 ## Isolate candidate workspaces and execution
 

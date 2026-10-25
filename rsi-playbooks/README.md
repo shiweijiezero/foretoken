@@ -51,13 +51,15 @@ Workers turn specific questions into code or configuration changes that can be e
 
 Experimenters schedule experiments, build and deploy approaches, run evaluations and save results. They release unused resources afterward. When GPUs are available, they check which approaches are ready and ask Workers for missing versions or information.
 
-Set Advisor, Worker and Experimenter counts separately in the task file; these counts exclude the lead. Leave a count blank when the lead should choose it. The team schedules within the harness's actual concurrency limit and reports any difference from the requested staffing.
+[Observers](../.agents/skills/rsi/roles/observer.md) periodically check how the whole team is working: whether roles are being fulfilled, resources are used well, and research is moving beyond repeated setup or shallow tuning. Each round uses new agents without inherited conversation history. They read work and session files, then send the lead findings and suggested changes without asking other members for updates.
+
+Set Advisor, Worker, Experimenter and Observer counts separately in the task file; none includes the lead. Leave one of the first three counts blank when the lead should choose it. Observer count is the number of new agents per check and defaults to 1; set it to 0 to disable checks. Set the interval in the task too, for example `Observer check interval: 1h`. The lead uses that interval to arrange reminders and create each round. All roles share the harness's actual concurrency limit, and differences from requested staffing are recorded.
 
 While the environment is being prepared, Advisors and Workers begin reading relevant work and source code to find methods worth trying. Some ideas need an implementation before their benefits can be judged; allow time to test them too. While one version is being evaluated, Workers can continue research or prepare the next version, then revise it as results return.
 
 The lead sets research priorities and budgets, and Experimenters arrange the runs. When enough GPUs are available, give each experiment its own group. Arrange an order only when experiments need the same devices. One Experimenter can test approaches from several Workers and manage several GPU groups; available resources determine how many experiments can run at once.
 
-Keep research findings and experiment progress in shared records. Send new results, ready code or questions directly to the person who needs to act, with links to those records. Continue other work while waiting for a reply, and ask the lead to decide changes in direction or resources. Keep members who know a question working together to avoid repeated handoffs.
+Keep research findings and experiment progress in shared records. Short questions and coordination can use messages; long explanations or material for several readers go in shared files, with a brief message linking to them. Continue other work while waiting for a reply, and ask the lead to decide changes in direction or resources. Keep research and execution members who know a question working together to avoid repeated handoffs.
 
 See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace isolation and resource handoffs.
 
