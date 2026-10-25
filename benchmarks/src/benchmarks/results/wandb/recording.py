@@ -64,6 +64,8 @@ class WandbSink:
             "save_code": False,
             "settings": wandb.Settings(
                 silent=True,
+                # Foretoken owns console capture; SDK recapture can re-enter Loguru sinks.
+                console="off",
                 x_stats_sampling_interval=_SYSTEM_STATS_INTERVAL_S,
             ),
         }

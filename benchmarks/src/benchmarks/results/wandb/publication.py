@@ -302,6 +302,8 @@ def _upload_wandb(
             # The uploader must not replace the measurement's Git or environment files.
             settings=wandb.Settings(
                 base_url=identity["base_url"], disable_git=True,
+                # Publication uses the same application-owned console as measurement.
+                console="off",
                 x_disable_stats=True, x_disable_meta=True,
             ),
         )
@@ -322,9 +324,7 @@ def _upload_wandb(
                     raise
                 logger.exception("W&B publication cleanup also failed")
         if primary is not None:
-            remote = api.run(f"{entity}/{identity['project']}/{identity['id']}")
-            if remote.summary.get("Foretoken/measurement_exit_code") != run.exit_code:
-                raise RuntimeError("W&B final result was not confirmed; repeat sync with the saved result directory")
+            # finish() acknowledges summary uploads; Public API summaries can lag those writes.
             confirmed = api.artifact(primary.qualified_name)
             if "metrics.json" not in confirmed.manifest.entries:
                 raise RuntimeError("W&B result artifacts were not confirmed; repeat sync with the saved result directory")
