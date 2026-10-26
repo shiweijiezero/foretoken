@@ -142,7 +142,7 @@ foretoken profile view
 
 Agent 可以围绕指定模型、负载和资源预算，研究优化方法、修改代码或配置、部署候选方案，再通过性能评测、质量评测和性能剖析决定下一步。实验报告随迭代更新，记录方案对比、实测收益和保留的改动。
 
-安装并登录 Claude Code 或 Codex 后，在仓库根目录选择一条命令启动 [Qwen3.5-35B-A3B NVIDIA 任务](rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia_zh.md)。运行前核对任务要求；使用自定义任务或[沐曦任务](rsi-playbooks/tasks/qwen3.5-35b-a3b-muxi_zh.md)时替换路径。
+安装并登录 Claude Code 或 Codex 后，可以在仓库根目录启动优化任务。例如，运行以下任一命令优化 [NVIDIA GPU 上的 Qwen3.5-35B-A3B](rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia_zh.md)。
 
 ```bash
 # Claude Code

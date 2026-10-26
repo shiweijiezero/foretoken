@@ -142,7 +142,7 @@ Open the printed URL to inspect the capture. Press Ctrl+C to close the viewer; t
 
 Agents investigate optimization methods for a chosen model, workload, and resource budget, change code or configuration, and deploy candidates. Performance measurements, quality evaluations, and execution profiles guide the next iteration. A running experiment report compares approaches and records measured gains and retained changes.
 
-Install and sign in to Claude Code or Codex, then run either command from the repository root to start the [Qwen3.5-35B-A3B NVIDIA task](rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia.md). Review its requirements before starting; replace the path to use a custom task or the [MetaX task](rsi-playbooks/tasks/qwen3.5-35b-a3b-muxi.md).
+After installing and signing in to Claude Code or Codex, start an optimization task from the repository root. For example, run either command below to optimize [Qwen3.5-35B-A3B on NVIDIA GPUs](rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia.md).
 
 ```bash
 # Claude Code
