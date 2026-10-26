@@ -69,6 +69,8 @@ def read_saved_results(
     when selected inside a broader candidate directory. Method selections accept
     displayed approach names and recorded service names; the explicit base is
     retained independently of candidate selections.
+    Missing legacy output-token totals are recovered from complete request records;
+    ``derive_metrics`` controls additional chart metrics.
     """
     base = base.resolve() if base is not None else None
     directories = discover_result_directories(sources, base=base)
@@ -144,14 +146,19 @@ def read_saved_results(
             if not chosen:
                 continue
             label = display_methods[saved.method]
-            if derive_metrics and "throughput" in measured:
+            if "throughput" in measured:
                 from benchmarks.results.plots.metrics import enrich_plot_metrics
 
+                selected = None
+                if not derive_metrics:
+                    selected = {"total_output_tokens"}
+                elif derived_metrics is not None:
+                    selected = set(derived_metrics) | {"total_output_tokens"}
                 measured = enrich_plot_metrics(
-                    saved.directory, measured, gpu_count=gpu_count,
-                    selected=derived_metrics,
+                    saved.directory, measured, gpu_count=gpu_count if derive_metrics else None,
+                    selected=selected,
                 )
-                if pricing is not None:
+                if derive_metrics and pricing is not None:
                     from benchmarks.results.plots.economics import price_metrics
 
                     measured.update(price_metrics(measured, label, pricing))

@@ -351,6 +351,7 @@ def summarize_measurements(
         "tpot": percentile_summary(tpots),
         "itl": itl_summary,
         "throughput": throughput,
+        "total_output_tokens": output_tokens,
         "avg_input_tokens": (
             input_tokens / success_count
             if success_count and input_tokens is not None

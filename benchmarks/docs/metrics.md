@@ -22,10 +22,13 @@ Results include aggregate metrics and per-request records.
 | Request throughput (req/s) | Successful requests divided by run duration |
 | Input token throughput (tokens/s) | Successful requests' input tokens divided by run duration |
 | Output token throughput (tokens/s) | Successful requests' output tokens divided by run duration |
+| Total output tokens (`total_output_tokens`) | Actual output tokens from successful measured requests, excluding warmup and failures; unavailable if any successful request lacks usage, and 0 when none succeeded |
 | Output tok/s / user | Output throughput divided by `--max-concurrency`; with `--max-concurrency -1`, uses measured average active requests |
 | Output token throughput per GPU (tokens/s) | Output throughput divided by the model's declared GPU capacity |
 | Mean reported cached input tokens | Mean `usage.prompt_tokens_details.cached_tokens` among successful requests that report it |
 | Benchmark duration (s) | Duration of the whole benchmark run |
+
+Total output tokens appear in terminal summaries, W&B and comparison CSVs alongside duration and throughput. When older results lack this field, `foretoken plot` derives it from complete successful-request records. Insufficient evidence remains unavailable, and the original files are unchanged.
 
 A failed conversation turn skips the remaining turns without replacement. `not_executed_reasons` distinguishes these skips (`failed_predecessor`) from requests excluded by the time limit (`duration`). `failure_reasons` groups recorded failures by HTTP status and error message.
 

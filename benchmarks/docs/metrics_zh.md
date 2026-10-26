@@ -22,10 +22,13 @@
 | Request throughput (req/s) | 成功请求数除以运行时间 |
 | Input token throughput (tokens/s) | 成功请求的输入 token 总数除以运行时间 |
 | Output token throughput (tokens/s) | 成功请求的输出 token 总数除以运行时间 |
+| 总输出 token（`total_output_tokens`） | 本轮成功请求的实际输出 token 总和，不含预热和失败请求；任一成功请求缺少用量时不可用，没有成功请求时为 0 |
 | `Output tok/s / user` | 输出吞吐量除以 `--max-concurrency`；`--max-concurrency -1` 时使用实测平均活跃请求数 |
 | Output token throughput per GPU (tokens/s) | 输出吞吐量除以模型声明的 GPU 容量 |
 | Mean reported cached input tokens | 成功请求中已报告的 `usage.prompt_tokens_details.cached_tokens` 平均值 |
 | Benchmark duration (s) | 整次评测的持续时间 |
+
+总输出 token 会显示在终端汇总、W&B 和比较 CSV 中，便于与耗时、吞吐一起查看。`foretoken plot` 读取缺少该字段的旧结果时，从完整的成功请求记录补算；数据不足则保持不可用，不修改原文件。
 
 多轮对话中，某轮失败后会跳过剩余轮次，不再补发。`not_executed_reasons` 区分前序请求失败（`failed_predecessor`）和达到时长限制（`duration`）；`failure_reasons` 按 HTTP 状态和错误信息汇总已记录的失败请求。
 

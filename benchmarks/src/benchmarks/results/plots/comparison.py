@@ -47,6 +47,7 @@ def compare_to_base(
     contextual_metrics = {
         "planned_num", "admitted_num", "not_executed_num",
         "request_num", "success_num", "failed_num", "success_rate",
+        "total_output_tokens",
         "avg_input_tokens", "avg_output_tokens", "avg_cached_input_tokens",
     }
     selected = set(metrics) | contextual_metrics if metrics else None

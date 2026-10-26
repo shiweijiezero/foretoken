@@ -21,6 +21,7 @@ from benchmarks.results.recording.requests import (
 
 
 DERIVED_PLOT_METRICS = frozenset({
+    "total_output_tokens",
     "generation_tokens_per_second_per_gpu",
     "total_tokens_per_second_per_gpu",
     "cached_prompt_tokens_per_second_per_gpu",
@@ -44,6 +45,7 @@ def enrich_plot_metrics(
     Request-level TPOT supplies decode interactivity; chunk-level ITL quantiles
     describe a different distribution.
     Token accounting requires all successful records and their relevant usage.
+    An existing output-token total, including an unavailable value, is preserved.
     A supplied GPU count fills missing capacity but cannot replace recorded capacity.
     ``selected`` limits derivation to requested fields; existing values are retained.
     """
@@ -55,15 +57,18 @@ def enrich_plot_metrics(
     )
     percentiles = {name: percentile for name in requested
                    if (percentile := decode_interactivity_percentile(name)) is not None}
-    missing = {name for name in requested if _numeric(
+    missing = {name for name in requested if name != "total_output_tokens" and _numeric(
         metrics.get(name) if name in percentiles else throughput.get(name)
     ) is None}
+    missing_total = "total_output_tokens" in requested and "total_output_tokens" not in metrics
+    if missing_total:
+        missing.add("total_output_tokens")
     if not missing and gpu_count is None:
         return result
 
     missing_percentiles = {name: percentile for name, percentile in sorted(percentiles.items(), key=lambda item: item[1])
                            if name in missing}
-    normalized_fields = missing - percentiles.keys()
+    normalized_fields = missing - percentiles.keys() - {"total_output_tokens"}
     recorded_capacity = metrics.get("gpu_count")
     before = {}
     if "gpu_count" not in metrics and (normalized_fields or gpu_count is not None):
@@ -75,7 +80,10 @@ def enrich_plot_metrics(
         for name in normalized_fields
     )
     capacity_available = any(value is not None for value in (recorded_capacity, legacy_capacity, gpu_count))
-    raw_needed = bool(missing_percentiles) or legacy_capacity is not None or raw_rates and capacity_available
+    raw_needed = (
+        bool(missing_percentiles) or legacy_capacity is not None or raw_rates and capacity_available
+        or missing_total and metrics.get("success_num") != 0
+    )
     measurements = load_http_measurements(read_request_records(directory)) if raw_needed else []
     if legacy_capacity is not None:
         models = {item.model for item in measurements if item.model is not None}
@@ -86,6 +94,8 @@ def enrich_plot_metrics(
         result["gpu_count"] = capacity
     successful = [item for item in measurements if item.succeeded]
     complete = bool(successful) and len(successful) == metrics.get("success_num")
+    if missing_total:
+        result["total_output_tokens"] = 0 if metrics.get("success_num") == 0 else None
     duration = _numeric(metrics.get("benchmark_time"))
     rates = {
         "generation_tokens_per_second": _numeric(throughput.get("generation_tokens_per_second")),
@@ -98,6 +108,9 @@ def enrich_plot_metrics(
         # One-token responses have no decode interval; missing usage cannot
         # establish whether an unmeasured interval should belong in the sample.
         outputs = [_numeric(item.output_tokens) for item in successful]
+        outputs_complete = all(value is not None and value >= 0 for value in outputs)
+        if missing_total and outputs_complete:
+            result["total_output_tokens"] = sum(int(item.output_tokens) for item in successful)
         if missing_percentiles and all(value is not None for value in outputs):
             decode = [item for item in successful if item.output_tokens > 1]
             tpots = [_numeric(item.tpot) for item in decode]
@@ -110,7 +123,6 @@ def enrich_plot_metrics(
             inputs = [_numeric(item.input_tokens) for item in successful]
             cached = [_numeric(item.cached_input_tokens) for item in successful]
             inputs_complete = all(value is not None and value >= 0 for value in inputs)
-            outputs_complete = all(value is not None and value >= 0 for value in outputs)
             if outputs_complete and rates["generation_tokens_per_second"] is None:
                 rates["generation_tokens_per_second"] = sum(outputs) / duration
             if inputs_complete and outputs_complete and rates["total_tokens_per_second"] is None:

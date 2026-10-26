@@ -385,6 +385,7 @@ def _metric_display(metric: str) -> tuple[int, str]:
             "ttft_p95_seconds": "TTFT p95 (s)",
             "requests_per_second": "Request throughput (req/s)",
             "generation_tokens_per_second": "Output throughput (tokens/s)",
+            "total_output_tokens": "Total output tokens",
             "generation_tokens_per_second_per_user": "Output throughput per user (tokens/s/user)",
             "generation_tokens_per_second_per_gpu": "Output throughput per GPU (tokens/s/GPU)",
             "total_tokens_per_second_per_gpu": "Total token throughput per GPU (tokens/s/GPU)",
