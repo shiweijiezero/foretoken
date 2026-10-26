@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Illustrative prices only. Replace them with the prices and costs for the comparison.
+currency: USD
+input_per_million: 0.15
+cached_input_per_million: 0.003
+output_per_million: 0.60
+gpu_hour_cost: 5.0

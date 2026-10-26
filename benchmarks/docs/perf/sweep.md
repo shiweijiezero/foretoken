@@ -131,7 +131,7 @@ All points for one method run before the next method starts. Temporary deploymen
 
 Use `sweep_summary.csv` and the comparison plots to compare latency and throughput under the same workload settings. Error bars show sample standard deviation across repetitions, including for per-run percentiles; one repetition has no error estimate. Check each metric's sample count and failed runs when comparing points.
 
-Every invocation creates a separate result directory; `--experiment-name` supplies its name prefix. To change metrics, layout or compare earlier runs, see [plotting saved results](../recipes.md#plot-saved-results).
+Every invocation creates a separate result directory; `--experiment-name` supplies its name prefix. To change metrics, layout or compare earlier runs, see [plotting saved results](../plotting.md).
 
 ## Continue a saved sweep
 
@@ -141,7 +141,7 @@ Results from completed measurements are retained, with failed requests still cou
 
 If measurement finished and only plotting or publication failed, resume with `--output local,wandb,plot` to complete the saved results and their original W&B runs. Use `local,plot` for local output only. No model service is needed for completed measurements.
 
-To redraw figures without resuming a sweep, use [`foretoken plot`](../recipes.md#plot-saved-results). See [W&B recovery](wandb.md#resume-an-upload) for publication-only recovery.
+To redraw figures without resuming a sweep, use [`foretoken plot`](../plotting.md). See [W&B recovery](wandb.md#resume-an-upload) for publication-only recovery.
 
 ## Video settings
 

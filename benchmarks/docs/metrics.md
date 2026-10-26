@@ -39,7 +39,24 @@ ITL percentiles have 1% relative value error. Request-level ITL SLOs compare the
 
 W&B plots input and output throughput separately for the model measured by each run. `Time` curves use one-second completion windows: a successful request contributes all its tokens when it finishes, divided by the window duration. `Cumulative` curves divide completed successful requests' token totals by elapsed time. Both measure this benchmark's traffic; Grafana model totals include all traffic reaching the model.
 
-Time curves also show request throughput, in-flight requests, failure rate and latency percentiles. Per-request curves use send order. Compare runs in the same group, and use sweep Pareto charts to compare throughput and latency trade-offs.
+Time curves also show request throughput, in-flight requests, failure rate and latency percentiles. Per-request curves use send order. Compare runs in the same group, and use sweep trade-off charts to compare throughput and latency.
+
+## Derived plot metrics
+
+`foretoken plot` derives these metrics from saved results without changing the original measurements:
+
+| Metric | Meaning |
+| --- | --- |
+| `decode_interactivity_p90` | TPOT-based P90 decode speed in tokens/s/user: the reciprocal of the nearest-rank P90 of successful requests' TPOT values. One-token responses have no decode interval and are excluded. Complete successful-request output counts and the eligible requests' TPOT values are required |
+| `total_tokens_per_second_per_gpu` | Input plus output tokens per second, divided by the recorded GPU count. Input usage already includes cached tokens |
+| `cached_prompt_tokens_per_second_per_gpu` | Cached input tokens per second per GPU, requiring cached-input usage for every successful request |
+| `uncached_prompt_tokens_per_second_per_gpu` | Input tokens minus cached input tokens per second per GPU, requiring complete input and cached-input usage |
+
+The P90 decode-speed calculation uses a distribution of requests, separate from the pooled chunk-interval distribution in `itl`. It excludes TTFT and differs from output throughput divided by configured concurrency. Every run's derived values are calculated before means and standard deviations across repeated runs.
+
+Trade-off coordinates use repetitions where both selected metrics are available. Revenue selection with a speed floor likewise uses repetitions with both revenue and speed. Their CSVs retain `paired_samples` alongside the full attempt and failure counts; scalar comparison tables report each metric's available repetitions independently.
+
+GPU normalization uses `metrics.json`'s `gpu_count`. Older results without that field use `environment.json`'s `before.declared_gpu_count`. `--gpu-count` supplies capacity only when neither records it and must agree with any recorded count. Financial plots apply explicit uncached-input, cached-input, and output prices to the corresponding token rates. Revenue per GPU-hour is `3600 × sum(tokens/s/GPU × price per million) / 1,000,000`; profit subtracts the configured GPU hourly cost. Missing token usage remains unavailable, including missing cache usage.
 
 ## GPU allocation
 

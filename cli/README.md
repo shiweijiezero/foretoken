@@ -231,7 +231,7 @@ Generate figures from saved benchmark results without rerunning inference. To pl
 foretoken plot results
 ```
 
-Figures are written to `results/plots/`. Pass individual run directories to select or compare particular runs. See [plotting options](../benchmarks/docs/recipes.md#plot-saved-results) and [W&B result uploads](../benchmarks/docs/perf/wandb.md#resume-an-upload).
+Figures are written to `results/plots/`. Pass individual run directories to select or compare particular runs. See the [plotting guide](../benchmarks/docs/plotting.md) and [W&B result uploads](../benchmarks/docs/perf/wandb.md#resume-an-upload).
 
 ## Profiling
 

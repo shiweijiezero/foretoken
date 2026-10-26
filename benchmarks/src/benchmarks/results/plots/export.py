@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from benchmarks.config.plot import TradeoffOptions
 from benchmarks.results.plots.charts.http import _http_charts
 from benchmarks.results.plots.charts.phases import phase_summary_charts
 from benchmarks.results.plots.charts.quality import _quality_charts, comparison_charts
@@ -22,8 +23,11 @@ from benchmarks.results.plots.charts.slo import _slo_charts
 from benchmarks.results.plots.charts.video import _video_phase_charts
 from benchmarks.results.plots.comparison import compare_to_base
 from benchmarks.results.plots.data import Chart, _method, sweep_charts
-from benchmarks.results.plots.rendering import _charts, _pareto, _table
+from benchmarks.results.plots.economics import Pricing, load_pricing, render_economics
+from benchmarks.results.plots.metrics import DERIVED_PLOT_METRICS
+from benchmarks.results.plots.rendering import _charts, _table
 from benchmarks.results.plots.saved_results import SavedResults, read_saved_results
+from benchmarks.results.plots.tradeoffs import render_tradeoffs
 from benchmarks.results.recording.database import read_record, read_records
 from benchmarks.results.recording.locks import publication_lock
 from benchmarks.results.recording.tasks import task_source
@@ -45,12 +49,17 @@ def render_results(
     metrics: tuple[str, ...] = (),
     methods: tuple[str, ...] = (),
     base: Path | None = None,
+    tradeoff: TradeoffOptions | None = None,
+    pricing_path: Path | None = None,
+    min_interactivity: float | None = None,
+    gpu_count: int | None = None,
 ) -> FigureExport:
     """Export figures under an output-directory lock shared with W&B artifact staging."""
     for selected in (source, *others, *((base,) if base is not None else ())):
         if not Path(selected).is_dir():
             raise NotADirectoryError(f"Result directory does not exist: {selected}")
-    out = Path(output_dir) if output_dir is not None else default_output_directory(source, *others, base=base)
+    out = (Path(output_dir) if output_dir is not None else default_output_directory(source, *others, base=base)).resolve()
+    pricing = load_pricing(pricing_path) if pricing_path is not None else None
     out.mkdir(parents=True, exist_ok=True)
     with publication_lock(out, scope="plots"):
         # A failed redraw must not attribute partially replaced files to the previous export.
@@ -61,7 +70,8 @@ def render_results(
                 previous["source"] = None
                 manifest.write_text(json.dumps(previous, indent=2) + "\n", encoding="utf-8")
         return _render_results(source, *others, output_dir=out, columns=columns,
-                               metrics=metrics, methods=methods, base=base)
+                               metrics=metrics, methods=methods, base=base, tradeoff=tradeoff,
+                               pricing=pricing, min_interactivity=min_interactivity, gpu_count=gpu_count)
 
 
 def default_output_directory(source: Path, *others: Path, base: Path | None = None) -> Path:
@@ -77,6 +87,10 @@ def _render_results(
     metrics: tuple[str, ...],
     methods: tuple[str, ...],
     base: Path | None,
+    tradeoff: TradeoffOptions | None = None,
+    pricing: Pricing | None = None,
+    min_interactivity: float | None = None,
+    gpu_count: int | None = None,
 ) -> FigureExport:
     """Select a complete saved-result view, then replace only files owned by this export."""
     source = Path(source)
@@ -86,13 +100,19 @@ def _render_results(
     if base is None and not others:
         source = task_source(source)
     documents = read_records(source, ("config.json", "metrics.json", "sweep_points.json", "slo_results.json"))
-    direct = base is None and not others and (
+    selected_metrics = set(metrics) | ({tradeoff.x_metric, tradeoff.y_metric} if tradeoff else set())
+    derived = pricing is not None or gpu_count is not None or bool(selected_metrics & DERIVED_PLOT_METRICS)
+    collection_requested = derived or tradeoff is not None
+    direct = not collection_requested and base is None and not others and (
         "slo_results.json" in documents
         or "config.json" in documents and any(name in documents for name in ("metrics.json", "sweep_points.json"))
     )
-    comparison = None if direct else read_saved_results((source, *map(Path, others)), methods=methods, base=base)
+    comparison = None if direct else read_saved_results(
+        (source, *map(Path, others)), methods=methods, base=base,
+        derive_metrics=derived, gpu_count=gpu_count, pricing=pricing,
+    )
     command = read_records(source / "generated", ("context.json",))
-    if base is None and comparison is not None and "context.json" in command and len(comparison.runs) == 1:
+    if not collection_requested and base is None and comparison is not None and "context.json" in command and len(comparison.runs) == 1:
         measured = comparison.runs[0].get("result")
         collection_metrics = {row["metric"] for row in comparison.summary} | {
             chart.metric for chart in comparison.native
@@ -106,7 +126,9 @@ def _render_results(
         raise FileNotFoundError(f"No saved benchmark config.json in {source}")
     config = documents.get("config.json", {})
     if comparison is not None:
-        charts, identities, result = _render_collection(comparison, out, columns, metrics, base)
+        charts, identities, result = _render_collection(
+            comparison, out, columns, metrics, base, tradeoff, pricing, min_interactivity,
+        )
     elif "sweep_points.json" in documents:
         charts, identities, result = _render_sweep(source, config, out, columns, metrics, methods)
     elif "slo_results.json" in documents:
@@ -140,15 +162,22 @@ def _render_results(
     for filename in set(previous) - set(current):
         if Path(filename).name == filename:
             (out / filename).unlink(missing_ok=True)
+    owner = source.resolve() if comparison is None else None
+    if comparison is not None and not others and base is None and len(comparison.runs) == 1:
+        measured = comparison.runs[0].get("result")
+        if measured is not None:
+            owner = Path(measured).resolve()
     manifest.write_text(json.dumps({
         "files": current,
-        "source": Path(os.path.relpath(source, out)).as_posix() if comparison is None else None,
+        "source": Path(os.path.relpath(owner, out)).as_posix() if owner is not None else None,
     }, indent=2) + "\n", encoding="utf-8")
-    return FigureExport(result, source.resolve() if comparison is None else None)
+    return FigureExport(result, owner)
 
 
 def _render_collection(
     comparison: SavedResults, out: Path, columns: int, metrics: tuple[str, ...], base: Path | None,
+    tradeoff: TradeoffOptions | None = None, pricing: Pricing | None = None,
+    min_interactivity: float | None = None,
 ) -> tuple[list[Chart], list[str], dict[str, Path]]:
     """Export a comparison collection's planned runs, repeat statistics, and native score views."""
     base_rows = compare_to_base(comparison, base, metrics=metrics) if base is not None else None
@@ -159,11 +188,17 @@ def _render_collection(
     if missing:
         raise ValueError("No measured values for plot metrics: " + ", ".join(sorted(missing)))
     identities = list(dict.fromkeys(_method(point) for point in points))
-    charts = list(sweep_charts(points, summary, metrics=tuple(item for item in metrics if item in scalar_metrics), vary_axes=False)) if (
-        points and (not metrics or set(metrics) & scalar_metrics)
-    ) else []
-    charts += [chart for chart in comparison.native if not metrics or chart.metric in metrics]
-    result = _pareto(points, summary, out, (), columns) if points else {}
+    include_defaults = tradeoff is None and pricing is None and not metrics
+    selected_scalars = tuple(metric for metric in metrics if metric in scalar_metrics)
+    charts = []
+    if points and (include_defaults or selected_scalars):
+        charts.extend(sweep_charts(points, summary, metrics=selected_scalars, vary_axes=False))
+    charts.extend(chart for chart in comparison.native if include_defaults or chart.metric in metrics)
+    result = render_tradeoffs(points, summary, out, (), columns, options=tradeoff,
+                             base_methods=comparison.base_approaches)
+    if pricing is not None:
+        result.update(render_economics(points, summary, out, pricing,
+                                       min_interactivity=min_interactivity, columns=columns))
     run_rows = [{key: value for key, value in row.items() if key != "environment_settings"}
                 for row in comparison.runs]
     for name, rows in (("comparison-runs", run_rows), ("comparison-summary", summary), ("comparison-base", base_rows)):
@@ -182,7 +217,7 @@ def _render_sweep(
     summary = read_record(source, "sweep_summary.json")
     identities = list(dict.fromkeys(_method(point) for point in points))
     charts = list(sweep_charts(points, summary, metrics=metrics, methods=methods))
-    result = _pareto(points, summary, out, methods, columns) if config.get("mode") == "parameter_sweep" else {}
+    result = render_tradeoffs(points, summary, out, methods, columns) if config.get("mode") == "parameter_sweep" else {}
     if summary:
         selected = [row for row in summary if (not methods or _method(row) in methods)
                     and (not metrics or row["metric"] in metrics)]

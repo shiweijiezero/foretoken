@@ -5,59 +5,19 @@
 
 from __future__ import annotations
 
-import argparse
 import sqlite3
 from collections.abc import Sequence
 from contextlib import ExitStack
-from pathlib import Path
 
 from foretoken.diagnostics import configure_logging
 from loguru import logger
 
+from benchmarks.config.plot import parse_plot_arguments
+
 
 def main(argv: Sequence[str] | None = None) -> None:
     """Export saved figures and optionally synchronize original W&B runs without measuring again."""
-    parser = argparse.ArgumentParser(
-        prog="foretoken plot",
-        description="Export PDF, SVG, PNG, and CSV from one or more saved-result directories.",
-    )
-    parser.add_argument(
-        "sources", type=Path, nargs="+", metavar="RESULT_DIR",
-        help="Result directories or folders containing saved results; pass several to compare"
-    )
-    parser.add_argument(
-        "--output-dir", type=Path, help="Figure directory (default: ./plots for comparisons, RESULT_DIR/plots for one input)"
-    )
-    parser.add_argument(
-        "--columns",
-        type=int,
-        choices=(1, 2),
-        default=1,
-        help="Paper column width (default: 1)",
-    )
-    parser.add_argument(
-        "--metric",
-        action="extend",
-        nargs="+",
-        default=[],
-        help="One or more metrics to plot",
-    )
-    parser.add_argument(
-        "--method",
-        action="extend",
-        nargs="+",
-        default=[],
-        help="One or more named methods to include",
-    )
-    parser.add_argument(
-        "--base", type=Path, metavar="RESULT_DIR",
-        help="Saved performance result or iteration directory to use as the base",
-    )
-    parser.add_argument(
-        "--sync_wandb", action="store_true",
-        help="Also synchronize saved results and per-run figures to their original W&B runs; never send model requests",
-    )
-    options = parser.parse_args(argv)
+    options = parse_plot_arguments(argv)
     from benchmarks.results.plots.export import default_output_directory, render_results
 
     configure_logging()
@@ -85,9 +45,13 @@ def main(argv: Sequence[str] | None = None) -> None:
                 *options.sources,
                 output_dir=output,
                 columns=options.columns,
-                metrics=tuple(options.metric),
-                methods=tuple(options.method),
+                metrics=options.metrics,
+                methods=options.methods,
                 base=options.base,
+                tradeoff=options.tradeoff,
+                pricing_path=options.pricing,
+                min_interactivity=options.min_interactivity,
+                gpu_count=options.gpu_count,
             )
             owner = artifacts.source
         print(f"Exported {len(artifacts.files)} files to {output}")

@@ -95,4 +95,4 @@ foretoken perf examples/quickstart/qwen3-0.6b --num-prompts 20 \
 
 延迟和吞吐量图表见[性能结果](docs/perf/wandb_zh.md)，任务得分与框架原始报告见[质量结果](docs/eval/README_zh.md#查看评分)，执行时间线见[查看采集结果](docs/profile/README_zh.md#查看结果)。
 
-使用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照已有结果，添加 `--sync_wandb` 可同步到 W&B。指标与图形设置见[绘图示例](docs/recipes_zh.md#绘制与对照结果)，离线补传见 [W&B 输出](docs/perf/wandb_zh.md#恢复上传)。
+使用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照已有结果，添加 `--sync_wandb` 可同步到 W&B。指标、方案对比与收益估算见[绘图指南](docs/plotting_zh.md)，离线补传见 [W&B 输出](docs/perf/wandb_zh.md#恢复上传)。

@@ -9,7 +9,7 @@ import json
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from benchmarks.results.plots.charts.quality import _quality_charts, comparison_charts
 from benchmarks.results.plots.charts.slo import _slo_charts
@@ -20,6 +20,9 @@ from benchmarks.results.recording.directories import (
     discover_result_directories,
 )
 from benchmarks.results.recording.tasks import task_source
+
+if TYPE_CHECKING:
+    from benchmarks.results.plots.economics import Pricing
 
 
 @dataclass
@@ -51,6 +54,7 @@ class _RecordedRun:
 
 def read_saved_results(
     sources: tuple[Path, ...], *, methods: tuple[str, ...] = (), base: Path | None = None,
+    derive_metrics: bool = False, gpu_count: int | None = None, pricing: Pricing | None = None,
 ) -> SavedResults:
     """Read directory selections once and group measurements by their recorded workloads.
 
@@ -58,7 +62,9 @@ def read_saved_results(
     identity. Standalone result sets remain separate approaches. Native scores keep
     evaluator errors, and incomplete command records remain visible without metrics.
     An optional base directory is included once and retains its own repetition group
-    when selected inside a broader candidate directory.
+    when selected inside a broader candidate directory. Method selections accept
+    displayed approach names and recorded service names; the explicit base is
+    retained independently of candidate selections.
     """
     base = base.resolve() if base is not None else None
     directories = discover_result_directories(sources, base=base)
@@ -121,15 +127,29 @@ def read_saved_results(
                 identities = [saved.method]
             else:
                 identities = [saved.method]
+            group = source.group
+            display_methods = {
+                method: labels[group] + (f" / {method}" if method != "default" else "")
+                for method in dict.fromkeys((saved.method, *identities))
+            }
             available_methods.update(identities)
-            chosen = [method for method in identities if not methods or method in methods]
+            available_methods.update(display_methods[method] for method in identities)
+            is_base = base is not None and task_path.is_relative_to(base)
+            chosen = [method for method in identities
+                      if is_base or not methods or method in methods or display_methods[method] in methods]
             if not chosen:
                 continue
             if comparison is not None and methods:
                 method_filters[saved.directory] = tuple(chosen)
-            is_base = base is not None and task_path.is_relative_to(base)
-            group = source.group
-            label = labels[group] + (f" / {saved.method}" if saved.method != "default" else "")
+            label = display_methods[saved.method]
+            if derive_metrics and "throughput" in measured:
+                from benchmarks.results.plots.metrics import enrich_plot_metrics
+
+                measured = enrich_plot_metrics(saved.directory, measured, gpu_count=gpu_count)
+                if pricing is not None:
+                    from benchmarks.results.plots.economics import price_metrics
+
+                    measured.update(price_metrics(measured, label, pricing))
             if is_base:
                 base_approaches.add(label)
             # Missing workload configuration is unknown, not equal to another run's.
@@ -164,7 +184,7 @@ def read_saved_results(
                         method = str(item.records[0].get("method") or item.name) if comparison is not None else saved.method
                         if method not in chosen:
                             continue
-                        method_label = labels[group] + (f" / {method}" if method != "default" else "")
+                        method_label = display_methods[method]
                         name = method_label
                         if command is not None and group != command:
                             name += f" / {command.name}"
