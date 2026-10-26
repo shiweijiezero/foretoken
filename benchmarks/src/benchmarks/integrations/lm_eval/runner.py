@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import os
-from contextlib import nullcontext
+from contextlib import closing, nullcontext
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -24,8 +24,9 @@ from loguru import logger
 
 from benchmarks.integrations.lm_eval.cli import parse_arguments
 from benchmarks.integrations.lm_eval.model import ServiceEvaluation
-from benchmarks.integrations.lm_eval.responses import LmEvalResponses
+from benchmarks.integrations.lm_eval.responses import HTTP_RESPONSES_FILENAME, LmEvalResponses
 from benchmarks.integrations.quality import validate_model_transport
+from benchmarks.results.recording.responses import ResponseWriter
 
 
 def run_lm_eval(
@@ -57,10 +58,16 @@ def run_lm_eval(
     chat_options = {**config.model_args, "tokenizer_backend": None, "tokenized_requests": False}
     chat_options.pop("tokenizer", None)
     response_context = LmEvalResponses(Path(directory).parent) if config.use_cache is None else nullcontext(None)
-    with response_context as responses:
+    with (
+        response_context as responses,
+        closing(ResponseWriter(
+            str(Path(directory).parent), filename=HTTP_RESPONSES_FILENAME, append=True,
+        )) as http_responses,
+    ):
         model = ServiceEvaluation.create_from_arg_obj(chat_options, {
             "batch_size": config.batch_size, "config": config, "service": service,
             "responses": responses, "resume": resume, "progress": progress,
+            "http_responses": http_responses,
         })
         manager = config.process_tasks(config.metadata)
         manager.load = partial(model.load_tasks, manager.load)

@@ -6,11 +6,23 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict, deque
+from contextvars import ContextVar
 from dataclasses import replace
 from functools import cached_property, partial
+from typing import Any, NamedTuple
 
 from lm_eval.models.api_models import LMEVAL_MODEL_NONE_ANSWER_PLACEHOLDER, JsonChatStr
 from lm_eval.models.openai_completions import LocalChatCompletion, LocalCompletionsAPI
+
+from benchmarks.integrations.lm_eval.responses import generation_request_key
+
+
+class _GenerationRequest(NamedTuple):
+    """Carry native cache keys and sample metadata through asynchronous retries."""
+
+    cache_key: Any
+    record: dict[str, Any]
 
 
 class ServiceAuthentication:
@@ -105,11 +117,16 @@ class LikelihoodCompletion(ServiceAuthentication, LocalCompletionsAPI):
 class ServiceEvaluation(ServiceAuthentication, LocalChatCompletion):
     """Own request dispatch and task formatting for one harness run; the caller owns the response store."""
 
-    def __init__(self, *, config, responses=None, resume=False, progress=None, **options):
+    def __init__(self, *, config, http_responses, responses=None, resume=False, progress=None, **options):
+        """Borrow the evaluator's response writer and optional progress cache."""
         self.config = config
+        self.http_responses = http_responses
         self.responses = responses
         self.resume = resume
         self.progress = progress
+        self._samples: dict[tuple, int] = defaultdict(int)
+        self._generation_requests: ContextVar[dict | None] = ContextVar("foretoken_generation_requests", default=None)
+        self._response_record: ContextVar[dict | None] = ContextVar("foretoken_response_record", default=None)
         super().__init__(**options)
 
     @cached_property
@@ -156,37 +173,83 @@ class ServiceEvaluation(ServiceAuthentication, LocalChatCompletion):
         return self.completions.loglikelihood_rolling(requests, **kwargs)
 
     def generate_until(self, requests, disable_tqdm: bool = False):
-        """Reuse completed draws and send only missing generations to the native chat adapter."""
-        if self.responses is None:
-            return super().generate_until(requests, disable_tqdm=disable_tqdm)
+        """Bind native samples to evidence while preserving the selected cache's generations."""
         if any(len(request.args) != 2 for request in requests):
             if self.resume:
                 raise ValueError("lm-eval resume supports text generation tasks")
             return super().generate_until(requests, disable_tqdm=disable_tqdm)
-        slots = [self.responses.reserve(request.args) for request in requests]
-        missing = [
-            request for request, slot in zip(requests, slots)
-            if self.responses.get(slot) is None
-        ]
-        if self.progress is not None:
-            self.progress.advance("Evaluation/Generations reused", len(slots) - len(missing))
-        if missing:
-            previous_hook = self.cache_hook
-            self.set_cache_hook(self.responses)
-            try:
-                super().generate_until(missing, disable_tqdm=disable_tqdm)
-            finally:
-                self.set_cache_hook(previous_hook)
-        return [self.responses.get(slot) for slot in slots]
+        slots = (
+            [self.responses.reserve(request.args) for request in requests]
+            if self.responses is not None else [None] * len(requests)
+        )
+        pending = defaultdict(deque)
+        missing = []
+        for request, slot in zip(requests, slots):
+            identity = (request.task_name, request.doc_id, request.idx)
+            sample = self._samples[identity]
+            self._samples[identity] += 1
+            if self.responses is None or self.responses.get(slot) is None:
+                missing.append(request)
+                pending[generation_request_key(request.args)].append({
+                    "task": request.task_name, "doc_id": request.doc_id,
+                    "request_index": request.idx, "sample": sample, "arguments": request.args,
+                })
+        token = self._generation_requests.set(pending)
+        try:
+            if self.responses is None:
+                return super().generate_until(requests, disable_tqdm=disable_tqdm)
+            if self.progress is not None:
+                self.progress.advance("Evaluation/Generations reused", len(slots) - len(missing))
+            if missing:
+                previous_hook = self.cache_hook
+                self.set_cache_hook(self.responses)
+                try:
+                    super().generate_until(missing, disable_tqdm=disable_tqdm)
+                finally:
+                    self.set_cache_hook(previous_hook)
+            return [self.responses.get(slot) for slot in slots]
+        finally:
+            self._generation_requests.reset(token)
 
     async def get_batched_requests(self, requests, cache_keys, **kwargs):
         """Bind callbacks before dispatch so concurrent retries keep the same sample slot."""
-        if self.responses is not None and self.cache_hook is self.responses:
-            cache_keys = [self.responses.claim(key) for key in cache_keys]
+        pending = self._generation_requests.get()
+        if pending is not None:
+            bound = []
+            for key in cache_keys:
+                cache_key = (
+                    self.responses.claim(key)
+                    if self.responses is not None and self.cache_hook is self.responses else key
+                )
+                bound.append(_GenerationRequest(cache_key, pending[generation_request_key(key)].popleft()))
+            cache_keys = bound
         return await super().get_batched_requests(requests, cache_keys, **kwargs)
+
+    def model_call(self, messages, *, generate=True, gen_kwargs=None, **kwargs):
+        """Write synchronous response JSON before parsing, without taking over native retries."""
+        output = super().model_call(messages, generate=generate, gen_kwargs=gen_kwargs, **kwargs)
+        pending = self._generation_requests.get()
+        if generate and pending is not None:
+            records = pending[generation_request_key((messages[0], gen_kwargs))]
+            self.http_responses.write("measurement", {**records[0], "response": output})
+            records.popleft()
+        return output
+
+    async def amodel_call(self, *, cache_keys=None, **kwargs):
+        """Expose this attempt's metadata during parsing and preserve native cache keys."""
+        if self._generation_requests.get() is None:
+            return await super().amodel_call(cache_keys=cache_keys, **kwargs)
+        token = self._response_record.set(cache_keys[0].record)
+        try:
+            return await super().amodel_call(cache_keys=[key.cache_key for key in cache_keys], **kwargs)
+        finally:
+            self._response_record.reset(token)
 
     def parse_generations(self, outputs, **kwargs):
         """Normalize null answers before synchronous or asynchronous completion callbacks."""
+        record = self._response_record.get()
+        if record is not None:
+            self.http_responses.write("measurement", {**record, "response": outputs})
         values = super().parse_generations(outputs, **kwargs)
         if self.progress is not None:
             self.progress.advance("Evaluation/Generations completed", len(values))

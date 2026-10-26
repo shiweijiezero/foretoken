@@ -27,6 +27,12 @@ foretoken eval examples/quickstart/qwen3-0.6b \
 - `--log_samples` 保存逐题输入和回答。
 - `--model_args num_concurrent=4` 同时发送四个 API 请求。
 
+文本生成评测会将服务返回的完整 JSON 逐条写入结果目录的 `lm_eval_http_responses.jsonl`。遇到空回答时，可直接查看 `response.choices` 中的 `finish_reason`、`stop_reason`，以及 `response.usage` 等服务实际返回的字段。
+
+每行的 `task`、`doc_id`、`request_index` 和 `sample` 标明任务、题号、题内请求和采样编号，可与框架的逐样本记录对照。`arguments` 保存输入和生成参数，`response` 保留文本提取前的完整响应。评分仍使用原来的解析结果和任务规则。
+
+选择 W&B 输出时，响应日志也会上传；只需本地保存时使用 `--output local`。
+
 ### 候选答案似然与困惑度
 
 PIQA 通过比较候选答案的概率选择答案。WikiText 测量文本困惑度（PPL），数值越低，表示原文越容易被模型预测。这两类任务需要[源码安装的 Foretoken 平台](../../../docs/deployment/source_zh.md)，或能返回输入 token 对数概率的已有 Completions 服务：
@@ -97,6 +103,8 @@ foretoken eval examples/quickstart/qwen3-0.6b \
 
 恢复会创建新的结果目录，复用已完成工作，并汇总完整评分；原目录保持不变。如果再次中断，从最新目录继续恢复。模型权重、任务配置、生成参数和样本范围应保持不变。
 
+lm-eval 恢复时复制已有响应日志并追加新响应；末尾未写完的记录会在新副本中省略并告警，原文件不变。旧结果没有原始响应时，不会补造信息或仅为补记录而重新推理。原生 `--use_cache` 命中的请求没有本次 HTTP 调用，也不会生成新的响应记录。
+
 | 评测类型 | 复用的工作 |
 | --- | --- |
 | lm-evaluation-harness | 已完成的文本生成结果（包括多次采样），以及候选答案和困惑度任务已完成的似然评分窗口 |
@@ -115,6 +123,8 @@ foretoken eval examples/quickstart/qwen3-0.6b \
 | --- | --- |
 | `metrics.json` | 任务得分、子集、答案提取方式、样本数，以及框架提供的不确定性或执行状态 |
 | `native/` | 框架报告及其生成的逐样本记录 |
+| `lm_eval_responses.sqlite` | lm-eval 默认断点续跑使用的生成与似然缓存 |
+| `lm_eval_http_responses.jsonl` | 直接写入的文本生成原始响应，包含任务、题号和采样信息 |
 | `evaluator.log` | 评测框架的运行日志 |
 | `evaluation_progress.jsonl` | 按时间记录实际完成数量，中断后仍保留 |
 
