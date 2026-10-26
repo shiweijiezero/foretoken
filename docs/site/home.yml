@@ -56,7 +56,7 @@ en:
       command: |
         CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude \
           '/goal Use the RSI skill and an Agent Team to complete rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia.md.'
-      note: Install and sign in to the agent tool. This example uses NVIDIA; choose NVIDIA or MetaX in the RSI guide and review the task requirements.
+      note: Install and sign in to the agent tool, then review the NVIDIA task's resource budget and objectives.
       guide: Open the RSI guide
       href: rsi-playbooks/#start-an-optimization-task
   resources_title: Find your next step
@@ -134,7 +134,7 @@ zh:
       command: |
         CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude \
           '/goal 使用 RSI skill 和 Agent Team，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia_zh.md 中的优化任务。'
-      note: 先安装并登录 Agent 工具。本例使用 NVIDIA；可在 RSI 指南中选择 NVIDIA 或沐曦任务，并核对任务要求。
+      note: 安装并登录 Agent 工具后，核对 NVIDIA 任务的资源预算和优化目标。
       guide: 查看 RSI 指南
       href: rsi-playbooks/#开始优化任务
   resources_title: 继续探索
