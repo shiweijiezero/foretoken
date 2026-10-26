@@ -4,7 +4,7 @@
 
 ```text
 模型：Qwen3.5-35B-A3B
-起始配置：examples/rsi/qwen3.5-35b-a3b-nvidia；双卡张量并行（TP2）、四步多 token 预测（MTP）、36,864 上下文，KV 缓存不卸载到主机内存，可在优化中调整
+起始配置：examples/rsi/qwen3.5-35b-a3b；双卡张量并行（TP2）、四步多 token 预测（MTP）、36,864 上下文，KV 缓存不卸载到主机内存，可在优化中调整
 优化目标：提高并发 1 和 16 的输出吞吐（token/s），降低解码阶段每个输出 token 的耗时（TPOT）
 精度：固定 BF16
 部署形态：在最终单机 GPU 预算内自主选择并行方式和各阶段安排
@@ -38,10 +38,10 @@ Observer 巡查间隔：1h
 
 ## 起始部署
 
-使用已有的 NVIDIA 源码平台，缺少时按[源码部署指南](../../docs/deployment/source_zh.md#从源码安装)准备。优先复用兼容镜像和[共享模型文件](../../docs/features/model-storage_zh.md)。从候选源码目录部署[双卡示例](../../examples/rsi/qwen3.5-35b-a3b-nvidia/)：
+使用已有的 NVIDIA 源码平台，缺少时按[源码部署指南](../../docs/deployment/source_zh.md#从源码安装)准备。优先复用兼容镜像和[共享模型文件](../../docs/features/model-storage_zh.md)。从候选源码目录部署[双卡示例](../../examples/rsi/qwen3.5-35b-a3b/)：
 
 ```bash
-foretoken deploy examples/rsi/qwen3.5-35b-a3b-nvidia --name qwen-rsi-nvidia -e . --timeout 60m
+foretoken deploy examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-nvidia -e . --timeout 60m
 ```
 
 命令等待模型和前端就绪后返回。两者合计请求 2 张 GPU、9 核 CPU、100G 内存，CPU 和内存上限合计为 26 核、196G。
@@ -55,7 +55,7 @@ foretoken deploy examples/rsi/qwen3.5-35b-a3b-nvidia --name qwen-rsi-nvidia -e .
 ```bash
 # 每轮速度迭代：随机长度负载，分别测量并发 1 和 16
 for concurrency in 1 16; do
-  foretoken perf examples/rsi/qwen3.5-35b-a3b-nvidia --name qwen-rsi-nvidia --dataset random \
+  foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-nvidia --dataset random \
     --min-prompt-length 128 --max-prompt-length 4096 \
     --min-output-length 128 --max-output-length 512 \
     --max-concurrency "$concurrency" --num-prompts 80 --warmup-requests 4 \
@@ -65,7 +65,7 @@ done
 
 # 最终保留方案必跑：StudyChat 对话，分别测量并发 1 和 16
 for concurrency in 1 16; do
-  foretoken perf examples/rsi/qwen3.5-35b-a3b-nvidia --name qwen-rsi-nvidia \
+  foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-nvidia \
     --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
     --max-concurrency "$concurrency" --num-prompts 80 --max-tokens 2048 \
     --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb \
@@ -73,7 +73,7 @@ for concurrency in 1 16; do
 done
 
 # 按需精度评测，最多并发 64 个请求
-foretoken eval examples/rsi/qwen3.5-35b-a3b-nvidia --name qwen-rsi-nvidia \
+foretoken eval examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-nvidia \
   --evaluator lm-eval --tasks gsm8k --num_fewshot 0 --limit 20 \
   --model_args num_concurrent=64 --output experiment,plot,wandb \
   --output-dir results/qwen3.5-35b-a3b-nvidia --iteration baseline

@@ -4,7 +4,7 @@ English | [简体中文](qwen3.5-35b-a3b-muxi_zh.md)
 
 ```text
 Models: Qwen3.5-35B-A3B
-Starting configuration: examples/rsi/qwen3.5-35b-a3b-muxi; two-way tensor parallelism (TP2), four-token multi-token prediction (MTP), a 36,864-token context, and no KV cache offload to host memory; adjustable during optimization
+Starting configuration: examples/rsi/qwen3.5-35b-a3b; two-way tensor parallelism (TP2), four-token multi-token prediction (MTP), a 36,864-token context, and no KV cache offload to host memory; adjustable during optimization
 Optimization objectives: increase output throughput (tokens/s) and reduce time per output token (TPOT) at concurrency 1 and 16
 Precision: fixed BF16
 Deployment layout: agent-selected within the final single-node GPU budget, including parallelism and any stage separation
@@ -38,10 +38,10 @@ Follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and reso
 
 ## Starting deployment
 
-Use an existing MetaX source installation, or prepare one through the [MetaX platform guide](../../docs/deployment/metax-platform.md#install-from-source). Reuse compatible images and [shared model files](../../docs/features/model-storage.md). Deploy the [two-GPU example](../../examples/rsi/qwen3.5-35b-a3b-muxi/) from the candidate checkout:
+Use an existing MetaX source installation, or prepare one through the [MetaX platform guide](../../docs/deployment/metax-platform.md#install-from-source). Reuse compatible images and [shared model files](../../docs/features/model-storage.md). Deploy the [two-GPU example](../../examples/rsi/qwen3.5-35b-a3b/) from the candidate checkout:
 
 ```bash
-foretoken deploy examples/rsi/qwen3.5-35b-a3b-muxi --name qwen-rsi-muxi -e . --timeout 60m
+foretoken deploy examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi -e . --timeout 60m
 ```
 
 The command returns when the model and frontend are ready. Together they request 2 GPUs, 9 CPU cores and 100G memory, with combined CPU and memory limits of 26 cores and 196G.
@@ -55,7 +55,7 @@ Each performance loop measures concurrency 1 and 16 in sequence, with the same i
 ```bash
 # Every performance iteration: random lengths at concurrency 1 and 16.
 for concurrency in 1 16; do
-  foretoken perf examples/rsi/qwen3.5-35b-a3b-muxi --name qwen-rsi-muxi --dataset random \
+  foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi --dataset random \
     --min-prompt-length 128 --max-prompt-length 4096 \
     --min-output-length 128 --max-output-length 512 \
     --max-concurrency "$concurrency" --num-prompts 80 --warmup-requests 4 \
@@ -65,7 +65,7 @@ done
 
 # Required for the final retained approach: StudyChat at concurrency 1 and 16.
 for concurrency in 1 16; do
-  foretoken perf examples/rsi/qwen3.5-35b-a3b-muxi --name qwen-rsi-muxi \
+  foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi \
     --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
     --max-concurrency "$concurrency" --num-prompts 80 --max-tokens 2048 \
     --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb \
@@ -73,7 +73,7 @@ for concurrency in 1 16; do
 done
 
 # Accuracy evaluation as needed, with up to 64 concurrent requests.
-foretoken eval examples/rsi/qwen3.5-35b-a3b-muxi --name qwen-rsi-muxi \
+foretoken eval examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi \
   --evaluator lm-eval --tasks gsm8k --num_fewshot 0 --limit 20 \
   --model_args num_concurrent=64 --output experiment,plot,wandb \
   --output-dir results/qwen3.5-35b-a3b-muxi --iteration baseline
