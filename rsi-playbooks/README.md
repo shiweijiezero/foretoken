@@ -30,8 +30,6 @@ Confirm the following settings. Leave choices to the agents where you do not nee
 | Time and delivery | Duration or completion conditions, prior experiments, and where to save reports and results. |
 | Agent settings | Concurrent Advisor, Worker and Experimenter counts; Observers per check and the check interval. |
 
-For an ordinary task, edit the task file. The RSI skill, role instructions and research guidance define the shared workflow and change when that workflow is maintained.
-
 ### 3. Start the agents
 
 The commands below use the task file prepared above. Replace the path if you chose another filename.
