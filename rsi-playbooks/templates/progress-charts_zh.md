@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](progress-charts.md) | 简体中文
 
-里程碑图展示实测累计版本的变化，搜索图展示全部有效尝试、截至当时的最佳结果和失败尝试。两张图随[实验报告](experiment-records_zh.md#持续维护用户报告)一起维护。
+里程碑图展示实测累计版本的变化，搜索图展示全部有效尝试、截至当时的最佳结果和失败尝试。两张图随[实验报告](../experiment-records_zh.md#持续维护用户报告)一起维护。
 
 ## 首次生成
 
@@ -24,9 +24,9 @@ cp rsi-playbooks/templates/progress-template.yaml results/my-experiment/figures/
 python3 rsi-playbooks/scripts/plot_progress.py results/my-experiment/figures/progress.yaml
 ```
 
-命令在 YAML 旁生成 `progress-milestones.png`、`progress-search.png` 及其 SVG 版本。基线尚未测得时生成待测图片。按[报告模板](templates/report-template_zh.md)将 PNG 放在结果汇总表之后。
+命令在 YAML 旁生成 `progress-milestones.png`、`progress-search.png` 及其 SVG 版本。基线尚未测得时生成待测图片。按[报告模板](report-template_zh.md)将 PNG 放在结果汇总表之后。
 
-每个指标和每组对照条件分别使用独立文件，例如 `progress-c1-throughput.yaml` 和 `progress-c16-latency.yaml`。同一命令可传入多个文件，输出名沿用各输入文件去掉扩展名后的名称。预览样式时，将[虚构数据示例](templates/progress-example.yaml)复制到临时目录，再对副本执行绘图命令。
+每个指标和每组对照条件分别使用独立文件，例如 `progress-c1-throughput.yaml` 和 `progress-c16-latency.yaml`。同一命令可传入多个文件，输出名沿用各输入文件去掉扩展名后的名称。预览样式时，将[虚构数据示例](progress-example.yaml)复制到临时目录，再对副本执行绘图命令。
 
 ## 填入结果
 

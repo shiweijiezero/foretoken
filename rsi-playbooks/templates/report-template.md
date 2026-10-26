@@ -25,7 +25,7 @@ State the repeat count `n` and statistic used. Show a single value for one measu
 
 ## Optimization progress
 
-Generate the [progress charts](../progress-charts.md), then insert these references for each metric and comparison condition, adjusting filenames as needed:
+Generate the [progress charts](progress-charts.md), then insert these references for each metric and comparison condition, adjusting filenames as needed:
 
 ```markdown
 ![Measured optimization milestones](figures/progress-milestones.png)

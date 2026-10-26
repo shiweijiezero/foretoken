@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](progress-charts_zh.md)
 
-The milestone chart follows measured cumulative versions. The search chart shows all valid attempts, the best result so far and failed attempts. Both accompany the [experiment report](experiment-records.md#maintain-the-user-facing-report).
+The milestone chart follows measured cumulative versions. The search chart shows all valid attempts, the best result so far and failed attempts. Both accompany the [experiment report](../experiment-records.md#maintain-the-user-facing-report).
 
 ## Create the charts
 
@@ -24,9 +24,9 @@ In `progress.yaml`, fill in the title, comparison conditions and update time, th
 python3 rsi-playbooks/scripts/plot_progress.py results/my-experiment/figures/progress.yaml
 ```
 
-The command writes `progress-milestones.png`, `progress-search.png` and their SVG versions beside the YAML file. An unmeasured baseline produces pending-measurement charts. Insert the PNGs after the report's results tables using the [report template](templates/report-template.md).
+The command writes `progress-milestones.png`, `progress-search.png` and their SVG versions beside the YAML file. An unmeasured baseline produces pending-measurement charts. Insert the PNGs after the report's results tables using the [report template](report-template.md).
 
-Use a separate file for each metric and comparison condition, such as `progress-c1-throughput.yaml` and `progress-c16-latency.yaml`. Pass multiple files to the same command; each output name uses its input's filename stem. For a style preview, copy the [synthetic example](templates/progress-example.yaml) to a temporary directory and render that copy.
+Use a separate file for each metric and comparison condition, such as `progress-c1-throughput.yaml` and `progress-c16-latency.yaml`. Pass multiple files to the same command; each output name uses its input's filename stem. For a style preview, copy the [synthetic example](progress-example.yaml) to a temporary directory and render that copy.
 
 ## Record the results
 

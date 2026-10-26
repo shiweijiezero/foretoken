@@ -135,7 +135,7 @@ Keep the report's current conclusions aligned with the iteration history and lin
 
 ## Maintain the user-facing report
 
-At experiment start, the lead or a designated writer creates `report.md` using the [report template](templates/report-template.md) and shares its path with the user. Use the task's delivery location, or the experiment root when none is specified. Link the task, experiment directory and iteration notes from the report, resolving links from its actual location. Keep the same report when resuming. The same writer maintains the report and its [progress chart data and figures](progress-charts.md); benchmark commands save the underlying evidence.
+At experiment start, the lead or a designated writer creates `report.md` using the [report template](templates/report-template.md) and shares its path with the user. Use the task's delivery location, or the experiment root when none is specified. Link the task, experiment directory and iteration notes from the report, resolving links from its actual location. Keep the same report when resuming. The same writer maintains the report and its [progress chart data and figures](templates/progress-charts.md); benchmark commands save the underlying evidence.
 
 Update the report after each measured iteration, including failed attempts, and whenever analysis changes a conclusion or the retained approach. Follow the template's summary tables and progress charts with an explanation of each approach's motivation, actual implementation and results in the same report. The summary and approach sections use matching descriptive names and links. Keep complete commands, logs, repeated measurements and decision history in the iteration notes.
 

@@ -25,7 +25,7 @@
 
 ## 优化进展
 
-生成[优化进展图](../progress-charts_zh.md)后，为各指标和对照条件插入以下引用，按实际文件名调整：
+生成[优化进展图](progress-charts_zh.md)后，为各指标和对照条件插入以下引用，按实际文件名调整：
 
 ```markdown
 ![实测优化里程碑](figures/progress-milestones.png)
