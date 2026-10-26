@@ -61,7 +61,7 @@ from foretoken.platform.networking.multus import MultusLifecycle
 from foretoken.platform.networking.rdma import RDMANetworkLifecycle
 from foretoken.platform.observability.logs import (
     LogCollectionLifecycle,
-    LogConfig,
+    LogCollectionPlan,
     log_config_from_values,
 )
 from foretoken.platform.observability.monitoring import (
@@ -123,8 +123,7 @@ class _InstallPlan:
     gateway_config: PlatformGatewayConfig
     gateway: GatewayControllerPlan
     leader_worker: LeaderWorkerPlan
-    log_config: LogConfig
-    log_decisions: tuple[tuple[str, str, str], ...]
+    logs: LogCollectionPlan
     model_distribution: DragonflyPlan
     monitoring: MonitoringPlan
 
@@ -345,8 +344,7 @@ class PlatformLifecycle:
             if "storageSize" in logs:
                 logs.setdefault("initialSize", logs.pop("storageSize"))
         merged = (*stored, *values)
-        log_config = log_config_from_values(merged)
-        log_decisions = self._logs.plan(log_config)
+        log_plan = self._logs.plan(log_config_from_values(merged))
         distribution = self._model_distribution.resolve_install(merged)
         anonymous_access = grafana_anonymous_access_from_values(merged)
         if command.grafana_auth is not None:
@@ -384,8 +382,7 @@ class PlatformLifecycle:
             gateway_config=gateway_config,
             gateway=gateway,
             leader_worker=leader_worker,
-            log_config=log_config,
-            log_decisions=log_decisions,
+            logs=log_plan,
             model_distribution=distribution,
             monitoring=monitoring,
         )
@@ -453,7 +450,7 @@ class PlatformLifecycle:
         # Create the shared namespace before independent Helm releases use it.
         if not self._kubectl.exists("namespace", plan.platform.namespace):
             self._kubectl.run(["create", "namespace", plan.platform.namespace])
-        workers = ThreadPoolExecutor(max_workers=4)
+        workers = ThreadPoolExecutor(max_workers=5)
         dependencies: Future[None] = Future()
         source_artifacts = artifacts.enter_context(ExitStack())
 
@@ -494,23 +491,29 @@ class PlatformLifecycle:
             network = workers.submit(execution.run_stage, prepare_network)
             leader_worker = workers.submit(execution.run_stage, self._leader_worker.apply, plan.leader_worker, command.timeout)
             source = workers.submit(execution.run_stage, prepare_source)
-            # Existing monitoring APIs permit log upgrades immediately. Fresh
-            # installations wait only for Prometheus, not GPU exporter readiness.
+            prometheus = workers.submit(execution.run_stage, self._monitoring.prepare_prometheus, plan.monitoring, command.timeout)
+            # Default log charts use core APIs; retained customizations may need
+            # monitoring APIs before their existing resources can be restored.
             logs = (
-                workers.submit(execution.run_stage, self._logs.install, plan.log_config, command.timeout)
-                if plan.monitoring.prometheus_exists or plan.monitoring.reused_prometheus is not None else None
+                workers.submit(execution.run_stage, self._logs.install, plan.logs, command.timeout)
+                if (
+                    not plan.logs.has_existing_releases
+                    or plan.monitoring.prometheus_exists
+                    or plan.monitoring.reused_prometheus is not None
+                ) else None
             )
-            prometheus = self._monitoring.prepare_prometheus(plan.monitoring, command.timeout)
+            self._monitoring.prepare_exporters(plan.monitoring, command.timeout)
+            selected_prometheus = prometheus.result()
             if logs is None:
-                logs = workers.submit(execution.run_stage, self._logs.install, plan.log_config, command.timeout)
-            self._monitoring.apply_exporters(plan.monitoring, prometheus, command.timeout)
+                logs = workers.submit(execution.run_stage, self._logs.install, plan.logs, command.timeout)
+            self._monitoring.require_exporter_targets(plan.monitoring, selected_prometheus, command.timeout)
             log_endpoint, log_statefulset = logs.result()
             network.result()
             leader_worker.result()
             _report_plan("LeaderWorkerSet", "Ready", plan.leader_worker.detail)
             dependencies.set_result(None)
             images, download_proxy = source.result()
-            return _PreparedInstallation(images, prometheus, log_endpoint, log_statefulset, download_proxy)
+            return _PreparedInstallation(images, selected_prometheus, log_endpoint, log_statefulset, download_proxy)
         except BaseException as error:
             if not dependencies.done():
                 dependencies.set_exception(error)
@@ -599,7 +602,7 @@ class PlatformLifecycle:
         _report_plan("LoadBalancer", plan.load_balancer.action, plan.load_balancer.detail)
         _report_plan("Gateway Controller", plan.gateway.action, plan.gateway.detail)
         _report_plan("Prometheus", *plan.monitoring.prometheus_decision)
-        for decision in plan.log_decisions:
+        for decision in plan.logs.decisions:
             _report_plan(*decision)
         for decision in plan.monitoring.exporter_decisions:
             _report_plan(*decision)

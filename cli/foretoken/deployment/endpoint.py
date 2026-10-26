@@ -51,8 +51,7 @@ def resolve_frontend_endpoint(
         service = wait_for_object(
             lambda: kubectl.get_if_exists(
                 "service", deployment.frontend, deployment.namespace
-            )
-            or {},
+            ),
             bool,
             deadline,
             f"service/{deployment.frontend}",
@@ -140,8 +139,7 @@ def _gateway_endpoint(
     route = wait_for_object(
         lambda: kubectl.get_if_exists(
             "httproute", deployment.frontend, deployment.namespace
-        )
-        or {},
+        ),
         has_gateway_parent,
         deadline,
         f"HTTPRoute for frontendservice/{deployment.frontend}",

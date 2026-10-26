@@ -157,7 +157,7 @@ class MonitoringLifecycle:
         )
 
     def prepare_prometheus(self, plan: MonitoringPlan, timeout: str) -> PrometheusRef:
-        """Return ready Prometheus and its APIs before dependent charts install monitoring resources."""
+        """Prepare managed monitoring and return the Prometheus reference for target checks."""
         if plan.reused_prometheus is not None:
             return plan.reused_prometheus
         self._install_prometheus(plan, timeout)
@@ -168,14 +168,20 @@ class MonitoringLifecycle:
         )
         return PrometheusRef(resource.name, resource.namespace, ())
 
-    def apply_exporters(self, plan: MonitoringPlan, selected: PrometheusRef, timeout: str) -> None:
-        """Prepare selected GPU exporters and verify their coverage and Prometheus targets."""
+    def prepare_exporters(self, plan: MonitoringPlan, timeout: str) -> None:
+        """Install selected GPU exporters as soon as their monitoring API is available."""
+        if plan.managed_nvidia is not None or plan.managed_metax is not None:
+            # Prepare exporter targets while Prometheus initializes its configuration.
+            self._kubectl.wait_for_crds(("servicemonitors.monitoring.coreos.com",), timeout)
         if plan.managed_nvidia is not None:
             self._install_dcgm(plan.managed_nvidia, plan.labels, plan.dcgm_exists, timeout)
             # Helm permits one unavailable Pod; discovery requires Ready coverage on every GPU node.
             self._kubectl.rollout_status(self._dcgm_daemonset(), timeout)
         if plan.managed_metax is not None:
             self.metax_exporter.install(plan.managed_metax.node_names, plan.labels, timeout)
+
+    def require_exporter_targets(self, plan: MonitoringPlan, selected: PrometheusRef, timeout: str) -> None:
+        """Verify exporter coverage and scrape targets after Prometheus and managed exporters are ready."""
         if plan.reused_prometheus is None or plan.managed_nvidia is not None or plan.managed_metax is not None:
             discovery = ExporterDiscovery(self._kubectl, timeout)
             nvidia = NvidiaMetricsDiscovery(discovery).resolve()

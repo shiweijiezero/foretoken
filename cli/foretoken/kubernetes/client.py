@@ -256,15 +256,18 @@ class Kubectl:
         )
 
     def wait_for_crds(self, names: tuple[str, ...], timeout: str) -> None:
-        """Wait for installed CRDs before applying their custom resources."""
-        self.run(
-            [
-                "wait",
-                "--for=condition=Established",
-                *(f"crd/{name}" for name in names),
-                f"--timeout={timeout}",
-            ]
-        )
+        """Wait for CRD creation and establishment before callers apply custom resources."""
+        with self.until(time.monotonic() + timeout_seconds(timeout)) as deadline:
+            for name in names:
+                wait_for_object(
+                    lambda: self.get_if_exists("customresourcedefinition", name),
+                    lambda resource: any(
+                        condition.get("type") == "Established" and condition.get("status") == "True"
+                        for condition in ((resource.get("status") or {}).get("conditions") or ())
+                    ),
+                    deadline,
+                    f"CRD/{name} to become Established",
+                )
 
     def label_namespace(self, name: str, key: str, value: str) -> None:
         """Set one namespace label required by a platform integration."""
@@ -483,15 +486,15 @@ def timeout_seconds(value: str) -> float:
 
 
 def wait_for_object(
-    fetch: Callable[[], dict[str, Any]],
+    fetch: Callable[[], dict[str, Any] | None],
     ready: Callable[[dict[str, Any]], bool],
     deadline: float,
     description: str,
 ) -> dict[str, Any]:
-    """Poll a Kubernetes dependency until its readiness callback succeeds or the deadline passes."""
+    """Return a Kubernetes dependency once it exists and satisfies the caller's readiness condition."""
     while time.monotonic() < deadline:
         value = fetch()
-        if ready(value):
+        if value is not None and ready(value):
             return value
         time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
     raise DeploymentError(f"timed out waiting for {description}")
