@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from benchmarks.config.plot import TradeoffOptions
@@ -17,14 +16,21 @@ from benchmarks.results.plots.data import (
     paired_summaries,
     workload_slices,
 )
-from benchmarks.results.plots.rendering import _MARKERS, _PALETTE, _legend, _save, _style, _table
+from benchmarks.results.plots.rendering import (
+    _MARKERS,
+    _PALETTE,
+    FigureWriter,
+    _legend,
+    _style,
+    pareto_frontier,
+)
 
 
 def render_tradeoffs(
-    points: list[dict[str, Any]], summary: list[dict[str, Any]], out: Path,
+    points: list[dict[str, Any]], summary: list[dict[str, Any]], writer: FigureWriter,
     methods: tuple[str, ...], columns: int, *, options: TradeoffOptions | None = None,
     base_methods: tuple[str, ...] = (),
-) -> dict[str, Path]:
+) -> None:
     """Export annotated curves and matched-base changes from paired run measurements.
 
     Only the selected sweep parameter varies along a curve. Both coordinates
@@ -44,14 +50,12 @@ def render_tradeoffs(
         if strict:
             raise ValueError(f"No paired measurements for {options.x_metric} and {options.y_metric}; "
                              "per-GPU axes require recorded GPU capacity or --gpu-count")
-        return {}
+        return
     base = base_methods[0] if len(base_methods) == 1 else None
-    exported: dict[str, Path] = {}
     for index, (group, details, group_rows) in enumerate(workload_slices(rows, options.sweep_axis), 1):
         _base_changes(group_rows, base, options.compare_axis)
         name = f"tradeoff-{index}-{_slug(group)}"
-        table = _table(out / name, group_rows)
-        exported[table.name] = table
+        writer.table(name, group_rows)
         plotted = [row for row in group_rows if row["status"] == "measured"]
         names = [method for method in selected if any(row["method"] == method for row in plotted)]
         others = [method for method in names if method != base]
@@ -80,8 +84,8 @@ def render_tradeoffs(
                           linestyle="-" if connected and options.frontier == "none" else "none",
                           linewidth=1.3, label=method)
                 if options.frontier != "none":
-                    frontier = _frontier(subset, options.frontier)
-                    axis.plot([row["x"] for row in frontier], [row["y"] for row in frontier],
+                    frontier = pareto_frontier(((row["x"], row["y"]) for row in subset), options.frontier)
+                    axis.plot([x for x, _ in frontier], [y for _, y in frontier],
                               color=color, linestyle="--", linewidth=1.3)
                 for coordinate in ("x", "y"):
                     errors = [row for row in subset if row[f"{coordinate}_stddev"] is not None]
@@ -105,9 +109,7 @@ def render_tradeoffs(
             if len(panel_methods) > 1:
                 _legend(figure, axis, columns)
             _annotations(figure, axis, annotations)
-            path = out / (name + (f"-panel-{panel}" if len(panels) > 1 else ""))
-            exported.update({file.name: file for file in _save(figure, path).values()})
-    return exported
+            writer.figure(figure, name + (f"-panel-{panel}" if len(panels) > 1 else ""))
 
 
 def _coordinates(
@@ -144,19 +146,6 @@ def _coordinates(
                 row["status"] = "missing_paired_metrics"
         rows.append(row)
     return rows
-
-
-def _frontier(rows: list[dict[str, Any]], objectives: str) -> list[dict[str, Any]]:
-    """Keep nondominated points for the explicitly selected x and y objectives."""
-    x_goal, y_goal = (1 if direction == "max" else -1 for direction in objectives.split("-"))
-    best = -float("inf")
-    frontier = []
-    for row in sorted(rows, key=lambda row: (-x_goal * row["x"], -y_goal * row["y"])):
-        value = y_goal * row["y"]
-        if value > best:
-            frontier.append(row)
-            best = value
-    return frontier
 
 
 def _base_changes(rows: list[dict[str, Any]], base: str | None, coordinate: str) -> None:

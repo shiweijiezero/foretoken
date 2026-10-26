@@ -40,7 +40,7 @@ foretoken plot results/baseline results/candidate \
 
 `--x-metric` and `--y-metric` accept saved scalar metric names. Custom axes connect points in scan order unless `--frontier` selects an optimization direction for each axis: `max-max`, `min-max`, `max-min`, or `min-min`. `--frontier none` connects every scan point.
 
-P90 decode speed is based on successful requests' TPOT; total token throughput includes cached input once. Definitions and required measurements are in [derived plot metrics](metrics.md#derived-plot-metrics). When saved results lack GPU capacity, supply the actual count with `--gpu-count N`. It must agree with any recorded capacity.
+P90 decode speed is based on successful requests' TPOT; total token throughput includes cached input once. Definitions and required measurements are in [derived plot metrics](metrics.md#derived-plot-metrics). When the measurement's GPU count is unavailable, supply its total GPU count with `--gpu-count N`. A conflict with the recorded capacity for that measurement is an error.
 
 ### Show changes from a baseline
 
@@ -93,6 +93,12 @@ Financial estimates require input, output, and cached-input usage for every succ
 
 Error bars show sample standard deviation across repeated runs; one repetition has no error estimate. Trade-off axes and revenue selection with a speed floor use the same eligible repetitions for both measurements. Scalar tables summarize each metric's available repetitions independently. Missing values and a zero baseline leave the corresponding comparison unavailable, with a status in the CSV.
 
-Use the names shown in the legend with `--method` to select methods; an explicit `--base` remains included. Use `--metric generation_tokens_per_second ttft_p95_seconds` to select ordinary metric figures. Explicit trade-off options or `--pricing` produce the requested figures and tables; add `--metric` to include ordinary figures alongside them. See [quality results](eval/README.md#read-scores) for evaluator scores.
+Use the names shown in the legend with `--method` to select methods; an explicit `--base` remains included. For one run, request distributions and run-level summaries can be selected together:
+
+```bash
+foretoken plot results/baseline --metric ttft generation_tokens_per_second
+```
+
+This exports the first-token latency distribution and an output-throughput summary. Cross-run performance comparisons use run-level metrics, such as `generation_tokens_per_second` and `ttft_p95_seconds`. Explicit trade-off options or `--pricing` produce the requested figures and tables; add `--metric` to include other metric figures alongside them. See [quality results](eval/README.md#read-scores) for evaluator scores.
 
 Add `--sync_wandb` to upload saved results and single-run figures to their original W&B runs. Cross-run comparison figures remain local. See [W&B result uploads](perf/wandb.md#resume-an-upload) for recovery and publication behavior.

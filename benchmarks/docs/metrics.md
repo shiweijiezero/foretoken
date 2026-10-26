@@ -56,7 +56,7 @@ The P90 decode-speed calculation uses a distribution of requests, separate from 
 
 Trade-off coordinates use repetitions where both selected metrics are available. Revenue selection with a speed floor likewise uses repetitions with both revenue and speed. Their CSVs retain `paired_samples` alongside the full attempt and failure counts; scalar comparison tables report each metric's available repetitions independently.
 
-GPU normalization uses `metrics.json`'s `gpu_count`. Older results without that field use `environment.json`'s `before.declared_gpu_count`. `--gpu-count` supplies capacity only when neither records it and must agree with any recorded count. Financial plots apply explicit uncached-input, cached-input, and output prices to the corresponding token rates. Revenue per GPU-hour is `3600 × sum(tokens/s/GPU × price per million) / 1,000,000`; profit subtracts the configured GPU hourly cost. Missing token usage remains unavailable, including missing cache usage.
+GPU normalization uses the measurement's `gpu_count` in `metrics.json`. Older results without that field can use `environment.json`'s `before.declared_gpu_count` when its model matches the measurement. `--gpu-count` supplies a missing total capacity for the measurement; a conflict with its recorded capacity is an error. Financial plots apply explicit uncached-input, cached-input, and output prices to the corresponding token rates. Revenue per GPU-hour is `3600 × sum(tokens/s/GPU × price per million) / 1,000,000`; profit subtracts the configured GPU hourly cost. Missing token usage remains unavailable, including missing cache usage.
 
 ## GPU allocation
 

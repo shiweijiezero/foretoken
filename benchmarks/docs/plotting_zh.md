@@ -40,7 +40,7 @@ foretoken plot results/baseline results/candidate \
 
 `--x-metric` 和 `--y-metric` 接受已保存的标量指标名。自选坐标轴默认按扫描顺序连接各点；用 `--frontier` 指定横纵轴的优化方向，可选 `max-max`、`min-max`、`max-min` 或 `min-min`。`--frontier none` 连接全部扫描点。
 
-P90 解码速度基于成功请求的 TPOT，总吞吐量中的缓存输入只计一次。定义和所需数据见[绘图派生指标](metrics_zh.md#绘图派生指标)。结果缺少 GPU 容量时，用 `--gpu-count N` 提供实际数量；它必须与任何已记录容量一致。
+P90 解码速度基于成功请求的 TPOT，总吞吐量中的缓存输入只计一次。定义和所需数据见[绘图派生指标](metrics_zh.md#绘图派生指标)。本次测量的 GPU 数不可用时，用 `--gpu-count N` 提供其 GPU 总数；若与已记录的本次测量容量冲突则报错。
 
 ### 标出相对基准的变化
 
@@ -93,6 +93,12 @@ foretoken plot results/baseline results/candidate \
 
 误差条表示重复运行的样本标准差，只有一次测量时不提供。权衡图的两个轴，以及带速度下限的收益选点，使用同一组可用的重复运行；标量表分别统计各指标的可用样本。指标缺失或基准为零时，对应比较保持不可用，CSV 中标明状态。
 
-用图例中的名称通过 `--method` 选择方案，显式指定的 `--base` 始终保留。用 `--metric generation_tokens_per_second ttft_p95_seconds` 选择普通指标图。显式指定权衡图选项或 `--pricing` 后，命令导出所选图形和表格；可加 `--metric` 同时生成普通指标图。评测分数见[质量结果](eval/README_zh.md#查看评分)。
+用图例中的名称通过 `--method` 选择方案，显式指定的 `--base` 始终保留。单次运行可同时选择请求分布和整次运行的汇总指标：
+
+```bash
+foretoken plot results/baseline --metric ttft generation_tokens_per_second
+```
+
+命令导出首 token 延迟分布和输出吞吐量汇总图。跨运行的性能对照使用整次运行的指标，例如 `generation_tokens_per_second` 和 `ttft_p95_seconds`。显式指定权衡图选项或 `--pricing` 后，命令导出所选图形和表格；可加 `--metric` 同时生成其他指标图。评测分数见[质量结果](eval/README_zh.md#查看评分)。
 
 添加 `--sync_wandb`，可将已有结果及单次运行图表上传到原来的 W&B 运行，跨运行对照图保留在本地。恢复和发布行为见 [W&B 结果补传](perf/wandb_zh.md#恢复上传)。

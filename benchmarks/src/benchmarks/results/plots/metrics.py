@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from benchmarks.results.recording.requests import (
 
 DERIVED_PLOT_METRICS = frozenset({
     "decode_interactivity_p90",
+    "generation_tokens_per_second_per_gpu",
     "total_tokens_per_second_per_gpu",
     "cached_prompt_tokens_per_second_per_gpu",
     "uncached_prompt_tokens_per_second_per_gpu",
@@ -28,6 +30,7 @@ DERIVED_PLOT_METRICS = frozenset({
 
 def enrich_plot_metrics(
     directory: Path, metrics: dict[str, Any], *, gpu_count: int | None = None,
+    selected: Collection[str] | None = None,
 ) -> dict[str, Any]:
     """Return chart-ready HTTP metrics without changing saved measurements.
 
@@ -36,35 +39,53 @@ def enrich_plot_metrics(
     describe a different distribution.
     Token accounting requires all successful records and their relevant usage.
     A supplied GPU count fills missing capacity but cannot replace recorded capacity.
+    ``selected`` limits derivation to requested fields; existing values are retained.
     """
-    measurements = load_http_measurements(read_request_records(directory))
-    successful = [item for item in measurements if item.succeeded]
-    recorded_capacity = metrics.get("gpu_count")
-    if "gpu_count" not in metrics:
-        environment = read_records(directory, ("environment.json",)).get("environment.json", {})
-        before = environment.get("before", {})
-        models = {item.model for item in measurements if item.model is not None}
-        if len(models) <= 1 and (not models or not before.get("model") or before["model"] in models):
-            recorded_capacity = before.get("declared_gpu_count")
-    capacity = _gpu_capacity(recorded_capacity, gpu_count)
     throughput = dict(metrics.get("throughput", {}))
     result = {**metrics, "throughput": throughput}
+    requested = DERIVED_PLOT_METRICS if selected is None else DERIVED_PLOT_METRICS.intersection(selected)
+    missing = {name for name in requested if _numeric(
+        metrics.get(name) if name == "decode_interactivity_p90" else throughput.get(name)
+    ) is None}
+    if not missing and gpu_count is None:
+        return result
+
+    normalized_fields = missing - {"decode_interactivity_p90"}
+    recorded_capacity = metrics.get("gpu_count")
+    before = {}
+    if "gpu_count" not in metrics and (normalized_fields or gpu_count is not None):
+        environment = read_records(directory, ("environment.json",)).get("environment.json", {})
+        before = environment.get("before", {})
+    legacy_capacity = before.get("declared_gpu_count")
+    raw_rates = any(
+        _numeric(throughput.get(name.removesuffix("_per_gpu"))) is None
+        for name in normalized_fields
+    )
+    capacity_available = any(value is not None for value in (recorded_capacity, legacy_capacity, gpu_count))
+    raw_needed = "decode_interactivity_p90" in missing or legacy_capacity is not None or raw_rates and capacity_available
+    measurements = load_http_measurements(read_request_records(directory)) if raw_needed else []
+    if legacy_capacity is not None:
+        models = {item.model for item in measurements if item.model is not None}
+        if len(models) <= 1 and (not models or not before.get("model") or before["model"] in models):
+            recorded_capacity = legacy_capacity
+    capacity = _gpu_capacity(recorded_capacity, gpu_count)
     if capacity is not None:
         result["gpu_count"] = capacity
+    successful = [item for item in measurements if item.succeeded]
     complete = bool(successful) and len(successful) == metrics.get("success_num")
     duration = _numeric(metrics.get("benchmark_time"))
     rates = {
         "generation_tokens_per_second": _numeric(throughput.get("generation_tokens_per_second")),
         "total_tokens_per_second": _numeric(throughput.get("total_tokens_per_second")),
-        "cached_prompt_tokens_per_second": None,
-        "uncached_prompt_tokens_per_second": None,
+        "cached_prompt_tokens_per_second": _numeric(throughput.get("cached_prompt_tokens_per_second")),
+        "uncached_prompt_tokens_per_second": _numeric(throughput.get("uncached_prompt_tokens_per_second")),
     }
     interactivity = None
     if complete:
         # One-token responses have no decode interval; missing usage cannot
         # establish whether an unmeasured interval should belong in the sample.
         outputs = [_numeric(item.output_tokens) for item in successful]
-        if all(value is not None for value in outputs):
+        if "decode_interactivity_p90" in missing and all(value is not None for value in outputs):
             decode = [item for item in successful if item.output_tokens > 1]
             tpots = [_numeric(item.tpot) for item in decode]
             if tpots and all(value is not None and value >= 0 for value in tpots):
@@ -89,12 +110,12 @@ def enrich_plot_metrics(
                 rates["cached_prompt_tokens_per_second"] = sum(cached) / duration
                 rates["uncached_prompt_tokens_per_second"] = (sum(inputs) - sum(cached)) / duration
 
-    if result.get("decode_interactivity_p90") is None:
+    if "decode_interactivity_p90" in missing:
         result["decode_interactivity_p90"] = interactivity
     for name, rate in rates.items():
-        normalized = f"{name}_per_gpu"
-        if throughput.get(normalized) is None:
-            throughput[normalized] = rate / capacity if rate is not None and capacity is not None else None
+        field = f"{name}_per_gpu"
+        if field in missing:
+            throughput[field] = rate / capacity if rate is not None and capacity is not None else None
     return result
 
 

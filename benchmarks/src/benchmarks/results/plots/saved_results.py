@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -33,7 +33,6 @@ class SavedResults:
     points: list[dict[str, Any]]
     summary: list[dict[str, Any]]
     native: list[Chart]
-    method_filters: dict[Path, tuple[str, ...]]
     base_approaches: tuple[str, ...]
 
 
@@ -50,11 +49,16 @@ class _RecordedRun:
     started: bool
     status: str | None = None
     context: dict[str, Any] | None = None
+    parameter_group: str | None = None
+    combination: str | None = None
+    run_number: int | None = None
+    combination_identity: tuple[Path | None, str] | None = None
 
 
 def read_saved_results(
     sources: tuple[Path, ...], *, methods: tuple[str, ...] = (), base: Path | None = None,
     derive_metrics: bool = False, gpu_count: int | None = None, pricing: Pricing | None = None,
+    derived_metrics: Collection[str] | None = None,
 ) -> SavedResults:
     """Read directory selections once and group measurements by their recorded workloads.
 
@@ -73,10 +77,9 @@ def read_saved_results(
     runs: list[dict[str, Any]] = []
     points: list[dict[str, Any]] = []
     native: dict[tuple[Any, ...], Chart] = {}
-    combinations: dict[tuple[str, Path | None], str] = {}
+    combinations: dict[tuple[str, str, tuple[Path | None, str] | None, Path | None], str] = {}
     repetition_counts: dict[tuple[str, str], dict[str, int]] = {}
     available_methods: set[str] = set()
-    method_filters: dict[Path, tuple[str, ...]] = {}
     observed: set[Path] = set()
     plans: dict[Path, list[_RecordedRun]] = {}
     for source in directories:
@@ -129,7 +132,8 @@ def read_saved_results(
                 identities = [saved.method]
             group = source.group
             display_methods = {
-                method: labels[group] + (f" / {method}" if method != "default" else "")
+                method: (method if len(labels) == 1 and method != "default" else
+                         labels[group] + (f" / {method}" if method != "default" else ""))
                 for method in dict.fromkeys((saved.method, *identities))
             }
             available_methods.update(identities)
@@ -139,13 +143,14 @@ def read_saved_results(
                       if is_base or not methods or method in methods or display_methods[method] in methods]
             if not chosen:
                 continue
-            if comparison is not None and methods:
-                method_filters[saved.directory] = tuple(chosen)
             label = display_methods[saved.method]
             if derive_metrics and "throughput" in measured:
                 from benchmarks.results.plots.metrics import enrich_plot_metrics
 
-                measured = enrich_plot_metrics(saved.directory, measured, gpu_count=gpu_count)
+                measured = enrich_plot_metrics(
+                    saved.directory, measured, gpu_count=gpu_count,
+                    selected=derived_metrics,
+                )
                 if pricing is not None:
                     from benchmarks.results.plots.economics import price_metrics
 
@@ -153,7 +158,8 @@ def read_saved_results(
             if is_base:
                 base_approaches.add(label)
             # Missing workload configuration is unknown, not equal to another run's.
-            fixed = (json.dumps(saved.conditions, sort_keys=True),
+            parameter_group = saved.parameter_group if saved.parameter_group is not None else str(saved.conditions.get("mode", "performance"))
+            fixed = (parameter_group, json.dumps(saved.conditions, sort_keys=True), saved.combination_identity,
                      saved.directory if saved.configuration is None or quality and saved.conditions["evaluation"] is None else None)
             combination = combinations.setdefault(fixed, f"workload-{len(combinations) + 1}")
             lifecycle = saved.context or {}
@@ -165,6 +171,8 @@ def read_saved_results(
                          "context": str(saved.directory / "context.json") if saved.context is not None else identity["context"],
                          "label": labels[group], "method": saved.method, "methods": chosen,
                          "approach": label, "workload": combination,
+                         "parameter_group": parameter_group,
+                         "source_combination": saved.combination, "run_number": saved.run_number,
                          "result": str(saved.directory), "measured": saved.exit_code is not None or saved.metrics is not None or bool(charts),
                          "started": saved.started, "measurement_exit_code": saved.exit_code,
                          "task": str(task_path), "task_status": saved.status,
@@ -208,8 +216,9 @@ def read_saved_results(
                 counts["failed_runs"] += int(bool(saved.exit_code) or bool(measured.get("failed_num")))
                 if saved.metrics is not None:
                     points.append({**measured, "combination": combination,
-                                   "parameter_group": str(saved.conditions.get("mode", "performance")),
+                                   "parameter_group": parameter_group,
                                    "bench": {**saved.conditions, "service": {"name": label}},
+                                   "source_combination": saved.combination, "run_number": saved.run_number,
                                    "exit_code": saved.exit_code})
         if not found and not methods:
             runs.append({**identity, "result": None, "measured": False})
@@ -222,7 +231,7 @@ def read_saved_results(
     summary = summarize_sweep(points)
     for row in summary:
         row.update(repetition_counts[row["method"], row["combination"]])
-    return SavedResults(runs, points, summary, list(native.values()), method_filters, tuple(sorted(base_approaches)))
+    return SavedResults(runs, points, summary, list(native.values()), tuple(sorted(base_approaches)))
 
 
 def _conditions(config: dict[str, Any]) -> dict[str, Any]:
@@ -396,6 +405,9 @@ def _recorded_runs(directory: Path) -> Iterator[_RecordedRun]:
     if config.get("mode") in {"parameter_sweep", "video_parameter_sweep"}:
         points = documents.get("sweep_points.json", [])
         observed = {(point["combination"], point["run_number"]): point for point in points}
+        retained_runs: list[_RecordedRun] = []
+        point_identities: dict[tuple[str, str, str], set[str]] = {}
+        declared_names: dict[str, str | None] = {}
         for combination in config["combinations"]:
             children = [directory / combination["dir"] / f"run={number}" for number in range(config["num_runs"])]
             bench = {**config["base"], **combination["bench"]}
@@ -413,12 +425,45 @@ def _recorded_runs(directory: Path) -> Iterator[_RecordedRun]:
             saved = next((value for value in configurations if value is not None), None)
             if saved is not None:
                 planned = _conditions(saved)
+            group = combination["bench"].get("_parameter_group")
+            if group is None:
+                group = next((point["parameter_group"] for point in points
+                              if point["combination"] == combination["dir"] and "parameter_group" in point),
+                             "default")
+            group = str(group)
+            declared_names[str(combination["dir"])] = combination["bench"].get("_benchmark_name")
             for number, child in enumerate(children):
                 point = observed.get((combination["dir"], number))
-                yield _leaf(child, configuration, planned, method,
-                            point["exit_code"] if point is not None else None,
+                run = _leaf(child, configuration, planned, method,
+                            point.get("exit_code") if point is not None else None,
                             point is not None and point.get("status") != "pending",
                             point.get("status") if point is not None else None)
+                if run.metrics is None and point is not None:
+                    # The aggregate retains each actual run, even when its child
+                    # artifacts were not kept. Summary means are never samples.
+                    retained = {key: value for key, value in point.items() if key not in {
+                        "combination", "parameter_group", "run_number", "bench", "label", "status",
+                        "exit_code", "result", "reused", "error_type",
+                    }}
+                    if retained:
+                        run = replace(run, metrics=retained, exit_code=point.get("exit_code"), started=True)
+                run = replace(
+                    run, parameter_group=str(point.get("parameter_group", group)) if point is not None else group,
+                    combination=str(combination["dir"]), run_number=number,
+                )
+                retained_runs.append(run)
+                identity = (run.method, run.parameter_group, json.dumps(run.conditions, sort_keys=True))
+                point_identities.setdefault(identity, set()).add(run.combination)
+        for run in retained_runs:
+            identity = (run.method, run.parameter_group, json.dumps(run.conditions, sort_keys=True))
+            if len(point_identities[identity]) > 1:
+                # Distinct declared points with the same conditions remain separate.
+                # An explicit shared name can match them across approaches; an
+                # unnamed collision remains local to its source plan.
+                name = declared_names[run.combination]
+                run = replace(run, combination_identity=(None, str(name)) if name is not None else
+                              (directory.resolve(), run.combination))
+            yield run
         return
     metrics = documents.get("metrics.json")
     if metrics is not None and "evaluation_comparison" in metrics:

@@ -14,7 +14,14 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from benchmarks.results.plots.data import _method, _numeric, _slug, paired_summaries, workload_slices
-from benchmarks.results.plots.rendering import _legend, _save, _style, _table
+from benchmarks.results.plots.rendering import FigureWriter, _legend, _style
+
+
+PRICED_TOKEN_METRICS = (
+    "uncached_prompt_tokens_per_second_per_gpu",
+    "cached_prompt_tokens_per_second_per_gpu",
+    "generation_tokens_per_second_per_gpu",
+)
 
 
 class Pricing(BaseModel):
@@ -56,11 +63,7 @@ def price_metrics(metrics: dict[str, Any], method: str, pricing: Pricing) -> dic
     else:
         cost = costs
     throughput = metrics.get("throughput", {})
-    rates = (
-        _numeric(throughput.get("uncached_prompt_tokens_per_second_per_gpu")),
-        _numeric(throughput.get("cached_prompt_tokens_per_second_per_gpu")),
-        _numeric(throughput.get("generation_tokens_per_second_per_gpu")),
-    )
+    rates = tuple(_numeric(throughput.get(metric)) for metric in PRICED_TOKEN_METRICS)
     revenue = None
     if all(value is not None for value in rates):
         revenue = 3600 / 1_000_000 * sum(
@@ -76,9 +79,9 @@ def price_metrics(metrics: dict[str, Any], method: str, pricing: Pricing) -> dic
 
 
 def render_economics(
-    points: list[dict[str, Any]], summary: list[dict[str, Any]], out: Path, pricing: Pricing,
+    points: list[dict[str, Any]], summary: list[dict[str, Any]], writer: FigureWriter, pricing: Pricing,
     *, min_interactivity: float | None = None, columns: int = 1,
-) -> dict[str, Path]:
+) -> None:
     """Export measured operating-point choices and signed profit bars for each fixed workload.
 
     Each method contributes its highest mean-revenue point meeting the optional
@@ -135,7 +138,6 @@ def render_economics(
         group = str(reference.get("parameter_group") or point.get("parameter_group") or "default")
         row["parameter_group"] = group
         records.append(row)
-    exported: dict[str, Path] = {}
     plotted = False
     for index, (group, details, rows) in enumerate(workload_slices(records, "max_concurrency"), 1):
         selected = []
@@ -146,26 +148,24 @@ def render_economics(
                 best["status"] = "selected"
                 selected.append(best)
         base = f"economics-{index}-{_slug(group)}"
-        file = _table(out / base, rows)
-        exported[file.name] = file
+        writer.table(base, rows)
         for offset in range(0, len(selected), 6):
             panel = selected[offset:offset + 6]
             name = base + (f"-panel-{offset // 6 + 1}" if len(selected) > 6 else "")
             title = f"Revenue and cost · {group}" + (f"\n{details}" if details else "")
-            exported.update(_economics_figure(panel, out / name, title, pricing, min_interactivity, columns))
+            _economics_figure(panel, writer, name, title, pricing, min_interactivity, columns)
             plotted = True
     if not plotted:
         raise ValueError(
             "No measured operating point satisfies the economics requirements; "
-            f"inspect economics CSV files in {out} for missing metrics or points below the speed floor"
+            f"inspect economics CSV files in {writer.directory} for missing metrics or points below the speed floor"
         )
-    return exported
 
 
 def _economics_figure(
-    rows: list[dict[str, Any]], path: Path, title: str, pricing: Pricing,
+    rows: list[dict[str, Any]], writer: FigureWriter, name: str, title: str, pricing: Pricing,
     minimum: float | None, columns: int,
-) -> dict[str, Path]:
+) -> None:
     """Draw cost plus positive profit, with losses below zero and a separate revenue marker."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
@@ -214,4 +214,4 @@ def _economics_figure(
     _style(axis, title, "Measured operating point", f"{pricing.currency} / GPU-hour")
     axis.margins(y=0.2)
     _legend(figure, axis, columns)
-    return {file.name: file for file in _save(figure, path).values()}
+    writer.figure(figure, name)

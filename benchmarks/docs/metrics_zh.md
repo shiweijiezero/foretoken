@@ -56,7 +56,7 @@ P90 解码速度使用逐请求分布，与 `itl` 汇总的所有分片间隔分
 
 权衡图的两轴使用两个指标均可用的重复运行；有速度下限的收益选点也使用收入与速度同时可用的重复运行。对应 CSV 同时保留 `paired_samples`、完整尝试次数及失败次数；标量对照表则分别统计每个指标的可用重复运行。
 
-每 GPU 指标使用 `metrics.json` 的 `gpu_count`；不含该字段的旧结果使用 `environment.json` 的 `before.declared_gpu_count`。两处均未记录时才用 `--gpu-count` 补充，并须与任何已记录数量一致。收益图按显式提供的非缓存输入、缓存输入和输出价格，对相应用量计价。每 GPU 每小时收入为 `3600 × sum(tokens/s/GPU × 每百万 token 价格) / 1,000,000`，利润再减去配置的 GPU 每小时成本。缺失的 token 用量保持不可用，包括缓存用量。
+每 GPU 指标使用 `metrics.json` 记录的本次测量 `gpu_count`；不含该字段的旧结果，在模型匹配时可使用 `environment.json` 的 `before.declared_gpu_count`。`--gpu-count` 用于补充本次测量缺失的 GPU 总数，若与已记录的本次测量容量冲突则报错。收益图按显式提供的非缓存输入、缓存输入和输出价格，对相应用量计价。每 GPU 每小时收入为 `3600 × sum(tokens/s/GPU × 每百万 token 价格) / 1,000,000`，利润再减去配置的 GPU 每小时成本。缺失的 token 用量保持不可用，包括缓存用量。
 
 ## GPU 分配量
 

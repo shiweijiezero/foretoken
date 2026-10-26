@@ -10,6 +10,7 @@ import json
 import math
 import textwrap
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -36,17 +37,71 @@ _STYLES = ("-", "--", "-.", ":")
 _FORMATS = ("pdf", "svg", "png")
 
 
+class FigureWriter:
+    """Track artifacts written under the figure exporter's directory lock."""
+
+    def __init__(self, directory: Path) -> None:
+        """Use the prepared output directory and retain attempted files for manifest recovery."""
+        self.directory = directory
+        self.files: dict[str, Path] = {}
+
+    def table(self, name: str, rows: list[dict[str, Any]]) -> Path:
+        """Register and write a CSV containing every scalar and structured record field."""
+        path = self.directory / f"{name}.csv"
+        self.files[path.name] = path
+        columns = list(dict.fromkeys(key for row in rows for key in row))
+        with path.open("w", encoding="utf-8", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=columns, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(
+                {
+                    key: json.dumps(value, ensure_ascii=False)
+                    if isinstance(value, (dict, list, tuple)) else value
+                    for key, value in row.items()
+                }
+                for row in rows
+            )
+        return path
+
+    def figure(self, figure: Any, name: str) -> None:
+        """Register each figure format before writing it and release its canvas after export."""
+        from matplotlib import rc_context
+
+        try:
+            with rc_context({"pdf.fonttype": 42, "svg.fonttype": "none"}):
+                for extension in _FORMATS:
+                    path = self.directory / f"{name}.{extension}"
+                    self.files[path.name] = path
+                    figure.savefig(path, dpi=220, facecolor="white")
+        finally:
+            figure.clear()
+
+
+def pareto_frontier(
+    points: Iterable[tuple[float, float]], objectives: str,
+) -> list[tuple[float, float]]:
+    """Return nondominated coordinates for the renderers' x/y min/max objectives."""
+    x_goal, y_goal = (1 if direction == "max" else -1 for direction in objectives.split("-"))
+    best = -math.inf
+    frontier = []
+    for x, y in sorted(points, key=lambda point: (-x_goal * point[0], -y_goal * point[1])):
+        value = y_goal * y
+        if value > best:
+            frontier.append((x, y))
+            best = value
+    return frontier
+
+
 def _charts(
     charts: list[Chart] | tuple[Chart, ...],
-    out: Path,
+    writer: FigureWriter,
     identities: list[str],
     columns: int,
-) -> dict[str, Path]:
+) -> None:
     """Render each series with stable method colors, splitting dense legends into small figures."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
 
-    exported: dict[str, Path] = {}
     method_index = {name: i for i, name in enumerate(dict.fromkeys(identities))}
     used: dict[str, int] = defaultdict(int)
     for chart in charts:
@@ -72,7 +127,6 @@ def _charts(
             used[base] += 1
             if used[base] > 1:
                 base += f"-{used[base]}"
-            path = out / base
             fig = Figure(
                 figsize=(3.4 if columns == 1 else 7, 2.65 if columns == 1 else 3.1),
                 layout="constrained",
@@ -114,14 +168,10 @@ def _charts(
                         color=_PALETTE[slot], linewidth=0.8, capsize=2,
                     )
             if chart.kind == "pareto":
-                frontier = []
-                best = math.inf
-                for x, y in sorted(
-                    (x, y) for series in series_list for x, y in zip(series.x, series.y)
-                ):
-                    if y < best:
-                        frontier.append((x, y))
-                        best = y
+                frontier = pareto_frontier(
+                    ((x, y) for series in series_list for x, y in zip(series.x, series.y)),
+                    "min-min",
+                )
                 if len(frontier) > 1:
                     axis.plot(
                         [x for x, _ in frontier],
@@ -162,8 +212,7 @@ def _charts(
                 )
             if len(series_list) > 1 or chart.kind == "pareto":
                 _legend(fig, axis, columns)
-            for extension, file in _save(fig, path).items():
-                exported[f"{base}.{extension}"] = file
+            writer.figure(fig, base)
             rows = []
             for series in series_list:
                 for x, y, error, record in zip(
@@ -186,28 +235,7 @@ def _charts(
                             **record,
                         }
                     )
-            file = _table(path, rows)
-            exported[file.name] = file
-    return exported
-
-
-def _table(path: Path, rows: list[dict[str, Any]]) -> Path:
-    """Export complete scalar and structured table records as CSV."""
-    columns = list(dict.fromkeys(key for row in rows for key in row))
-    csv_path = path.with_name(path.name + ".csv")
-    with csv_path.open("w", encoding="utf-8", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=columns, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(
-            {
-                key: json.dumps(value, ensure_ascii=False)
-                if isinstance(value, (dict, list, tuple))
-                else value
-                for key, value in row.items()
-            }
-            for row in rows
-        )
-    return csv_path
+            writer.table(base, rows)
 
 
 def _style(axis: Any, title: str, xlabel: str, ylabel: str) -> None:
@@ -233,17 +261,3 @@ def _legend(fig: Any, axis: Any, columns: int) -> None:
         fig.legend(handles, labels, fontsize=8, frameon=False, loc="outside lower center")
     else:
         axis.legend(handles, labels, fontsize=8, frameon=False, loc="best")
-
-
-def _save(fig: Any, path: Path) -> dict[str, Path]:
-    """Write three print-ready formats from the same figure and release its canvas."""
-    from matplotlib import rc_context
-
-    paths = {}
-    with rc_context({"pdf.fonttype": 42, "svg.fonttype": "none"}):
-        for extension in _FORMATS:
-            file = path.with_name(path.name + "." + extension)
-            fig.savefig(file, dpi=220, facecolor="white")
-            paths[extension] = file
-    fig.clear()
-    return paths
