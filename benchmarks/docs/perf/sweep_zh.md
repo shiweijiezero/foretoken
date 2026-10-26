@@ -131,7 +131,7 @@ foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-mode
 
 通过 `sweep_summary.csv` 和对比图，比较相同负载设置下的延迟与吞吐量。误差线表示各轮结果的样本标准差，分位数也先逐轮计算、再汇总；只有一轮时不估计误差。比较参数点时，同时查看各指标的有效样本数和失败运行数。
 
-每次命令都创建独立结果目录，`--experiment-name` 用作目录名前缀。调整指标、图宽或对照历史运行，见[绘制与对照结果](../recipes_zh.md#绘制与对照结果)。
+每次命令都创建独立结果目录，`--experiment-name` 用作目录名前缀。调整指标、图宽或对照历史运行，见[绘图指南](../plotting_zh.md)。
 
 ## 继续已有扫描
 
@@ -141,7 +141,7 @@ foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-mode
 
 如果测量已完成，只在绘图或发布时失败，恢复时使用 `--output local,wandb,plot` 即可补齐结果并继续发布到原来的 W&B 运行；只需本地输出时使用 `local,plot`。已完成的测量无需模型服务在线。
 
-如果只需要重新绘图，可以使用 [`foretoken plot`](../recipes_zh.md#绘制与对照结果)。仅补发结果的命令见 [W&B 恢复上传](wandb_zh.md#恢复上传)。
+如果只需要重新绘图，可以使用 [`foretoken plot`](../plotting_zh.md)。仅补发结果的命令见 [W&B 恢复上传](wandb_zh.md#恢复上传)。
 
 ## 视频参数
 

@@ -231,7 +231,7 @@ foretoken eval examples/quickstart/qwen3-0.6b --name qwen \
 foretoken plot results
 ```
 
-图表写入 `results/plots/`。传入具体运行目录，可选择或对比特定结果。更多用法见[绘图选项](../benchmarks/docs/recipes_zh.md#绘制与对照结果)和 [W&B 结果补传](../benchmarks/docs/perf/wandb_zh.md#恢复上传)。
+图表写入 `results/plots/`。传入具体运行目录，可选择或对比特定结果。更多用法见[绘图指南](../benchmarks/docs/plotting_zh.md)和 [W&B 结果补传](../benchmarks/docs/perf/wandb_zh.md#恢复上传)。
 
 ## 性能剖析
 

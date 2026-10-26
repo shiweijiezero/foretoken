@@ -8,13 +8,13 @@ from __future__ import annotations
 import csv
 import json
 import math
-import re
 import textwrap
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from benchmarks.results.plots.data import Chart, Series, _method, _numeric
+from benchmarks.results.plots.data import Chart, Series
 
 _PALETTE = (
     "#2a78d6",
@@ -37,17 +37,71 @@ _STYLES = ("-", "--", "-.", ":")
 _FORMATS = ("pdf", "svg", "png")
 
 
+class FigureWriter:
+    """Track artifacts written under the figure exporter's directory lock."""
+
+    def __init__(self, directory: Path) -> None:
+        """Use the prepared output directory and retain attempted files for manifest recovery."""
+        self.directory = directory
+        self.files: dict[str, Path] = {}
+
+    def table(self, name: str, rows: list[dict[str, Any]]) -> Path:
+        """Register and write a CSV containing every scalar and structured record field."""
+        path = self.directory / f"{name}.csv"
+        self.files[path.name] = path
+        columns = list(dict.fromkeys(key for row in rows for key in row))
+        with path.open("w", encoding="utf-8", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=columns, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(
+                {
+                    key: json.dumps(value, ensure_ascii=False)
+                    if isinstance(value, (dict, list, tuple)) else value
+                    for key, value in row.items()
+                }
+                for row in rows
+            )
+        return path
+
+    def figure(self, figure: Any, name: str) -> None:
+        """Register each figure format before writing it and release its canvas after export."""
+        from matplotlib import rc_context
+
+        try:
+            with rc_context({"pdf.fonttype": 42, "svg.fonttype": "none"}):
+                for extension in _FORMATS:
+                    path = self.directory / f"{name}.{extension}"
+                    self.files[path.name] = path
+                    figure.savefig(path, dpi=220, facecolor="white")
+        finally:
+            figure.clear()
+
+
+def pareto_frontier(
+    points: Iterable[tuple[float, float]], objectives: str,
+) -> list[tuple[float, float]]:
+    """Return nondominated coordinates for the renderers' x/y min/max objectives."""
+    x_goal, y_goal = (1 if direction == "max" else -1 for direction in objectives.split("-"))
+    best = -math.inf
+    frontier = []
+    for x, y in sorted(points, key=lambda point: (-x_goal * point[0], -y_goal * point[1])):
+        value = y_goal * y
+        if value > best:
+            frontier.append((x, y))
+            best = value
+    return frontier
+
+
 def _charts(
     charts: list[Chart] | tuple[Chart, ...],
-    out: Path,
+    writer: FigureWriter,
     identities: list[str],
     columns: int,
-) -> dict[str, Path]:
+) -> None:
     """Render each series with stable method colors, splitting dense legends into small figures."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
 
-    exported: dict[str, Path] = {}
     method_index = {name: i for i, name in enumerate(dict.fromkeys(identities))}
     used: dict[str, int] = defaultdict(int)
     for chart in charts:
@@ -73,7 +127,6 @@ def _charts(
             used[base] += 1
             if used[base] > 1:
                 base += f"-{used[base]}"
-            path = out / base
             fig = Figure(
                 figsize=(3.4 if columns == 1 else 7, 2.65 if columns == 1 else 3.1),
                 layout="constrained",
@@ -115,14 +168,10 @@ def _charts(
                         color=_PALETTE[slot], linewidth=0.8, capsize=2,
                     )
             if chart.kind == "pareto":
-                frontier = []
-                best = math.inf
-                for x, y in sorted(
-                    (x, y) for series in series_list for x, y in zip(series.x, series.y)
-                ):
-                    if y < best:
-                        frontier.append((x, y))
-                        best = y
+                frontier = pareto_frontier(
+                    ((x, y) for series in series_list for x, y in zip(series.x, series.y)),
+                    "min-min",
+                )
                 if len(frontier) > 1:
                     axis.plot(
                         [x for x, _ in frontier],
@@ -163,8 +212,7 @@ def _charts(
                 )
             if len(series_list) > 1 or chart.kind == "pareto":
                 _legend(fig, axis, columns)
-            for extension, file in _save(fig, path).items():
-                exported[f"{base}.{extension}"] = file
+            writer.figure(fig, base)
             rows = []
             for series in series_list:
                 for x, y, error, record in zip(
@@ -187,185 +235,7 @@ def _charts(
                             **record,
                         }
                     )
-            file = _table(path, rows)
-            exported[file.name] = file
-    return exported
-
-
-def _pareto(
-    points: list[dict[str, Any]],
-    summary: list[dict[str, Any]],
-    out: Path,
-    methods: tuple[str, ...],
-    columns: int,
-) -> dict[str, Path]:
-    """Compare per-user and per-GPU output throughput on independently grouped workloads."""
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from matplotlib.figure import Figure
-
-    point_by_key = {
-        (
-            _method(p),
-            str(p["combination"]),
-        ): p
-        for p in points
-    }
-    xy: dict[tuple[str, str], dict[str, dict[str, Any]]] = defaultdict(dict)
-    fields = (
-        "generation_tokens_per_second_per_user",
-        "generation_tokens_per_second_per_gpu",
-    )
-    for row in summary:
-        if row["metric"] not in fields or _numeric(row.get("mean")) is None:
-            continue
-        method = _method(row)
-        if methods and method not in methods:
-            continue
-        xy[(method, str(row["combination"]))][row["metric"]] = row
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    for (method, combination), values in xy.items():
-        if not all(key in values for key in fields):
-            continue
-        row = values[fields[0]]
-        point = point_by_key.get((method, combination), {})
-        bench = row.get("bench") or point.get("bench") or {}
-        fixed = json.dumps(
-            {
-                key: value
-                for key, value in bench.items()
-                if key not in {"service", "max_concurrency"} and not key.startswith("_")
-            },
-            sort_keys=True,
-        )
-        group = str(
-            row.get("parameter_group") or point.get("parameter_group") or "default"
-        )
-        groups[(group, fixed)].append(
-            {
-                "method": method,
-                "combination": combination,
-                "parameter_group": group,
-                "per_user_tokens_per_second": values[fields[0]]["mean"],
-                "per_gpu_tokens_per_second": values[fields[1]]["mean"],
-                "per_user_stddev": values[fields[0]].get("stddev"),
-                "per_gpu_stddev": values[fields[1]].get("stddev"),
-                "per_user_samples": values[fields[0]].get("samples"),
-                "per_gpu_samples": values[fields[1]].get("samples"),
-                "failed_runs": row.get("failed_runs"),
-                "requested_runs": row.get("requested_runs"),
-                "error_type": "run stddev",
-                "max_concurrency": bench.get(
-                    "max_concurrency", point.get("max_concurrency")
-                ),
-                "bench": fixed,
-            }
-        )
-    identities = list(dict.fromkeys(_method(point) for point in points))
-    exported = {}
-    for index, ((group, fixed), rows) in enumerate(groups.items(), 1):
-        # Scatter markers have all-pairs relationships: limit each small figure
-        # to three distinct method hues, retaining the unfiltered color slot.
-        panels: dict[int, list[dict[str, Any]]] = defaultdict(list)
-        for row in rows:
-            method_index = identities.index(row["method"])
-            panels[(method_index // 8) * 3 + (method_index % 8) // 3].append(row)
-        for panel, plotted in panels.items():
-            base = (
-                f"pareto-{index}-{re.sub('[^a-z0-9]+', '-', group.lower()).strip('-')}"
-            )
-            if len(panels) > 1:
-                base += f"-panel-{panel + 1}"
-            path = out / base
-            figure = Figure(
-                figsize=(3.4 if columns == 1 else 7, 2.8 if columns == 1 else 3.5),
-                layout="constrained",
-            )
-            FigureCanvasAgg(figure)
-            axis = figure.add_subplot(111)
-            for method in dict.fromkeys(row["method"] for row in plotted):
-                subset = [row for row in plotted if row["method"] == method]
-                slot = identities.index(method) % len(_PALETTE)
-                color = _PALETTE[slot]
-                # Color identifies the method; marker area encodes configured concurrency.
-                axis.scatter(
-                    [row["per_user_tokens_per_second"] for row in subset],
-                    [row["per_gpu_tokens_per_second"] for row in subset],
-                    s=[
-                        20 + 5 * max(0, float(row["max_concurrency"] or 0))
-                        for row in subset
-                    ],
-                    color=color,
-                    marker=_MARKERS[slot],
-                    edgecolor="white",
-                    linewidth=0.7,
-                    label=method,
-                )
-                for field, direction in (("per_user_stddev", "xerr"), ("per_gpu_stddev", "yerr")):
-                    errors = [
-                        (row["per_user_tokens_per_second"], row["per_gpu_tokens_per_second"], error)
-                        for row in subset if (error := _numeric(row[field])) is not None
-                    ]
-                    if errors:
-                        error_x, error_y, deviations = zip(*errors)
-                        axis.errorbar(
-                            error_x, error_y, **{direction: deviations}, fmt="none",
-                            color=color, linewidth=0.8, capsize=2,
-                        )
-                frontier = []
-                best = -math.inf
-                for row in sorted(
-                    subset,
-                    key=lambda item: (
-                        -item["per_user_tokens_per_second"],
-                        -item["per_gpu_tokens_per_second"],
-                    ),
-                ):
-                    if row["per_gpu_tokens_per_second"] > best:
-                        frontier.append(row)
-                        best = row["per_gpu_tokens_per_second"]
-                if len(frontier) > 1:
-                    axis.plot(
-                        [row["per_user_tokens_per_second"] for row in frontier],
-                        [row["per_gpu_tokens_per_second"] for row in frontier],
-                        color=color,
-                        linewidth=1,
-                        linestyle="--",
-                    )
-            title = f"Pareto · {group}"
-            if len({row["method"] for row in plotted}) == 1:
-                title += f" · {plotted[0]['method']}"
-            _style(
-                axis,
-                title,
-                "Output throughput per user (tokens/s)",
-                "Output throughput per GPU (tokens/s)",
-            )
-            if len({row["method"] for row in plotted}) > 1:
-                _legend(figure, axis, columns)
-            for extension, file in _save(figure, path).items():
-                exported[f"{base}.{extension}"] = file
-            file = _table(path, plotted)
-            exported[file.name] = file
-    return exported
-
-
-def _table(path: Path, rows: list[dict[str, Any]]) -> Path:
-    """Export complete scalar and structured table records as CSV."""
-    columns = list(dict.fromkeys(key for row in rows for key in row))
-    csv_path = path.with_name(path.name + ".csv")
-    with csv_path.open("w", encoding="utf-8", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=columns, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(
-            {
-                key: json.dumps(value, ensure_ascii=False)
-                if isinstance(value, (dict, list, tuple))
-                else value
-                for key, value in row.items()
-            }
-            for row in rows
-        )
-    return csv_path
+            writer.table(base, rows)
 
 
 def _style(axis: Any, title: str, xlabel: str, ylabel: str) -> None:
@@ -391,17 +261,3 @@ def _legend(fig: Any, axis: Any, columns: int) -> None:
         fig.legend(handles, labels, fontsize=8, frameon=False, loc="outside lower center")
     else:
         axis.legend(handles, labels, fontsize=8, frameon=False, loc="best")
-
-
-def _save(fig: Any, path: Path) -> dict[str, Path]:
-    """Write three print-ready formats from the same figure and release its canvas."""
-    from matplotlib import rc_context
-
-    paths = {}
-    with rc_context({"pdf.fonttype": 42, "svg.fonttype": "none"}):
-        for extension in _FORMATS:
-            file = path.with_name(path.name + "." + extension)
-            fig.savefig(file, dpi=220, facecolor="white")
-            paths[extension] = file
-    fig.clear()
-    return paths
