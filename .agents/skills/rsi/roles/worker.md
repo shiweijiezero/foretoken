@@ -15,7 +15,9 @@ The Worker first learns Foretoken through the [shared preparation guidance](comm
 
 Read relevant papers, official documentation and other implementations alongside the actual execution path. Explain which scheduling, computation, communication or memory mechanism could affect the target workload, which conditions it requires, and how it differs from the current approach. A missing configuration flag or public interface identifies an implementation question; trace the underlying capability and possible extension before concluding that the direction is unavailable.
 
-Turn that understanding into a runnable candidate or concrete evidence supporting or contradicting the hypothesis. Before implementing, explain the expected mechanism and a comparison that could distinguish it from alternative explanations. Code changes stay in the assigned checkout and branch. Environment preparation proceeds with its owner while the Worker continues research and implementation that does not require the environment; report a specific missing input when it blocks the next step.
+Turn that understanding into a runnable candidate or concrete evidence supporting or contradicting the hypothesis. Before implementing, explain the expected mechanism and a comparison that could distinguish it from alternative explanations. Code changes stay in the assigned checkout and branch.
+
+While the Experimenter prepares the environment, prioritize key implementation work, available local checks and further exploration. Environment readiness or a complete baseline is not a prerequisite for writing code. Pause only work with a real dependency, explain what is missing, and complete runtime validation once the environment is ready.
 
 ## Deliver a version and interpret the results
 

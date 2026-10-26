@@ -115,4 +115,4 @@ foretoken plot results/baseline --metric ttft generation_tokens_per_second
 
 用 `--metric ttft --stat p95` 选择已保存的 P95 摘要，用 `--metric latency --stat mean` 选择平均延迟。延迟、TTFT、TPOT 和 ITL 的统计量必须已存在于保存结果中；也可以直接选择 `ttft_p95_seconds` 这类已保存的标量字段。
 
-添加 `--sync_wandb`，可将已有结果及单次运行图表上传到原来的 W&B 运行，跨运行对照图保留在本地。恢复和发布行为见 [W&B 结果补传](perf/wandb_zh.md#恢复上传)。
+添加 `--sync_wandb`，可将已有结果及其图表上传到原来的 W&B 运行，包括 sweep 自己的聚合图。跨独立结果目录的对照图保留在本地。恢复和发布行为见 [W&B 结果补传](perf/wandb_zh.md#恢复上传)。

@@ -2,22 +2,39 @@
 
 [English](README.md) | 简体中文
 
-RSI（Recursive Self-Improvement，递归自我改进）让 Agent 持续研究和优化推理系统：研究方案，修改代码或配置，部署并测量效果，再根据结果开展下一轮。Foretoken 为这个过程提供部署、评测和性能剖析工具。任务文件规定模型、资源、预算和交付要求，[优化指导](guidance/README_zh.md)提供研究方法与已有经验。
+RSI（Recursive Self-Improvement，递归自我改进）让 Agent 持续研究、实现和验证推理优化。用户通过任务文件指定目标与边界，Agent 团队调用 Foretoken 完成部署、评测和性能剖析，再根据结果继续改进。
 
 ## 开始优化任务
 
-安装并登录 Claude Code 或 Codex，再取得仓库中的任务和示例：
+### 1. 准备仓库和任务文件
+
+安装并登录 Claude Code 或 Codex，在 Foretoken 仓库中启动任务。尚无仓库时执行：
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 ```
 
-以下以 [Qwen3.5-35B-A3B 优化](tasks/qwen3.5-35b-a3b_zh.md)为例。使用前确认具备任务要求的资源；自己的任务可按[任务模板](templates/task-template_zh.md)编写，并替换指令中的文件路径。
+以 [Qwen3.5-35B-A3B 任务](tasks/qwen3.5-35b-a3b_zh.md)或[任务模板](templates/task-template_zh.md)为起点，编写自己的任务文件，例如 `my_docs/rsi/my-task_zh.md`。`my_docs/` 已被 Git 忽略，可用于保存本地任务。
 
-### Claude Code
+### 2. 修改任务设置
 
-启动启用了 Agent Teams 的交互会话：
+用户需要确认以下内容；不需要限制的选项可交给 Agent 选择，具体填写方式见任务模板。
+
+| 设置 | 需要说明什么 |
+| --- | --- |
+| 模型与目标 | 优化哪个模型，主要改善吞吐、延迟还是其他指标。 |
+| 可用资源 | 允许访问的节点或集群，以及整个实验可用的 GPU、CPU 和内存。 |
+| 最终部署预算 | 最终方案允许使用多少资源，与实验期间的总资源分开填写。 |
+| 评测与约束 | 负载、并发、精度和质量要求，以及允许修改的代码或配置范围。 |
+| 时间与交付 | 工作时长或结束条件、已有实验，以及报告和结果保存位置。 |
+| Agent 设置 | Advisor、Worker、Experimenter 的并行人数；每轮 Observer 数量与巡查间隔。 |
+
+### 3. 启动 Agent
+
+下面使用前面准备的任务文件。文件名不同，就替换指令中的路径。
+
+#### Claude Code
 
 ```bash
 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
@@ -26,89 +43,44 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 在会话中输入：
 
 ```text
-/goal 使用 RSI skill 和 Agent Team，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md 中的优化任务。阅读已有实验记录和相关指导，遵守任务的资源、时间预算及结束条件，交付规定结果。
+/goal 使用 RSI skill 和 Agent Team，完成 my_docs/rsi/my-task_zh.md 中的优化任务。
 ```
 
-需要暂停时，用 `/goal clear` 结束自动续轮，并要求团队停止本任务的实验和采集进程。
-
-### Codex
+#### Codex
 
 在仓库目录打开 Codex，输入：
 
 ```text
-/goal 使用 RSI skill，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md 中的优化任务。阅读已有实验记录和相关指导，遵守任务的资源、时间预算及结束条件，交付规定结果。
+/goal 使用 RSI skill，完成 my_docs/rsi/my-task_zh.md 中的优化任务。
 ```
 
-用 `/goal pause` 暂停目标，并要求成员停止实验与采集；用 `/goal resume` 继续。
+## 查看进展
 
-## Agent 分工
+实验报告 `report.md` 随进展更新，汇总方案对比、性能与质量结果、保留方案和待验证的问题。原始数据和详细分析可从报告中的链接查看，记录格式见[实验记录手册](experiment-records_zh.md)。
 
-主 Agent 统筹整个任务，根据已有结果选择研究方向并安排资源。它负责综合各方发现，决定保留哪些改动，并组织最终验证与交付。
+需要调整目标、预算或改动范围时，直接在会话中说明，并更新任务文件。
 
-Advisor 持续研究技术机制和优化方法，帮助团队发现新问题、反思当前方向。它既可以深入已有瓶颈，也可以探索尚未进入候选清单的新思路。
+暂停任务时，Claude Code 使用 `/goal clear`，Codex 使用 `/goal pause`，同时要求团队停止实验、采集进程和巡查提醒。Codex 可用 `/goal resume` 继续，恢复时沿用原任务和已有结果。
 
-Worker 围绕具体问题实现可以评测的代码或配置，再根据实验结果继续改进。
+## 架构与角色分工
 
-Experimenter 负责安排实验、构建和部署待测方案、运行评测并保存结果。实验结束后释放不用的资源；有卡可用时，查看哪些方案已经准备好，并向 Worker 询问缺少的版本或信息。
+任务文件表达用户要求；RSI skill 和角色说明组织 Agent 的工作；Foretoken 提供构建、部署、评测与性能剖析能力。实验结果供团队判断下一步，并写入用户报告。
 
-在任务文件中分别设置 Advisor、Worker 和 Experimenter 数量，均不包含主 Agent。需要主 Agent 自主选择某角色人数时，可留空。团队按运行环境的实际并发上限安排工作，并说明实际人数与要求人数的差异。
-
-准备实验环境时，Advisor 和 Worker 就开始读资料和源码，寻找值得尝试的方法。有些思路需要写出代码才知道能否加速，也应留出时间验证。一个版本正在测试时，Worker 可以继续研究或准备下一版本，并在结果返回后调整方案。
-
-主 Agent 决定研究顺序和预算，Experimenter 据此安排实验。卡够用时，不同实验各用一组空闲 GPU；需要同一批卡时，再安排先后顺序。一名 Experimenter 可以接收多名 Worker 的方案，也可以管理多组 GPU，同时能跑多少实验取决于实际可用资源。
-
-研究发现和实验进度保存在共享记录中。有新结果、准备好待测代码或遇到问题时，直接告诉需要处理的人，并附上记录链接。等回复时继续其他工作，需要调整方向或资源时再请主 Agent 决定。同一问题尽量由熟悉它的成员持续合作，减少反复交接。
-
-具体的派工、工作区与资源交接方式见 [RSI skill](../.agents/skills/rsi/SKILL_zh.md)。
-
-## 复用环境，持续迭代
-
-每个候选沿用固定的源码目录和实例名，供后续迭代复用。需要修改代码时，先[安装一次源码平台](../docs/deployment/source_zh.md#从源码安装)；已有发布版平台也可通过同一命令更新。只调整参数的实验可直接使用已安装的应用。
-
-| 改动内容 | 更新方式 |
+| 角色 | 主要职责 |
 | --- | --- |
-| Go、Rust、Python 应用代码 | 执行 `foretoken deploy`，用 `-e` 指定候选源码目录，复用未变化的环境和兼容的编译缓存。 |
-| 运行环境依赖或基础镜像 | 用 `-e` 从更新后的源码目录重新部署，重建受影响的环境。 |
-| 共享 CRD 或平台配置 | 在源码目录执行 `foretoken install -e .`。 |
+| 主 Agent | 选择研究方向、安排资源、处理决策并组织交付。 |
+| Advisor | 检索本地或在线资料，研究机制，提出方法和新问题。 |
+| Worker | 实现方案，分析实验结果并继续改进。 |
+| Experimenter | 准备环境、部署和运行实验、保存结果、释放资源。 |
+| Observer | 每轮以新 Agent 独立读记录，逐项检查进度、研究深度和资源使用，提出调整建议。 |
 
-每轮修改后，先部署候选并确认请求成功，再评测性能和回答质量，据此决定保留哪些改动、下一轮尝试什么。部署与评测使用同一个 `--name`；`perf`、`eval` 测量已部署的服务，不会替它更新代码。
+## 执行规则与参考资料
 
-下面以单卡快速开始示例演示更新和评测，在候选源码目录执行。用于其他任务时，替换为该任务的部署目录和评测负载：
-
-```bash
-foretoken deploy examples/quickstart/qwen3-0.6b \
-  --name candidate-a -e . --timeout 20m
-foretoken perf examples/quickstart/qwen3-0.6b \
-  --name candidate-a --num-prompts 20 --output local
-```
-
-评测结果保存在 `results/` 下。
-
-复用环境和缓存后，后续代码更新通常比首次准备更快。记录时，将首次准备耗时与每轮的构建、发布、启动和评测耗时分开。
-
-[并行候选](../docs/deployment/source_zh.md#并行运行候选方案)通过配置的存储共享模型下载，各自保留独立的运行缓存和结果。迭代间需要释放 GPU 时，暂停实例，保留配置和缓存：
-
-```bash
-foretoken stop candidate-a
-```
-
-继续时重新执行同一个部署命令。候选不再需要后，用 `foretoken delete candidate-a` 删除。
-
-负载组合确定后，可通过现有参数扫描比较候选；交付前再验证组合后的改动。选择实验和分析结果的方法见[探索与决策](guidance/meta-knowledge/03-exploration-and-decision_zh.md)。
-
-## 选择评测
-
-| 目的 | 入口 |
+| 读者与用途 | 文档入口 |
 | --- | --- |
-| 测量延迟和吞吐 | [`foretoken perf`](../benchmarks/docs/perf/README_zh.md) |
-| 评估回答质量 | [`foretoken eval`](../benchmarks/docs/eval/README_zh.md) |
-| 定位执行瓶颈 | [`foretoken perf --profile`](../benchmarks/docs/profile/README_zh.md) |
-| 比较并发、输入长度等条件 | [参数扫描与实验命令](../benchmarks/docs/recipes_zh.md) |
-
-命令选项可用 `foretoken perf --help` 和 `foretoken eval --help` 查询。
-
-## 查看结果
-
-实验报告（`report.md`）汇总各方案的性能对比、分析结论和当前采用的方案，并随实验进展更新。详细的实验过程和原始数据可通过报告中的链接查看；记录选项、结果位置和报告维护方法见[实验记录手册](experiment-records_zh.md)。
-
-更多任务见[优化任务](tasks/README_zh.md)，可复用的技术认识见[知识库](guidance/knowledge/README_zh.md)。
+| 用户：编写或调整任务 | [任务模板](templates/task-template_zh.md) · [已有任务](tasks/README_zh.md) |
+| Agent：执行流程与角色要求 | [RSI skill](../.agents/skills/rsi/SKILL_zh.md) · [团队协作](../.agents/skills/rsi/roles/common_zh.md) |
+| Agent：调研方法与技术经验 | [优化指导](guidance/README_zh.md) · [知识库](guidance/knowledge/README_zh.md) |
+| 部署执行者：更新源码与复用环境 | [源码部署](../docs/deployment/source_zh.md) |
+| 评测执行者：性能、质量与剖析 | [评测指南](../benchmarks/README_zh.md) · [实验命令](../benchmarks/docs/recipes_zh.md) |
+| 用户与 Agent：查看和维护结果 | [实验记录手册](experiment-records_zh.md) |

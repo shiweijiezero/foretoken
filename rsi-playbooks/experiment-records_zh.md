@@ -48,6 +48,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 ```text
 results/decode/parallelism/
 ├── report.md                  # Agent 维护的整体报告
+├── team/                      # Agent 维护的团队与巡查记录
+│   ├── README.md              # 任务、提醒与处理决定
+│   └── observations/          # 每轮 Observer 的独立巡查笔记
 └── iterations/tp2/
     ├── notes/
     │   ├── iteration.md       # 摘要、文档链接与决定
@@ -76,9 +79,24 @@ results/decode/parallelism/
 
 代码保留在各自负责的 checkout 或 worktree 中。方案文档注明负责人、代码所在主机与绝对路径、分支和版本，链接相关文件或已保存的 diff，并说明未提交的改动。
 
-分享发现时，把摘要和完整文件路径发给需要这些信息的人。后续消息只补充新发现、变化或问题，不必重新介绍全部背景。尚未决定的问题直接与负责人讨论，决定记回笔记，等待答复时继续其他工作。成员可自行查阅彼此的文档和代码。每份文档由一名作者维护，较长的审查意见或替代方案由提出者另写文件。
+按[团队沟通约定](../.agents/skills/rsi/roles/common_zh.md#直接交流减少等待)，简短协调直接发消息，长说明或多人需要阅读的内容放进共享文件。消息给出摘要和准确路径，后续只补充变化，不必重述全部背景。尚未决定的问题直接与负责人讨论，决定记回笔记，等待答复时继续其他工作。每份文档由一名作者维护，较长的审查意见或替代方案由提出者另写文件。
 
 研究资料、脚本、准备日志和清理记录也放在本轮 `notes/` 下，按需要组织；`plan.md`、`analysis.md` 只是文件名示例。评测命令会补建缺失的迭代笔记，保留已有内容，报告和其他文件由成员维护。原始运行产物仍保存在 `runs/`。删除被引用的工作区前，先保存所需代码并更新链接；清理时保留仍被引用的证据。
+
+## 保存团队与会话记录
+
+Observer 从任务文件和实验目录找到调研笔记、结果和资源采样，再自行查找主 Agent 与成员的会话文件，无需主 Agent 整理索引或代找文件。
+
+直接使用运行环境保存的会话文件，常见位置如下：
+
+- Claude Code：`~/.claude/projects/` 下的 JSONL，包括会话目录中的 `subagents/` 文件，见[会话记录说明](https://code.claude.com/docs/en/sub-agents#resume-subagents)。
+- Codex：`$CODEX_HOME/sessions/` 下的 rollout JSONL；`CODEX_HOME` 默认是 `~/.codex`，见[状态目录说明](https://learn.chatgpt.com/docs/config-file/config-advanced#config-and-state-locations)。
+
+具体路径随配置和版本变化。Observer 根据工作目录、时间、session ID 和父子关系识别本任务的文件，将实际路径记入巡查笔记。
+
+优先读原文件，也可使用运行环境的只读接口或导出，并注明来源。摘要或部分内容要标明，不能当作完整会话。只检查本任务的记录，保留原文件，远端访问沿用任务已有信息，不向成员询问或要求复述。
+
+主 Agent 在 `<output-dir>/team/README.md` 记录任务链接、巡查间隔、下次时间和提醒标识。Observer 在 `team/observations/` 下保存带日期的笔记，按[清单](../.agents/skills/rsi/roles/observer_zh.md#按清单逐项检查)逐项报告，保留通过、不适用和待核实的项目。主 Agent 链接笔记，记录行动、负责人或不采纳的原因，供下轮核查。直接链接已有任务记录，不另建队列；整体报告可单独链接团队笔记，不与性能测量混写。
 
 ## 分析结果
 

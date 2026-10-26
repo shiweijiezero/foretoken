@@ -115,4 +115,4 @@ This exports the first-token latency distribution and an output-throughput summa
 
 To select a saved timing summary, use `--metric ttft --stat p95` or `--metric latency --stat mean`. Timing statistics for latency, TTFT, TPOT, and ITL must exist in the saved results. Saved scalar keys such as `ttft_p95_seconds` can also be selected directly.
 
-Add `--sync_wandb` to upload saved results and single-run figures to their original W&B runs. Cross-run comparison figures remain local. See [W&B result uploads](perf/wandb.md#resume-an-upload) for recovery and publication behavior.
+Add `--sync_wandb` to upload saved results and their figures to the original W&B runs, including a sweep's aggregate figures. Comparisons across independent result directories remain local. See [W&B result uploads](perf/wandb.md#resume-an-upload) for recovery and publication behavior.
