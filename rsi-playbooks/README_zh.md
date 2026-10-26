@@ -53,9 +53,9 @@ Experimenter 负责安排实验、构建和部署待测方案、运行评测并�
 
 [Observer](../.agents/skills/rsi/roles/observer_zh.md) 定期检查整个团队怎样工作：各角色是否在履行职责，资源是否用好，研究是否长期停留在准备环境或浅层调参。每轮都创建不继承对话历史的新 Agent，由它阅读工作记录和会话文件，按清单逐项查证并报告结果，再向主 Agent 提出调整建议，不向其他成员询问状态。
 
-在 task 中分别设置 Advisor、Worker、Experimenter 和 Observer 数量，都不包含主 Agent。前三项留空时由主 Agent 安排；Observer 数量指每轮新建的巡查 Agent 数，默认 1，设为 0 则关闭。巡查间隔也写在 task 中，例如 `Observer 巡查间隔：1h`，主 Agent 按此安排提醒和每轮创建。所有角色共用运行环境的实际并发名额，无法满足要求时记录实际安排和原因。
+在[任务文件](templates/task-template_zh.md)中设置各类子 Agent 的数量和 Observer 巡查间隔。
 
-研发和环境准备并行：Experimenter 准备环境，Advisor 查找和分析资料，Worker 继续实现方案及可做的本地验证。环境未就绪时，优先推进不依赖它的实现和探索，不等完整基线才动手。环境就绪后完成运行验证；测试期间仍可准备下一版本，再根据结果调整。
+环境准备与研发并行，未就绪时继续能做的实现和探索。
 
 主 Agent 决定研究顺序和预算，Experimenter 据此安排实验。卡够用时，不同实验各用一组空闲 GPU；需要同一批卡时，再安排先后顺序。一名 Experimenter 可以接收多名 Worker 的方案，也可以管理多组 GPU，同时能跑多少实验取决于实际可用资源。
 

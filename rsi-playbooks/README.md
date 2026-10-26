@@ -53,9 +53,9 @@ Experimenters schedule experiments, build and deploy approaches, run evaluations
 
 [Observers](../.agents/skills/rsi/roles/observer.md) periodically check how the whole team is working: whether roles are being fulfilled, resources are used well, and research is moving beyond repeated setup or shallow tuning. Each round uses new agents without inherited conversation history. They read work and session files, verify and report each checklist item, then send the lead suggested changes without asking other members for updates.
 
-Set Advisor, Worker, Experimenter and Observer counts separately in the task file; none includes the lead. Leave one of the first three counts blank when the lead should choose it. Observer count is the number of new agents per check and defaults to 1; set it to 0 to disable checks. Set the interval in the task too, for example `Observer check interval: 1h`. The lead uses that interval to arrange reminders and create each round. All roles share the harness's actual concurrency limit, and differences from requested staffing are recorded.
+Set subagent counts and the Observer check interval in the [task file](templates/task-template.md).
 
-Research and implementation run alongside setup: the Experimenter prepares the environment, Advisors find and analyze sources, and Workers implement approaches and run available local checks. Prioritize work that does not need the environment rather than waiting for setup or a complete baseline. Complete runtime validation once ready; development of the next version can continue during evaluation and adapt to its results.
+Prepare the environment alongside research and development, continuing implementation and exploration that do not depend on setup.
 
 The lead sets research priorities and budgets, and Experimenters arrange the runs. When enough GPUs are available, give each experiment its own group. Arrange an order only when experiments need the same devices. One Experimenter can test approaches from several Workers and manage several GPU groups; available resources determine how many experiments can run at once.
 
