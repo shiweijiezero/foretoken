@@ -11,7 +11,7 @@ The milestone chart follows measured cumulative versions. The search chart shows
 
 ## Create the charts
 
-Use the Python environment installed for Foretoken, which includes Matplotlib and PyYAML. Chinese labels need an installed Chinese font, such as Noto Sans CJK SC. From the repository root:
+Use the installed Foretoken CLI. Chinese labels need an installed Chinese font, such as Noto Sans CJK SC. From the repository root:
 
 ```bash
 mkdir -p results/my-experiment/figures
@@ -21,12 +21,12 @@ cp rsi-playbooks/templates/progress-template.yaml results/my-experiment/figures/
 In `progress.yaml`, fill in the title, comparison conditions and update time, then add the baseline and measurements as described below. Leave `baseline.value: null` until the baseline is measured. Generate the charts:
 
 ```bash
-python3 rsi-playbooks/scripts/plot_progress.py results/my-experiment/figures/progress.yaml
+foretoken plot --progress results/my-experiment/figures/progress*.yaml
 ```
 
-The command writes `progress-milestones.png`, `progress-search.png` and their SVG versions beside the YAML file. An unmeasured baseline produces pending-measurement charts. Insert the PNGs after the report's results tables using the [report template](report-template.md).
+The command exports milestone and search charts as PNG, SVG and PDF, with names such as `progress-milestones.png` and `progress-search.png`. An unmeasured baseline produces pending-measurement charts. Insert the PNGs after the report's results tables using the [report template](report-template.md).
 
-Use a separate file for each metric and comparison condition, such as `progress-c1-throughput.yaml` and `progress-c16-latency.yaml`. Pass multiple files to the same command; each output name uses its input's filename stem. For a style preview, copy the [synthetic example](progress-example.yaml) to a temporary directory and render that copy.
+Use a separate file for each metric and comparison condition, such as `progress-c1-throughput.yaml` and `progress-c16-latency.yaml`. Export all of the report's conditions together: each invocation replaces the previous chart files in its output directory. Inputs in one directory default to that directory; inputs from different directories default to `./plots`. Use `--output-dir` to choose another destination. Each output name uses its input's filename stem. For a style preview, copy the [synthetic example](progress-example.yaml) to a temporary directory and render that copy.
 
 ## Record the results
 

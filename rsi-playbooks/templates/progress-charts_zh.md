@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 首次生成
 
-使用已安装 Foretoken 的 Python 环境，其中包含 Matplotlib 和 PyYAML。中文标注需要已安装中文字体，例如 Noto Sans CJK SC。在仓库根目录执行：
+使用已安装的 Foretoken CLI。中文标注需要已安装中文字体，例如 Noto Sans CJK SC。在仓库根目录执行：
 
 ```bash
 mkdir -p results/my-experiment/figures
@@ -21,12 +21,12 @@ cp rsi-playbooks/templates/progress-template.yaml results/my-experiment/figures/
 在 `progress.yaml` 中填写标题、对照条件和更新时间，再按下文填入基线和测量结果。基线尚未测得时，保留 `baseline.value: null`。然后生成图片：
 
 ```bash
-python3 rsi-playbooks/scripts/plot_progress.py results/my-experiment/figures/progress.yaml
+foretoken plot --progress results/my-experiment/figures/progress*.yaml
 ```
 
-命令在 YAML 旁生成 `progress-milestones.png`、`progress-search.png` 及其 SVG 版本。基线尚未测得时生成待测图片。按[报告模板](report-template_zh.md)将 PNG 放在结果汇总表之后。
+命令以 PNG、SVG 和 PDF 导出里程碑图与搜索图，例如 `progress-milestones.png` 和 `progress-search.png`。基线尚未测得时生成待测图片。按[报告模板](report-template_zh.md)将 PNG 放在结果汇总表之后。
 
-每个指标和每组对照条件分别使用独立文件，例如 `progress-c1-throughput.yaml` 和 `progress-c16-latency.yaml`。同一命令可传入多个文件，输出名沿用各输入文件去掉扩展名后的名称。预览样式时，将[虚构数据示例](progress-example.yaml)复制到临时目录，再对副本执行绘图命令。
+每个指标和每组对照条件分别使用独立文件，例如 `progress-c1-throughput.yaml` 和 `progress-c16-latency.yaml`。一次导出本报告的所有条件：每次命令会替换输出目录中上次导出的图表文件。输入均在同一目录时默认输出到该目录，来自不同目录时默认输出到 `./plots`；用 `--output-dir` 指定其他位置。输出名沿用各输入文件去掉扩展名后的名称。预览样式时，将[虚构数据示例](progress-example.yaml)复制到临时目录，再对副本执行绘图命令。
 
 ## 填入结果
 

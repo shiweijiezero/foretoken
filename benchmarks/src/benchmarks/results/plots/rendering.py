@@ -63,7 +63,7 @@ class FigureWriter:
             )
         return path
 
-    def figure(self, figure: Any, name: str) -> None:
+    def figure(self, figure: Any, name: str, *, description: str | None = None) -> None:
         """Register each figure format before writing it and release its canvas after export."""
         from matplotlib import rc_context
 
@@ -72,7 +72,10 @@ class FigureWriter:
                 for extension in _FORMATS:
                     path = self.directory / f"{name}.{extension}"
                     self.files[path.name] = path
-                    figure.savefig(path, dpi=220, facecolor="white")
+                    metadata = None if description is None else {
+                        "Subject" if extension == "pdf" else "Description": description,
+                    }
+                    figure.savefig(path, dpi=220, facecolor="white", metadata=metadata)
         finally:
             figure.clear()
 

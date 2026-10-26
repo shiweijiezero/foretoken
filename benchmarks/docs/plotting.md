@@ -90,6 +90,16 @@ For each method and fixed workload, this selects the measured point with the hig
 
 Financial estimates require input, output, and cached-input usage for every successful request, plus a GPU count. Missing cache usage stays unavailable. The bars show compute cost, positive profit or loss, and total revenue; the CSV records each point's eligibility and selection status.
 
+## Plot RSI progress
+
+Export all conditions in a report's chart data together:
+
+```bash
+foretoken plot --progress results/my-experiment/figures/progress*.yaml
+```
+
+This exports milestone and search charts as PNG, SVG and PDF. When the YAML files share a directory, output defaults to that directory; otherwise it defaults to `./plots`. Use `--output-dir` to select a destination. Each invocation replaces the previously exported chart files in that directory. See the [RSI chart template guide](../../rsi-playbooks/templates/progress-charts.md) to prepare and maintain the data.
+
 ## Read and export results
 
 | Output | Contents |

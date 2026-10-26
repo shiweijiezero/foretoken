@@ -45,6 +45,7 @@ class PlotOptions:
     interactivity_metric: str
     gpu_count: int | None
     sync_wandb: bool
+    progress: bool
 
 
 def decode_interactivity_percentile(metric: str) -> float | None:
@@ -66,17 +67,19 @@ def decode_interactivity_percentile(metric: str) -> float | None:
 
 
 def parse_plot_arguments(argv: Sequence[str] | None = None) -> PlotOptions:
-    """Parse figure choices and require the inputs used by optional financial charts."""
+    """Select saved results or report progress data and validate their applicable options."""
     parser = argparse.ArgumentParser(
         prog="foretoken plot",
-        description="Export PDF, SVG, PNG, and CSV from saved benchmark results.",
+        description="Export figures and tables from saved benchmark results or report progress data.",
     )
-    parser.add_argument("sources", type=Path, nargs="+", metavar="RESULT_DIR",
+    parser.add_argument("sources", type=Path, nargs="*", metavar="RESULT_DIR",
                         help="Result directories or folders containing saved results")
+    parser.add_argument("--progress", type=Path, nargs="+", action="extend", default=[], metavar="YAML",
+                        help="Render report milestone and search-history figures from progress data instead")
     parser.add_argument("--output-dir", type=Path,
-                        help="Figure directory (default: ./plots for comparisons, RESULT_DIR/plots otherwise)")
-    parser.add_argument("--columns", type=int, choices=(1, 2), default=1,
-                        help="Paper column width (default: 1)")
+                        help="Figure directory (default: RESULT_DIR/plots; beside progress files; ./plots for comparisons)")
+    parser.add_argument("--columns", type=int, choices=(1, 2),
+                        help="Saved-result paper column width (default: 1)")
     parser.add_argument("--metric", action="extend", nargs="+", default=[],
                         help="Request-level or run-summary metrics to plot")
     parser.add_argument("--method", action="extend", nargs="+", default=[],
@@ -105,6 +108,16 @@ def parse_plot_arguments(argv: Sequence[str] | None = None) -> PlotOptions:
     parser.add_argument("--sync_wandb", action="store_true",
                         help="Also synchronize saved results and per-run figures to their original W&B runs")
     args = parser.parse_args(argv)
+    if bool(args.sources) == bool(args.progress):
+        parser.error("provide result directories or --progress YAML files, but not both")
+    selected = any((args.x_metric, args.y_metric, args.sweep_axis, args.label_by,
+                    args.label_values, args.compare_axis, args.frontier))
+    if args.progress and (
+        selected or args.columns is not None or args.metric or args.method or args.base
+        or args.pricing or args.min_interactivity is not None or args.interactivity_metric is not None
+        or args.gpu_count is not None or args.sync_wandb
+    ):
+        parser.error("--progress accepts --output-dir; metric, baseline and comparison settings come from the YAML files")
     interactivity_metric = DEFAULT_INTERACTIVITY_METRIC if args.interactivity_metric is None else args.interactivity_metric
     try:
         for metric in (*args.metric, args.x_metric, args.y_metric):
@@ -123,8 +136,6 @@ def parse_plot_arguments(argv: Sequence[str] | None = None) -> PlotOptions:
         parser.error("--gpu-count must be a positive integer")
     if args.compare_axis is not None and args.base is None:
         parser.error("--compare-axis requires --base")
-    selected = any((args.x_metric, args.y_metric, args.sweep_axis, args.label_by,
-                    args.label_values, args.compare_axis, args.frontier))
     tradeoff = TradeoffOptions(
         x_metric=args.x_metric or axes.x_metric,
         y_metric=args.y_metric or axes.y_metric,
@@ -135,9 +146,9 @@ def parse_plot_arguments(argv: Sequence[str] | None = None) -> PlotOptions:
         frontier=args.frontier or ("none" if args.x_metric or args.y_metric else axes.frontier),
     ) if selected else None
     return PlotOptions(
-        sources=tuple(args.sources), output_dir=args.output_dir, columns=args.columns,
+        sources=tuple(args.progress or args.sources), output_dir=args.output_dir, columns=args.columns or 1,
         metrics=tuple(args.metric), methods=tuple(args.method), base=args.base,
         tradeoff=tradeoff, pricing=args.pricing, min_interactivity=args.min_interactivity,
         interactivity_metric=interactivity_metric,
-        gpu_count=args.gpu_count, sync_wandb=args.sync_wandb,
+        gpu_count=args.gpu_count, sync_wandb=args.sync_wandb, progress=bool(args.progress),
     )

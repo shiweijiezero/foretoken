@@ -51,6 +51,7 @@ def render_results(
     min_interactivity: float | None = None,
     interactivity_metric: str = DEFAULT_INTERACTIVITY_METRIC,
     gpu_count: int | None = None,
+    progress: bool = False,
 ) -> FigureExport:
     """Export saved measurements under the same directory lock used by W&B publication.
 
@@ -61,10 +62,26 @@ def render_results(
     if columns not in (1, 2):
         raise ValueError("columns must be 1 or 2")
     sources = (Path(source), *map(Path, others))
-    for selected in (*sources, *((base,) if base is not None else ())):
-        if not selected.is_dir():
-            raise NotADirectoryError(f"Result directory does not exist: {selected}")
-    out = (Path(output_dir) if output_dir is not None else default_output_directory(*sources, base=base)).resolve()
+    if progress:
+        if (
+            columns != 1 or metrics or methods or base is not None or tradeoff is not None
+            or pricing_path is not None or min_interactivity is not None or gpu_count is not None
+            or interactivity_metric != DEFAULT_INTERACTIVITY_METRIC
+        ):
+            raise ValueError("Progress export accepts sources and output_dir; plot settings come from the YAML files")
+        from benchmarks.results.plots.progress import load_progress, render_progress
+
+        sources = tuple(dict.fromkeys(path.resolve() for path in sources))
+        if len({path.stem for path in sources}) != len(sources):
+            raise ValueError("Progress data files need distinct names when exported together")
+        progress_data = [(path, load_progress(path)) for path in sources]
+    else:
+        for selected in (*sources, *((base,) if base is not None else ())):
+            if not selected.is_dir():
+                raise NotADirectoryError(f"Result directory does not exist: {selected}")
+    out = (Path(output_dir) if output_dir is not None else default_output_directory(
+        *sources, base=base, progress=progress,
+    )).resolve()
     pricing = load_pricing(pricing_path) if pricing_path is not None else None
     out.mkdir(parents=True, exist_ok=True)
     with publication_lock(out, scope="plots"):
@@ -74,12 +91,17 @@ def render_results(
         _record_export(manifest, previous, None)
         writer = FigureWriter(out)
         try:
-            owner = _render_results(
-                sources, writer, columns=columns, metrics=metrics, methods=methods, base=base,
-                tradeoff=tradeoff, pricing=pricing, min_interactivity=min_interactivity,
-                interactivity_metric=interactivity_metric,
-                gpu_count=gpu_count,
-            )
+            if progress:
+                for path, data in progress_data:
+                    render_progress(data, path, writer)
+                owner = None
+            else:
+                owner = _render_results(
+                    sources, writer, columns=columns, metrics=metrics, methods=methods, base=base,
+                    tradeoff=tradeoff, pricing=pricing, min_interactivity=min_interactivity,
+                    interactivity_metric=interactivity_metric,
+                    gpu_count=gpu_count,
+                )
             for filename in previous - writer.files.keys():
                 if Path(filename).name == filename:
                     (out / filename).unlink(missing_ok=True)
@@ -93,8 +115,13 @@ def render_results(
     return FigureExport(writer.files, owner)
 
 
-def default_output_directory(source: Path, *others: Path, base: Path | None = None) -> Path:
+def default_output_directory(
+    source: Path, *others: Path, base: Path | None = None, progress: bool = False,
+) -> Path:
     """Choose the shared default for the standalone CLI and automatic result exporter."""
+    if progress:
+        parents = {Path(path).resolve().parent for path in (source, *others)}
+        return parents.pop() if len(parents) == 1 else Path("plots")
     return Path("plots") if others or base is not None else Path(source) / "plots"
 
 

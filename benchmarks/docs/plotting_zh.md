@@ -90,6 +90,16 @@ foretoken plot results/baseline results/candidate \
 
 收益估算需要所有成功请求的输入、输出和缓存输入用量，以及 GPU 数量。缺失的缓存用量保持不可用。柱状图表示算力成本、盈利或亏损，并标出总收入；CSV 保留每个点的条件满足情况和选择状态。
 
+## 绘制 RSI 进展
+
+一次导出报告中所有条件的绘图数据：
+
+```bash
+foretoken plot --progress results/my-experiment/figures/progress*.yaml
+```
+
+命令以 PNG、SVG 和 PDF 导出里程碑图与搜索图。YAML 文件都在同一目录时默认输出到该目录，否则输出到 `./plots`；用 `--output-dir` 指定位置。每次命令会替换该目录中上次导出的图表文件。数据准备与维护见 [RSI 图表模板指南](../../rsi-playbooks/templates/progress-charts_zh.md)。
+
 ## 阅读与导出结果
 
 | 输出 | 内容 |

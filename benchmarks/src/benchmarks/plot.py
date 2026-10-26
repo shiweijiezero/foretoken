@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Export saved benchmark results without connecting to a model service."""
+"""Export saved benchmark results and report progress through one offline command."""
 
 from __future__ import annotations
 
@@ -21,7 +21,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     from benchmarks.results.plots.export import default_output_directory, render_results
 
     configure_logging()
-    output = (options.output_dir or default_output_directory(*options.sources, base=options.base)).resolve()
+    output = (options.output_dir or default_output_directory(
+        *options.sources, base=options.base, progress=options.progress,
+    )).resolve()
     sources = []
     errors = []
     owner = None
@@ -53,6 +55,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 min_interactivity=options.min_interactivity,
                 interactivity_metric=options.interactivity_metric,
                 gpu_count=options.gpu_count,
+                progress=options.progress,
             )
             owner = artifacts.source
         print(f"Exported {len(artifacts.files)} files to {output}")
