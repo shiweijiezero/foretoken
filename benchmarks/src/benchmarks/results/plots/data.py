@@ -13,6 +13,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from benchmarks.config.plot import decode_interactivity_percentile
 from benchmarks.results.measurements.sweeps import _scalar_metrics, summarize_sweep
 
 
@@ -358,6 +359,10 @@ def _sweep_series(
 
 def _metric_display(metric: str) -> tuple[int, str]:
     """Resolve the existing measured-to-display scale and unit label for one sweep metric."""
+    percentile = decode_interactivity_percentile(metric)
+    if percentile is not None:
+        label = str(percentile).removesuffix(".0")
+        return 1, f"TPOT-based P{label} decode speed (tokens/s/user)"
     milliseconds = (
         metric.startswith(("tpot_", "itl_")) and metric.endswith("_seconds")
         or metric in {"speculative_decoding_draft_mean_seconds", "speculative_decoding_target_forward_mean_seconds"}
@@ -382,7 +387,6 @@ def _metric_display(metric: str) -> tuple[int, str]:
             "generation_tokens_per_second": "Output throughput (tokens/s)",
             "generation_tokens_per_second_per_user": "Output throughput per user (tokens/s/user)",
             "generation_tokens_per_second_per_gpu": "Output throughput per GPU (tokens/s/GPU)",
-            "decode_interactivity_p90": "TPOT-based P90 decode speed (tokens/s/user)",
             "total_tokens_per_second_per_gpu": "Total token throughput per GPU (tokens/s/GPU)",
             "cached_prompt_tokens_per_second_per_gpu": "Cached input throughput per GPU (tokens/s/GPU)",
             "uncached_prompt_tokens_per_second_per_gpu": "Uncached input throughput per GPU (tokens/s/GPU)",

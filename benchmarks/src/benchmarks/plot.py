@@ -51,6 +51,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 tradeoff=options.tradeoff,
                 pricing_path=options.pricing,
                 min_interactivity=options.min_interactivity,
+                interactivity_metric=options.interactivity_metric,
                 gpu_count=options.gpu_count,
             )
             owner = artifacts.source

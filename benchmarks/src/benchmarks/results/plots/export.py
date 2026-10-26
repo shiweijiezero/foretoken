@@ -13,7 +13,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from benchmarks.config.plot import TradeoffOptions
+from benchmarks.config.plot import DEFAULT_INTERACTIVITY_METRIC, TradeoffOptions
 from benchmarks.results.plots.charts.http import _http_charts
 from benchmarks.results.plots.charts.phases import phase_summary_charts
 from benchmarks.results.plots.charts.resources import _prometheus_charts, gpu_allocation_charts
@@ -21,7 +21,7 @@ from benchmarks.results.plots.charts.video import _video_phase_charts
 from benchmarks.results.plots.comparison import compare_to_base
 from benchmarks.results.plots.data import Chart, _method, sweep_charts
 from benchmarks.results.plots.economics import PRICED_TOKEN_METRICS, Pricing, load_pricing, render_economics
-from benchmarks.results.plots.metrics import DERIVED_PLOT_METRICS
+from benchmarks.results.plots.metrics import derived_plot_metrics
 from benchmarks.results.plots.rendering import FigureWriter, _charts
 from benchmarks.results.plots.saved_results import SavedResults, read_saved_results
 from benchmarks.results.plots.tradeoffs import render_tradeoffs
@@ -49,6 +49,7 @@ def render_results(
     tradeoff: TradeoffOptions | None = None,
     pricing_path: Path | None = None,
     min_interactivity: float | None = None,
+    interactivity_metric: str = DEFAULT_INTERACTIVITY_METRIC,
     gpu_count: int | None = None,
 ) -> FigureExport:
     """Export saved measurements under the same directory lock used by W&B publication.
@@ -76,6 +77,7 @@ def render_results(
             owner = _render_results(
                 sources, writer, columns=columns, metrics=metrics, methods=methods, base=base,
                 tradeoff=tradeoff, pricing=pricing, min_interactivity=min_interactivity,
+                interactivity_metric=interactivity_metric,
                 gpu_count=gpu_count,
             )
             for filename in previous - writer.files.keys():
@@ -108,7 +110,7 @@ def _render_results(
     sources: tuple[Path, ...], writer: FigureWriter, *, columns: int,
     metrics: tuple[str, ...], methods: tuple[str, ...], base: Path | None,
     tradeoff: TradeoffOptions | None, pricing: Pricing | None,
-    min_interactivity: float | None, gpu_count: int | None,
+    min_interactivity: float | None, interactivity_metric: str, gpu_count: int | None,
 ) -> Path | None:
     """Resolve one set of identities and statistics before selecting any chart family."""
     selected_metrics = set(metrics)
@@ -118,8 +120,8 @@ def _render_results(
     if pricing is not None:
         selected_metrics.update(PRICED_TOKEN_METRICS)
         if min_interactivity is not None:
-            selected_metrics.add("decode_interactivity_p90")
-    derived = selected_metrics & DERIVED_PLOT_METRICS
+            selected_metrics.add(interactivity_metric)
+    derived = derived_plot_metrics(selected_metrics)
     results = read_saved_results(
         sources, methods=methods, base=base, derive_metrics=bool(derived) or gpu_count is not None,
         derived_metrics=derived, gpu_count=gpu_count, pricing=pricing,
@@ -143,7 +145,7 @@ def _render_results(
     if single_run and not native and results.runs[0].get("result") is not None:
         native = _single_run_charts(Path(results.runs[0]["result"]))
     _render_views(results, native, writer, columns, metrics, base, tradeoff, pricing,
-                  min_interactivity, single_run=single_run)
+                  min_interactivity, interactivity_metric, single_run=single_run)
     if owner is not None:
         selected_methods = {method for run in results.runs for method in run.get("methods", ())}
         _native_tables(owner, writer, selected_methods)
@@ -154,6 +156,7 @@ def _render_views(
     results: SavedResults, native: list[Chart], writer: FigureWriter,
     columns: int, metrics: tuple[str, ...], base: Path | None,
     tradeoff: TradeoffOptions | None, pricing: Pricing | None, min_interactivity: float | None,
+    interactivity_metric: str,
     *, single_run: bool,
 ) -> None:
     """Apply metric selection consistently to native charts and run-level scalar summaries."""
@@ -173,7 +176,8 @@ def _render_views(
                          base_methods=results.base_approaches)
     if pricing is not None:
         render_economics(points, summary, writer, pricing,
-                         min_interactivity=min_interactivity, columns=columns)
+                         min_interactivity=min_interactivity, interactivity_metric=interactivity_metric,
+                         columns=columns)
     identities = list(dict.fromkeys(_method(point) for point in points))
     _charts(charts, writer, identities, columns)
     run_rows = [{key: value for key, value in row.items() if key != "environment_settings"}
