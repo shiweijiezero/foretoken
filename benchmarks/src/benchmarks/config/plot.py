@@ -55,7 +55,7 @@ def parse_plot_arguments(argv: Sequence[str] | None = None) -> PlotOptions:
     parser.add_argument("--columns", type=int, choices=(1, 2), default=1,
                         help="Paper column width (default: 1)")
     parser.add_argument("--metric", action="extend", nargs="+", default=[],
-                        help="Metrics to include in ordinary sweep and comparison figures")
+                        help="Request-level or run-summary metrics to plot")
     parser.add_argument("--method", action="extend", nargs="+", default=[],
                         help="Named methods to include")
     parser.add_argument("--base", type=Path, metavar="RESULT_DIR",
