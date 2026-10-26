@@ -55,7 +55,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 遵循仓库的[部署与迭代要求](../../../AGENTS.md#deployment-and-iteration)，优先复用已有兼容镜像和准备好的环境（可大幅缩短部署所需时间）。只调整参数时，复用已安装的应用；修改代码时，沿用已有源码平台，缺少时再准备一次，涉及共享平台更新则与管理员协调。首次准备解决模型与数据集访问。
 
-日常 Go、Rust、Python 改动通过 `deploy -e` 指定候选源码目录，增量更新。按[迭代流程](../../../rsi-playbooks/README_zh.md#复用环境持续迭代)和[并行源码部署](../../../docs/deployment/source_zh.md#并行运行候选方案)共享镜像引用，各候选的代码与可写构建状态保持独立。部署与评测使用同一个实例名。
+日常 Go、Rust、Python 改动按[源码部署流程](../../../docs/deployment/source_zh.md#部署模型服务)，通过 `deploy -e` 指定候选源码目录，增量更新。[并行候选](../../../docs/deployment/source_zh.md#并行运行候选方案)共享镜像引用，各自保留代码与可写构建状态。部署与评测使用同一个实例名；`perf` 和 `eval` 测量已部署服务，代码改动先通过部署生效，再进行评测。
 
 各候选选择同一个共享[数据目录](../../../docs/features/model-storage_zh.md)复用模型下载，运行缓存和结果分别保存。使用 `foretoken stop` 释放空闲的服务资源，保留可复用的配置和模型引用。候选不再需要时再用 `foretoken delete` 删除；托管模型版本在最后一个引用释放后可能被回收。
 

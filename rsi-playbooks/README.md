@@ -2,109 +2,87 @@
 
 English | [简体中文](README_zh.md)
 
-Recursive self-improvement (RSI) uses agents to investigate and improve inference systems: research an approach, change code or configuration, deploy it, measure its effects, and use the results to guide further work. Foretoken provides the deployment, evaluation, and profiling tools for this cycle. Task files define the model, resources, budget, and deliverables; the [guidance library](guidance/README.md) provides research methods and findings from earlier work.
+Recursive self-improvement (RSI) uses agents to research, implement and validate inference optimizations. Users define goals and boundaries in a task file. The team uses Foretoken to deploy, evaluate and profile approaches, then uses the results to guide further work.
 
 ## Start an optimization task
 
-Install and sign in to Claude Code or Codex, then get the repository's tasks and examples:
+### 1. Prepare the repository and task file
+
+Install and sign in to Claude Code or Codex, then start the task in a Foretoken checkout. If you do not have one:
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 ```
 
-The examples below use the [Qwen3.5-35B-A3B optimization task](tasks/qwen3.5-35b-a3b.md). Check that its required resources are available before starting. For your own task, use the [task template](templates/task-template.md) and replace the file path in the prompt.
+Use the [Qwen3.5-35B-A3B task](tasks/qwen3.5-35b-a3b.md) or [task template](templates/task-template.md) to write your task file, for example `my_docs/rsi/my-task.md`. The `my_docs/` directory is ignored by Git and can hold local tasks.
 
-### Claude Code
+### 2. Set the task requirements
 
-Start an interactive session with Agent Teams enabled:
+Confirm the following settings. Leave choices to the agents where you do not need a restriction; the task template explains how to fill them in.
+
+| Setting | What to specify |
+| --- | --- |
+| Model and objective | Which model to optimize and whether throughput, latency or another metric matters most. |
+| Available resources | Nodes or clusters the task may access, and the GPU, CPU and memory available for all experiments. |
+| Final deployment budget | Resources allowed for the final service, separate from the total experiment resources. |
+| Evaluation and constraints | Workloads, concurrency, precision, quality requirements and the code or configuration that may change. |
+| Time and delivery | Duration or completion conditions, prior experiments, and where to save reports and results. |
+| Agent settings | Concurrent Advisor, Worker and Experimenter counts; Observers per check and the check interval. |
+
+For an ordinary task, edit the task file. The RSI skill, role instructions and research guidance define the shared workflow and change when that workflow is maintained.
+
+### 3. Start the agents
+
+The commands below use the task file prepared above. Replace the path if you chose another filename.
+
+#### Claude Code
 
 ```bash
 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 ```
 
-Enter:
+Enter in the session:
 
 ```text
-/goal Use the RSI skill and an Agent Team to complete rsi-playbooks/tasks/qwen3.5-35b-a3b.md. Read prior experiment records and relevant guidance, follow the task's resources, time budget and end conditions, and deliver the required results.
+/goal Use the RSI skill and an Agent Team to complete my_docs/rsi/my-task.md.
 ```
 
-To pause, use `/goal clear` to end automatic continuation and ask the team to stop this task's experiments and collectors.
-
-### Codex
+#### Codex
 
 Open Codex in the repository and enter:
 
 ```text
-/goal Use the RSI skill to complete rsi-playbooks/tasks/qwen3.5-35b-a3b.md. Read prior experiment records and relevant guidance, follow the task's resources, time budget and end conditions, and deliver the required results.
+/goal Use the RSI skill to complete my_docs/rsi/my-task.md.
 ```
 
-Use `/goal pause` to pause the goal and ask members to stop experiments and collectors. Use `/goal resume` to continue.
+## During the run: what users should watch
 
-## Agent roles
+The agents prepare the environment, research approaches and run experiments while users review results and adjust goals. To change objectives, budgets or the allowed scope, state the change in the conversation and update the task file.
 
-The lead coordinates the task, choosing research directions and allocating resources from the evidence available. It combines the team's findings, decides which changes to retain, and organizes final validation and delivery.
+The running `report.md` compares approaches, records performance and quality, and identifies the retained approach and unfinished validation. Follow its links for raw data and detailed analysis. See the [experiment records guide](experiment-records.md) for locations and formats.
 
-Advisors continually investigate mechanisms and optimization methods, uncover new questions and reassess the current direction. Their research can deepen an existing investigation or explore ideas beyond the current candidate list.
+When pausing, also ask the team to stop this task's experiments, collectors and check reminders. In Claude Code, use `/goal clear`. In Codex, use `/goal pause` and later `/goal resume`. Resume with the original task and results.
 
-Workers turn specific questions into code or configuration changes that can be evaluated, then improve them using the results.
+## Architecture and roles
 
-Experimenters schedule experiments, build and deploy approaches, run evaluations and save results. They release unused resources afterward. When GPUs are available, they check which approaches are ready and ask Workers for missing versions or information.
+The task file expresses user requirements. The RSI skill and role instructions organize agent work. Foretoken provides builds, deployment, evaluation and profiling. Results inform the team's next step and the user-facing report.
 
-[Observers](../.agents/skills/rsi/roles/observer.md) periodically check team progress, research depth and resource use, then suggest adjustments to the lead. Each round uses new agents that independently read work and session records and follow an itemized checklist.
-
-Set subagent counts and the Observer check interval in the [task file](templates/task-template.md).
-
-See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace isolation and resource handoffs.
-
-## Reuse the environment across iterations
-
-Keep each candidate's source directory and instance name across iterations. For code experiments, [install the source platform](../docs/deployment/source.md#install-from-source) once; the same command can update an existing published platform. Parameter-only experiments can use the applications already installed.
-
-| What changed? | How to update |
+| Role | Main responsibility |
 | --- | --- |
-| Go, Rust or Python application code | Run `foretoken deploy` with `-e` pointing to the candidate's source directory. Unchanged environments and compatible build caches are reused. |
-| Runtime dependencies or the base image | Redeploy with `-e` from the updated source directory to rebuild the affected environment. |
-| Shared CRDs or platform configuration | Run `foretoken install -e .` from the source directory. |
+| Lead | Choose research directions, allocate resources, make decisions and organize delivery. |
+| Advisor | Search local or online sources, study mechanisms, and propose methods and questions. |
+| Worker | Implement approaches, analyze results and improve the code or configuration. |
+| Experimenter | Prepare environments, deploy and run experiments, save results and release resources. |
+| Observer | Use a new agent each round to read records independently, check progress, research depth and resource use item by item, and suggest adjustments. |
 
-After each change, deploy the candidate, confirm a successful request, then measure performance and answer quality. Use the same `--name` for deployment and evaluation: `perf` and `eval` measure the deployed service without updating its code. Use the results to decide what to retain or try next.
+## Execution rules and references
 
-For example, run these commands from the candidate checkout to update and measure the single-GPU Quick Start. For another task, use its deployment directory and benchmark workload:
-
-```bash
-foretoken deploy examples/quickstart/qwen3-0.6b \
-  --name candidate-a -e . --timeout 20m
-foretoken perf examples/quickstart/qwen3-0.6b \
-  --name candidate-a --num-prompts 20 --output local
-```
-
-The benchmark saves results under `results/`.
-
-Environment and cache reuse usually make later code updates faster than initial setup. Record setup time separately from each iteration's build, publication, startup and measurement time.
-
-For [parallel candidates](../docs/deployment/source.md#run-candidates-in-parallel), share model downloads through the configured storage and keep runtime caches and results separate. To release GPUs between iterations while retaining the instance and its caches:
-
-```bash
-foretoken stop candidate-a
-```
-
-Resume with the same deployment command. When the candidate is no longer needed, remove it with `foretoken delete candidate-a`.
-
-Use existing sweeps for fixed workload groups, and validate combined changes before delivery. See [exploration and decision-making](guidance/meta-knowledge/03-exploration-and-decision.md) for choosing experiments and interpreting results.
-
-## Choose evaluations
-
-| Goal | Entry point |
+| Reader and purpose | Reference |
 | --- | --- |
-| Measure latency and throughput | [`foretoken perf`](../benchmarks/docs/perf/README.md) |
-| Evaluate answer quality | [`foretoken eval`](../benchmarks/docs/eval/README.md) |
-| Locate execution bottlenecks | [`foretoken perf --profile`](../benchmarks/docs/profile/README.md) |
-| Compare concurrency, input lengths and other conditions | [Sweeps and experiment commands](../benchmarks/docs/recipes.md) |
-
-Inspect options with `foretoken perf --help` and `foretoken eval --help`.
-
-## Read results
-
-The experiment report (`report.md`) compares performance across approaches, explains the findings and identifies the currently selected approach. It is updated as the experiment progresses, with links to detailed experiment records and original data. The [experiment records guide](experiment-records.md) covers output options, saved files, and report maintenance.
-
-See [optimization tasks](tasks/README.md) for more tasks and the [knowledge library](guidance/knowledge/README.md) for reusable technical findings.
+| Users: write or adjust a task | [Task template](templates/task-template.md) · [Existing tasks](tasks/README.md) |
+| Agents: execution and role requirements | [RSI skill](../.agents/skills/rsi/SKILL.md) · [Team guidance](../.agents/skills/rsi/roles/common.md) |
+| Agents: research methods and technical experience | [Research guidance](guidance/README.md) · [Knowledge library](guidance/knowledge/README.md) |
+| Deployment operators: source updates and environment reuse | [Source deployment](../docs/deployment/source.md) |
+| Experiment executors: performance, quality and profiling | [Evaluation guide](../benchmarks/README.md) · [Experiment recipes](../benchmarks/docs/recipes.md) |
+| Users and agents: read and maintain results | [Experiment records guide](experiment-records.md) |
