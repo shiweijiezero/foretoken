@@ -51,7 +51,7 @@ Workers turn specific questions into code or configuration changes that can be e
 
 Experimenters schedule experiments, build and deploy approaches, run evaluations and save results. They release unused resources afterward. When GPUs are available, they check which approaches are ready and ask Workers for missing versions or information.
 
-[Observers](../.agents/skills/rsi/roles/observer.md) periodically check how the whole team is working: whether roles are being fulfilled, resources are used well, and research is moving beyond repeated setup or shallow tuning. Each round uses new agents without inherited conversation history. They read work and session files, then send the lead findings and suggested changes without asking other members for updates.
+[Observers](../.agents/skills/rsi/roles/observer.md) periodically check how the whole team is working: whether roles are being fulfilled, resources are used well, and research is moving beyond repeated setup or shallow tuning. Each round uses new agents without inherited conversation history. They read work and session files, verify and report each checklist item, then send the lead suggested changes without asking other members for updates.
 
 Set Advisor, Worker, Experimenter and Observer counts separately in the task file; none includes the lead. Leave one of the first three counts blank when the lead should choose it. Observer count is the number of new agents per check and defaults to 1; set it to 0 to disable checks. Set the interval in the task too, for example `Observer check interval: 1h`. The lead uses that interval to arrange reminders and create each round. All roles share the harness's actual concurrency limit, and differences from requested staffing are recorded.
 
