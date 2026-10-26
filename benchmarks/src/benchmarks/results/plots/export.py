@@ -13,7 +13,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from benchmarks.config.plot import DEFAULT_INTERACTIVITY_METRIC, TradeoffOptions
+from benchmarks.config.plot import DEFAULT_INTERACTIVITY, MetricSelection, TradeoffOptions
 from benchmarks.results.plots.charts.http import _http_charts
 from benchmarks.results.plots.charts.phases import phase_summary_charts
 from benchmarks.results.plots.charts.resources import _prometheus_charts, gpu_allocation_charts
@@ -49,7 +49,7 @@ def render_results(
     tradeoff: TradeoffOptions | None = None,
     pricing_path: Path | None = None,
     min_interactivity: float | None = None,
-    interactivity_metric: str = DEFAULT_INTERACTIVITY_METRIC,
+    interactivity: MetricSelection = DEFAULT_INTERACTIVITY,
     gpu_count: int | None = None,
     progress: bool = False,
 ) -> FigureExport:
@@ -66,7 +66,7 @@ def render_results(
         if (
             columns != 1 or metrics or methods or base is not None or tradeoff is not None
             or pricing_path is not None or min_interactivity is not None or gpu_count is not None
-            or interactivity_metric != DEFAULT_INTERACTIVITY_METRIC
+            or interactivity != DEFAULT_INTERACTIVITY
         ):
             raise ValueError("Progress export accepts sources and output_dir; plot settings come from the YAML files")
         from benchmarks.results.plots.progress import load_progress, render_progress
@@ -99,7 +99,7 @@ def render_results(
                 owner = _render_results(
                     sources, writer, columns=columns, metrics=metrics, methods=methods, base=base,
                     tradeoff=tradeoff, pricing=pricing, min_interactivity=min_interactivity,
-                    interactivity_metric=interactivity_metric,
+                    interactivity=interactivity,
                     gpu_count=gpu_count,
                 )
             for filename in previous - writer.files.keys():
@@ -137,17 +137,17 @@ def _render_results(
     sources: tuple[Path, ...], writer: FigureWriter, *, columns: int,
     metrics: tuple[str, ...], methods: tuple[str, ...], base: Path | None,
     tradeoff: TradeoffOptions | None, pricing: Pricing | None,
-    min_interactivity: float | None, interactivity_metric: str, gpu_count: int | None,
+    min_interactivity: float | None, interactivity: MetricSelection, gpu_count: int | None,
 ) -> Path | None:
     """Resolve one set of identities and statistics before selecting any chart family."""
     selected_metrics = set(metrics)
     axes = tradeoff or TradeoffOptions()
     if tradeoff is not None or not metrics:
-        selected_metrics.update((axes.x_metric, axes.y_metric))
+        selected_metrics.update((axes.x.key, axes.y.key))
     if pricing is not None:
         selected_metrics.update(PRICED_TOKEN_METRICS)
         if min_interactivity is not None:
-            selected_metrics.add(interactivity_metric)
+            selected_metrics.add(interactivity.key)
     derived = derived_plot_metrics(selected_metrics)
     results = read_saved_results(
         sources, methods=methods, base=base, derive_metrics=bool(derived) or gpu_count is not None,
@@ -172,7 +172,7 @@ def _render_results(
     if single_run and not native and results.runs[0].get("result") is not None:
         native = _single_run_charts(Path(results.runs[0]["result"]))
     _render_views(results, native, writer, columns, metrics, base, tradeoff, pricing,
-                  min_interactivity, interactivity_metric, single_run=single_run)
+                  min_interactivity, interactivity, single_run=single_run)
     if owner is not None:
         selected_methods = {method for run in results.runs for method in run.get("methods", ())}
         _native_tables(owner, writer, selected_methods)
@@ -183,7 +183,7 @@ def _render_views(
     results: SavedResults, native: list[Chart], writer: FigureWriter,
     columns: int, metrics: tuple[str, ...], base: Path | None,
     tradeoff: TradeoffOptions | None, pricing: Pricing | None, min_interactivity: float | None,
-    interactivity_metric: str,
+    interactivity: MetricSelection,
     *, single_run: bool,
 ) -> None:
     """Apply metric selection consistently to native charts and run-level scalar summaries."""
@@ -203,7 +203,7 @@ def _render_views(
                          base_methods=results.base_approaches)
     if pricing is not None:
         render_economics(points, summary, writer, pricing,
-                         min_interactivity=min_interactivity, interactivity_metric=interactivity_metric,
+                         min_interactivity=min_interactivity, interactivity=interactivity,
                          columns=columns)
     identities = list(dict.fromkeys(_method(point) for point in points))
     _charts(charts, writer, identities, columns)
