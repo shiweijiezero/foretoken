@@ -19,7 +19,7 @@ Experimenter 准备运行环境和起始测量时，Advisor 和 Worker 同时开
 
 并行实验开始前，主 Agent 统一 W&B 的命名。同一研究课题使用一个 project，名称以 `foretoken-` 开头，并包含模型、硬件和目标，例如 `foretoken-qwen35-metax-inference`。每次实验使用一个带日期或实验名的 group，各次 run 再区分方案、负载和重复测量。恢复时沿用原名称，并在实验记录中保存运行链接。
 
-主 Agent 在任务开始时按[报告维护流程](../../../rsi-playbooks/experiment-records_zh.md#持续维护用户报告)建立面向用户的 `report.md`，并指定作者，随测量结果和决定持续更新。
+主 Agent 指定一名作者，按[报告维护流程](../../../rsi-playbooks/experiment-records_zh.md#持续维护用户报告)持续维护用户报告和进展图。
 
 ## 组建团队与派工
 
@@ -97,4 +97,4 @@ python3 -I .agents/skills/rsi/scripts/gpu_usage.py stop "$GPU_RUN"
 
 用户要求暂停或停止，或者任务到期时，主 Agent 停止安排新实验并通知团队。各负责人停止自己的进程，确认退出；暂停时保留未完成工作，任务结束时保存所需结果，再清理不再使用的资源。
 
-主 Agent 检查保留的改动和实测结果，包括采样覆盖率与未解决的问题。作者按[报告维护流程](../../../rsi-playbooks/experiment-records_zh.md#持续维护用户报告)更新已有报告，写清暂停或结束时的实际状态与已达到的目标，并向用户提供报告路径。
+主 Agent 检查保留的改动和实测结果，包括采样覆盖率与未解决的问题。作者按[报告维护流程](../../../rsi-playbooks/experiment-records_zh.md#持续维护用户报告)更新已有报告和优化进展图，写清暂停或结束时的实际状态与已达到的目标，并向用户提供报告路径。

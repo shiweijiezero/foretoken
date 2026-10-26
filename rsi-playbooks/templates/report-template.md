@@ -23,6 +23,18 @@ Replace this heading and the metric columns with those of the actual task. The r
 
 State the repeat count `n` and statistic used. Show a single value for one measurement; for repeats, include the mean and variability or link their detailed values. Keep regressions and use “—” for unmeasured or undefined entries, with a reason. Quality scores retain the evaluator's sample counts and error estimates. Source results follow the [experiment records guide](../experiment-records.md#analyze-results).
 
+## Optimization progress
+
+Generate the [progress charts](../progress-charts.md), then insert these references for each metric and comparison condition, adjusting filenames as needed:
+
+```markdown
+![Measured optimization milestones](figures/progress-milestones.png)
+
+![Optimization search history](figures/progress-search.png)
+
+[Chart data](figures/progress.yaml)
+```
+
 ## Approach details
 
 Explain each approach in the report using the same names as the summary. Related parameter variants can share a section when their changes and outcomes are identified separately. The following section shows the structure to repeat.

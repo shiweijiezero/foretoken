@@ -31,7 +31,7 @@ Result analysis distinguishes measurement completion, request success and accept
 
 GPU collection continues throughout the experiment. The Experimenter reuses [collectors](../SKILL.md#collect-gpu-usage) covering the assigned devices, with one collection owner chosen by the lead for each device set. Utilization is interpreted alongside build, measurement and waiting periods, and missing intervals are reported. When collection spans several experiments, it is handed over with the resources and stopped when no longer needed.
 
-As each evaluation finishes, record its actual outcome and resource state in the iteration notes. Send the outcome and original-result links to the Worker and assigned reviewer; notify the lead when a decision or intervention is needed. The lead chooses one author for the report, and other members send their contributions to that author. The [experiment records guide](../../../../rsi-playbooks/experiment-records.md) explains what to retain.
+As each evaluation finishes, record its actual outcome and resource state in the iteration notes. Send the outcome and original-result links to the Worker and assigned reviewer; notify the lead when a decision or intervention is needed. Send the designated report writer measured values, outcome status, completion times and evidence links, including failed attempts. The [experiment records guide](../../../../rsi-playbooks/experiment-records.md) explains what to retain.
 
 ## Continue with ready work
 

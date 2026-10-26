@@ -48,6 +48,10 @@ For example, when logged in to W&B, replace the recipe's output options with:
 ```text
 results/decode/parallelism/
 ├── report.md                  # Agent-maintained overall report
+├── figures/
+│   ├── progress.yaml          # Chart data for one metric and comparison condition
+│   ├── progress-milestones.png
+│   └── progress-search.png
 └── iterations/tp2/
     ├── notes/
     │   ├── iteration.md       # Summaries, document links and decisions
@@ -113,10 +117,12 @@ Keep the report's current conclusions aligned with the iteration history and lin
 
 ## Maintain the user-facing report
 
-At experiment start, the lead or a designated writer creates `report.md` using the [report template](templates/report-template.md) and shares its path with the user. Use the task's delivery location, or the experiment root when none is specified. Link the task, experiment directory and iteration notes from the report, resolving links from its actual location. Keep the same report when resuming. The writer maintains the report; benchmark commands save the underlying evidence.
+At experiment start, the lead or a designated writer creates `report.md` using the [report template](templates/report-template.md) and shares its path with the user. Use the task's delivery location, or the experiment root when none is specified. Link the task, experiment directory and iteration notes from the report, resolving links from its actual location. Keep the same report when resuming. The same writer maintains the report and its [progress chart data and figures](progress-charts.md); benchmark commands save the underlying evidence.
 
-Update the report after each measured iteration and whenever analysis changes a conclusion or the retained approach. Follow the template's summary tables with an explanation of each approach's motivation, actual implementation and results in the same report. The summary and approach sections use matching descriptive names and links. Keep complete commands, logs, repeated measurements and decision history in the iteration notes.
+Update the report after each measured iteration, including failed attempts, and whenever analysis changes a conclusion or the retained approach. Follow the template's summary tables and progress charts with an explanation of each approach's motivation, actual implementation and results in the same report. The summary and approach sections use matching descriptive names and links. Keep complete commands, logs, repeated measurements and decision history in the iteration notes.
 
 Write for readers who did not participate in the experiment, separating supported conclusions from hypotheses and pending validation. Before measurements are available, state the objective, starting conditions and what remains unmeasured.
 
-On pause, stop or completion, update the same report with the reason, results obtained, retained changes and unfinished validation. Replace obsolete plans with the actual state and share the report path again.
+Every report update includes updating the chart data, regenerating both figures and viewing them to check the result. Experimenters supply the evidence; the writer selects comparable measurements and cumulative versions.
+
+On pause, stop, resumption or completion, update the same report and charts with the reason, results obtained, retained changes and unfinished validation. Replace obsolete plans with the actual state and share the report path again. Keep the original start and deadline when resuming.

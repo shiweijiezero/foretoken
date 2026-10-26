@@ -1,0 +1,163 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+# Synthetic layout example only. These are not Foretoken benchmark results.
+title: Inference optimization
+subtitle: Synthetic example · Fixed model / hardware / workload / concurrency · End-to-end
+  output throughput
+updated_at: '2026-01-01T00:00:00Z'
+x_label: Elapsed time (hours)
+metric:
+  name: Output throughput
+  unit: tokens/s
+  direction: higher
+baseline:
+  label: Initial baseline
+  value: 100
+  source: '#synthetic-baseline'
+points:
+  - {"x": 0.15, "value": 99.4, "status": "valid", "source": "#synthetic-trial-001"}
+  - {"x": 0.3, "value": 99.2, "status": "valid", "source": "#synthetic-trial-002"}
+  - {"x": 0.45, "value": 99.0, "status": "valid", "source": "#synthetic-trial-003"}
+  - {"x": 0.6, "value": 98.8, "status": "valid", "source": "#synthetic-trial-004"}
+  - {"x": 0.75, "value": 98.6, "status": "valid", "source": "#synthetic-trial-005"}
+  - {"x": 0.9, "value": 98.4, "status": "valid", "source": "#synthetic-trial-006"}
+  - {"x": 1, "value": null, "status": "compile_failed", "source": "#synthetic-01"}
+  - {"x": 1.05, "value": 98.2, "status": "valid", "source": "#synthetic-trial-007"}
+  - {"x": 1.2, "value": 98.0, "status": "valid", "source": "#synthetic-trial-008"}
+  - {"x": 1.35, "value": 97.8, "status": "valid", "source": "#synthetic-trial-009"}
+  - {"x": 1.5, "value": 97.6, "status": "valid", "source": "#synthetic-trial-010"}
+  - {"x": 1.65, "value": 99.6, "status": "valid", "source": "#synthetic-trial-011"}
+  - {"x": 1.8, "value": 99.4, "status": "valid", "source": "#synthetic-trial-012"}
+  - {"x": 1.95, "value": 99.2, "status": "valid", "source": "#synthetic-trial-013"}
+  - {"x": 2, "value": 121, "status": "valid", "source": "#synthetic-02", "label": "Async scheduling", "checkpoint": true}
+  - {"x": 2.1, "value": 119.79, "status": "valid", "source": "#synthetic-trial-014"}
+  - {"x": 2.25, "value": 119.55, "status": "valid", "source": "#synthetic-trial-015"}
+  - {"x": 2.4, "value": 119.31, "status": "valid", "source": "#synthetic-trial-016"}
+  - {"x": 2.55, "value": 119.06, "status": "valid", "source": "#synthetic-trial-017"}
+  - {"x": 2.7, "value": 118.82, "status": "valid", "source": "#synthetic-trial-018"}
+  - {"x": 2.85, "value": 118.58, "status": "valid", "source": "#synthetic-trial-019"}
+  - {"x": 3, "value": 112, "status": "valid", "source": "#synthetic-03"}
+  - {"x": 3.15, "value": 118.1, "status": "valid", "source": "#synthetic-trial-021"}
+  - {"x": 3.3, "value": 120.52, "status": "valid", "source": "#synthetic-trial-022"}
+  - {"x": 3.45, "value": 106.48, "status": "valid", "source": "#synthetic-trial-023"}
+  - {"x": 3.6, "value": 120.03, "status": "valid", "source": "#synthetic-trial-024"}
+  - {"x": 3.75, "value": 119.79, "status": "valid", "source": "#synthetic-trial-025"}
+  - {"x": 3.9, "value": 119.55, "status": "valid", "source": "#synthetic-trial-026"}
+  - {"x": 4, "value": 142, "status": "valid", "source": "#synthetic-04", "label": "Sort kernel", "checkpoint": true}
+  - {"x": 4.05, "value": 140.01, "status": "valid", "source": "#synthetic-trial-027"}
+  - {"x": 4.2, "value": 139.73, "status": "valid", "source": "#synthetic-trial-028"}
+  - {"x": 4.35, "value": 139.44, "status": "valid", "source": "#synthetic-trial-029"}
+  - {"x": 4.5, "value": 139.16, "status": "valid", "source": "#synthetic-trial-030"}
+  - {"x": 4.65, "value": 138.88, "status": "valid", "source": "#synthetic-trial-031"}
+  - {"x": 4.8, "value": 138.59, "status": "valid", "source": "#synthetic-trial-032"}
+  - {"x": 4.95, "value": 141.43, "status": "valid", "source": "#synthetic-trial-033"}
+  - {"x": 5, "value": null, "status": "incorrect", "source": "#synthetic-05"}
+  - {"x": 5.1, "value": 141.15, "status": "valid", "source": "#synthetic-trial-034"}
+  - {"x": 5.25, "value": 140.86, "status": "valid", "source": "#synthetic-trial-035"}
+  - {"x": 5.4, "value": 140.58, "status": "valid", "source": "#synthetic-trial-036"}
+  - {"x": 5.55, "value": 140.3, "status": "valid", "source": "#synthetic-trial-037"}
+  - {"x": 5.7, "value": 140.01, "status": "valid", "source": "#synthetic-trial-038"}
+  - {"x": 5.85, "value": 139.73, "status": "valid", "source": "#synthetic-trial-039"}
+  - {"x": 6, "value": 141, "status": "valid", "source": "#synthetic-06", "label": "Hierarchical cache", "checkpoint": true}
+  - {"x": 6.15, "value": 138.18, "status": "valid", "source": "#synthetic-trial-041"}
+  - {"x": 6.3, "value": 137.9, "status": "valid", "source": "#synthetic-trial-042"}
+  - {"x": 6.45, "value": 137.62, "status": "valid", "source": "#synthetic-trial-043"}
+  - {"x": 6.6, "value": 140.44, "status": "valid", "source": "#synthetic-trial-044"}
+  - {"x": 6.75, "value": 140.15, "status": "valid", "source": "#synthetic-trial-045"}
+  - {"x": 6.9, "value": 124.08, "status": "valid", "source": "#synthetic-trial-046"}
+  - {"x": 7, "value": 133, "status": "valid", "source": "#synthetic-07"}
+  - {"x": 7.05, "value": 139.59, "status": "valid", "source": "#synthetic-trial-047"}
+  - {"x": 7.2, "value": 139.31, "status": "valid", "source": "#synthetic-trial-048"}
+  - {"x": 7.35, "value": 139.03, "status": "valid", "source": "#synthetic-trial-049"}
+  - {"x": 7.5, "value": 138.74, "status": "valid", "source": "#synthetic-trial-050"}
+  - {"x": 7.65, "value": 138.46, "status": "valid", "source": "#synthetic-trial-051"}
+  - {"x": 7.8, "value": 138.18, "status": "valid", "source": "#synthetic-trial-052"}
+  - {"x": 7.95, "value": 137.9, "status": "valid", "source": "#synthetic-trial-053"}
+  - {"x": 8, "value": 197, "status": "valid", "source": "#synthetic-08", "label": "Layer split", "checkpoint": true}
+  - {"x": 8.1, "value": 192.27, "status": "valid", "source": "#synthetic-trial-054"}
+  - {"x": 8.25, "value": 196.21, "status": "valid", "source": "#synthetic-trial-055"}
+  - {"x": 8.4, "value": 195.82, "status": "valid", "source": "#synthetic-trial-056"}
+  - {"x": 8.55, "value": 195.42, "status": "valid", "source": "#synthetic-trial-057"}
+  - {"x": 8.7, "value": 195.03, "status": "valid", "source": "#synthetic-trial-058"}
+  - {"x": 8.85, "value": 194.64, "status": "valid", "source": "#synthetic-trial-059"}
+  - {"x": 9, "value": null, "status": "runtime_failed", "source": "#synthetic-09"}
+  - {"x": 9.15, "value": 193.85, "status": "valid", "source": "#synthetic-trial-061"}
+  - {"x": 9.3, "value": 193.45, "status": "valid", "source": "#synthetic-trial-062"}
+  - {"x": 9.45, "value": 193.06, "status": "valid", "source": "#synthetic-trial-063"}
+  - {"x": 9.6, "value": 192.67, "status": "valid", "source": "#synthetic-trial-064"}
+  - {"x": 9.75, "value": 192.27, "status": "valid", "source": "#synthetic-trial-065"}
+  - {"x": 9.9, "value": 196.21, "status": "valid", "source": "#synthetic-trial-066"}
+  - {"x": 10, "value": 249, "status": "valid", "source": "#synthetic-10", "label": "Context parallelism", "checkpoint": true}
+  - {"x": 10.05, "value": 247.51, "status": "valid", "source": "#synthetic-trial-067"}
+  - {"x": 10.2, "value": 247.01, "status": "valid", "source": "#synthetic-trial-068"}
+  - {"x": 10.35, "value": 219.12, "status": "valid", "source": "#synthetic-trial-069"}
+  - {"x": 10.5, "value": 246.01, "status": "valid", "source": "#synthetic-trial-070"}
+  - {"x": 10.65, "value": 245.51, "status": "valid", "source": "#synthetic-trial-071"}
+  - {"x": 10.8, "value": 245.02, "status": "valid", "source": "#synthetic-trial-072"}
+  - {"x": 10.95, "value": 244.52, "status": "valid", "source": "#synthetic-trial-073"}
+  - {"x": 11, "value": 230, "status": "valid", "source": "#synthetic-11"}
+  - {"x": 11.1, "value": 244.02, "status": "valid", "source": "#synthetic-trial-074"}
+  - {"x": 11.25, "value": 243.52, "status": "valid", "source": "#synthetic-trial-075"}
+  - {"x": 11.4, "value": 243.02, "status": "valid", "source": "#synthetic-trial-076"}
+  - {"x": 11.55, "value": 248.0, "status": "valid", "source": "#synthetic-trial-077"}
+  - {"x": 11.7, "value": 247.51, "status": "valid", "source": "#synthetic-trial-078"}
+  - {"x": 11.85, "value": 247.01, "status": "valid", "source": "#synthetic-trial-079"}
+  - {"x": 12, "value": 267, "status": "valid", "source": "#synthetic-12", "label": "KV transfer overlap", "checkpoint": true}
+  - {"x": 12.15, "value": 263.8, "status": "valid", "source": "#synthetic-trial-081"}
+  - {"x": 12.3, "value": 263.26, "status": "valid", "source": "#synthetic-trial-082"}
+  - {"x": 12.45, "value": 262.73, "status": "valid", "source": "#synthetic-trial-083"}
+  - {"x": 12.6, "value": 262.19, "status": "valid", "source": "#synthetic-trial-084"}
+  - {"x": 12.75, "value": 261.66, "status": "valid", "source": "#synthetic-trial-085"}
+  - {"x": 12.9, "value": 261.13, "status": "valid", "source": "#synthetic-trial-086"}
+  - {"x": 13, "value": 255, "status": "valid", "source": "#synthetic-13"}
+  - {"x": 13.05, "value": 260.59, "status": "valid", "source": "#synthetic-trial-087"}
+  - {"x": 13.2, "value": 265.93, "status": "valid", "source": "#synthetic-trial-088"}
+  - {"x": 13.35, "value": 265.4, "status": "valid", "source": "#synthetic-trial-089"}
+  - {"x": 13.5, "value": 264.86, "status": "valid", "source": "#synthetic-trial-090"}
+  - {"x": 13.65, "value": 264.33, "status": "valid", "source": "#synthetic-trial-091"}
+  - {"x": 13.8, "value": 234.96, "status": "valid", "source": "#synthetic-trial-092"}
+  - {"x": 13.95, "value": 263.26, "status": "valid", "source": "#synthetic-trial-093"}
+  - {"x": 14, "value": null, "status": "compile_failed", "source": "#synthetic-14"}
+  - {"x": 14.1, "value": 262.73, "status": "valid", "source": "#synthetic-trial-094"}
+  - {"x": 14.25, "value": 262.19, "status": "valid", "source": "#synthetic-trial-095"}
+  - {"x": 14.4, "value": 261.66, "status": "valid", "source": "#synthetic-trial-096"}
+  - {"x": 14.55, "value": 261.13, "status": "valid", "source": "#synthetic-trial-097"}
+  - {"x": 14.7, "value": 260.59, "status": "valid", "source": "#synthetic-trial-098"}
+  - {"x": 14.85, "value": 265.93, "status": "valid", "source": "#synthetic-trial-099"}
+  - {"x": 15, "value": 285, "status": "valid", "source": "#synthetic-15", "label": "Prefill dequantization", "checkpoint": true}
+  - {"x": 15.15, "value": 282.72, "status": "valid", "source": "#synthetic-trial-101"}
+  - {"x": 15.3, "value": 282.15, "status": "valid", "source": "#synthetic-trial-102"}
+  - {"x": 15.45, "value": 281.58, "status": "valid", "source": "#synthetic-trial-103"}
+  - {"x": 15.6, "value": 281.01, "status": "valid", "source": "#synthetic-trial-104"}
+  - {"x": 15.75, "value": 280.44, "status": "valid", "source": "#synthetic-trial-105"}
+  - {"x": 15.9, "value": 279.87, "status": "valid", "source": "#synthetic-trial-106"}
+  - {"x": 16, "value": 272, "status": "valid", "source": "#synthetic-16"}
+  - {"x": 16.05, "value": 279.3, "status": "valid", "source": "#synthetic-trial-107"}
+  - {"x": 16.2, "value": 278.73, "status": "valid", "source": "#synthetic-trial-108"}
+  - {"x": 16.35, "value": 278.16, "status": "valid", "source": "#synthetic-trial-109"}
+  - {"x": 16.5, "value": 283.86, "status": "valid", "source": "#synthetic-trial-110"}
+  - {"x": 16.65, "value": 283.29, "status": "valid", "source": "#synthetic-trial-111"}
+  - {"x": 16.8, "value": 282.72, "status": "valid", "source": "#synthetic-trial-112"}
+  - {"x": 16.95, "value": 282.15, "status": "valid", "source": "#synthetic-trial-113"}
+  - {"x": 17, "value": 301, "status": "valid", "source": "#synthetic-17", "label": "Activation + quantization", "checkpoint": true}
+  - {"x": 17.1, "value": 297.39, "status": "valid", "source": "#synthetic-trial-114"}
+  - {"x": 17.25, "value": 264.88, "status": "valid", "source": "#synthetic-trial-115"}
+  - {"x": 17.4, "value": 296.18, "status": "valid", "source": "#synthetic-trial-116"}
+  - {"x": 17.55, "value": 295.58, "status": "valid", "source": "#synthetic-trial-117"}
+  - {"x": 17.7, "value": 294.98, "status": "valid", "source": "#synthetic-trial-118"}
+  - {"x": 17.85, "value": 294.38, "status": "valid", "source": "#synthetic-trial-119"}
+  - {"x": 18, "value": null, "status": "incorrect", "source": "#synthetic-18"}
+  - {"x": 18.15, "value": 299.8, "status": "valid", "source": "#synthetic-trial-121"}
+  - {"x": 18.3, "value": 299.19, "status": "valid", "source": "#synthetic-trial-122"}
+  - {"x": 18.45, "value": 298.59, "status": "valid", "source": "#synthetic-trial-123"}
+  - {"x": 18.6, "value": 297.99, "status": "valid", "source": "#synthetic-trial-124"}
+  - {"x": 18.75, "value": 297.39, "status": "valid", "source": "#synthetic-trial-125"}
+  - {"x": 19, "value": 322, "status": "valid", "source": "#synthetic-19", "label": "Linear attention", "checkpoint": true}
+phases:
+  - {"label": "System bring-up & scheduling", "start": 0, "end": 7}
+  - {"label": "Parallelism & communication", "start": 7, "end": 14}
+  - {"label": "Kernel optimization", "start": 14, "end": 19}
+references:
+  - {"label": "Alternative A", "source": "#synthetic-a", "points": [{"x": 0, "value": 100}, {"x": 2, "value": 112}, {"x": 5, "value": 168}, {"x": 9, "value": 220}, {"x": 13, "value": 255}, {"x": 19, "value": 255}]}
+  - {"label": "Alternative B", "source": "#synthetic-b", "points": [{"x": 0, "value": 100}, {"x": 3, "value": 120}, {"x": 7, "value": 180}, {"x": 12, "value": 215}, {"x": 19, "value": 215}]}
+  - {"label": "Fixed reference", "value": 180, "source": "#synthetic-reference"}

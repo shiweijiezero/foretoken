@@ -24,7 +24,7 @@ Before allocating resources, the lead checks the task's nodes, current users and
 
 The lead establishes W&B naming before parallel experiments begin. An ongoing research topic uses one project, named with a `foretoken-` prefix and the model, hardware and objective, such as `foretoken-qwen35-metax-inference`. Each experiment uses a dated or named group, with run names distinguishing approaches, workloads and repetitions. Resumption keeps the original names, and experiment records retain the run links.
 
-The lead establishes the user-facing `report.md` and its writer at task start, following the [report workflow](../../../rsi-playbooks/experiment-records.md#maintain-the-user-facing-report). The writer keeps it current as measurements and decisions change.
+The lead assigns one writer to maintain the user-facing report and progress charts through the [report workflow](../../../rsi-playbooks/experiment-records.md#maintain-the-user-facing-report).
 
 ## Set up the team and assignments
 
@@ -102,4 +102,4 @@ A stop marker, deadline, SIGINT or SIGTERM lets the collector exit after its cur
 
 On a user pause, stop or deadline, the lead stops scheduling new experiments and notifies the team. Each owner stops their processes and confirms exit. Unfinished work is preserved on pause; at task completion, required results are saved before unused resources are removed.
 
-The lead checks retained changes and measurements, including sampling coverage and unresolved questions. The writer updates the existing report to reflect the pause or end state and objectives actually achieved, following the [report workflow](../../../rsi-playbooks/experiment-records.md#maintain-the-user-facing-report), and shares its path with the user.
+The lead checks retained changes and measurements, including sampling coverage and unresolved questions. The writer updates the existing report and its progress charts to reflect the pause or end state and objectives actually achieved, following the [report workflow](../../../rsi-playbooks/experiment-records.md#maintain-the-user-facing-report), and shares its path with the user.
