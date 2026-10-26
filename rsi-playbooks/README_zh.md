@@ -54,13 +54,13 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 /goal 使用 RSI skill，完成 my_docs/rsi/my-task_zh.md 中的优化任务。
 ```
 
-## 运行期间：用户需要关注什么
+## 查看进展
 
-启动后，Agent 按任务准备环境、研究方案并运行实验，用户查看结果和调整目标。需要改变目标、预算或允许修改的范围时，在会话中说明，并同步任务文件。
+实验报告 `report.md` 随进展更新，汇总方案对比、性能与质量结果、保留方案和待验证的问题。原始数据和详细分析可从报告中的链接查看，记录格式见[实验记录手册](experiment-records_zh.md)。
 
-实验报告 `report.md` 会随进展更新，包含方案对比、性能与质量结果、当前保留方案和未完成的验证。原始数据与详细分析通过报告链接查看，位置和格式见[实验记录手册](experiment-records_zh.md)。
+需要调整目标、预算或改动范围时，直接在会话中说明，并更新任务文件。
 
-暂停时，同时要求团队停止本任务的实验、采集进程和巡查提醒：Claude Code 使用 `/goal clear`；Codex 使用 `/goal pause`，之后可用 `/goal resume` 继续。恢复时沿用原任务和结果。
+暂停任务时，Claude Code 使用 `/goal clear`，Codex 使用 `/goal pause`，同时要求团队停止实验、采集进程和巡查提醒。Codex 可用 `/goal resume` 继续，恢复时沿用原任务和已有结果。
 
 ## 架构与角色分工
 

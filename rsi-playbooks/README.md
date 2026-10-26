@@ -54,13 +54,13 @@ Open Codex in the repository and enter:
 /goal Use the RSI skill to complete my_docs/rsi/my-task.md.
 ```
 
-## During the run: what users should watch
+## Follow progress
 
-The agents prepare the environment, research approaches and run experiments while users review results and adjust goals. To change objectives, budgets or the allowed scope, state the change in the conversation and update the task file.
+The running `report.md` summarizes comparisons, performance and quality results, retained approaches and open validation questions. Follow its links for raw data and detailed analysis. See the [experiment records guide](experiment-records.md) for record formats.
 
-The running `report.md` compares approaches, records performance and quality, and identifies the retained approach and unfinished validation. Follow its links for raw data and detailed analysis. See the [experiment records guide](experiment-records.md) for locations and formats.
+To adjust objectives, budgets or the allowed scope, state the change in the conversation and update the task file.
 
-When pausing, also ask the team to stop this task's experiments, collectors and check reminders. In Claude Code, use `/goal clear`. In Codex, use `/goal pause` and later `/goal resume`. Resume with the original task and results.
+To pause, use `/goal clear` in Claude Code or `/goal pause` in Codex, and ask the team to stop experiments, collectors and check reminders. In Codex, use `/goal resume` to continue with the original task and existing results.
 
 ## Architecture and roles
 
