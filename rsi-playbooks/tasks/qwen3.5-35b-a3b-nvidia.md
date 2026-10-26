@@ -12,8 +12,8 @@ Final deployment budget: 2 NVIDIA A100 80GB GPUs on one node; at most 32 CPU cor
 Experiment sizing: service candidates fit the final budget; focused kernel, compilation, or correctness experiments may use fewer resources, including one GPU
 Available resources: at most 6 NVIDIA A100 80GB GPUs in total for experiments; schedule CPU, memory, and storage within actual host capacity
 Advisor count: 2
-Worker count: 2
-Experimenter count: 2
+Worker count: 4
+Experimenter count: 3
 Observer count: 1
 Observer check interval: 1h
 Maximum parallel experiments: at most 3 two-GPU service candidates; smaller focused experiments share the six-GPU budget
