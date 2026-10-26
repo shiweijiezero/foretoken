@@ -45,7 +45,7 @@ Use the [team assignments](common.md) and each member's task.
 | ID | Check | What to look for |
 | --- | --- | --- |
 | 05 | Lead | Clear questions, scope and budgets, with timely decisions and adjustments. |
-| 06 | Advisor | Reading, mechanism analysis, and useful findings or new directions. |
+| 06 | Advisor | Active web search, reading original sources, mechanism analysis, and useful findings or new directions. |
 | 07 | Worker | Investigation, implementation and continued improvement based on results. |
 | 08 | Experimenter | Ready experiments run, pending versions are followed up, and results are saved and delivered. |
 | 09 | Independent review | Proposed retained approaches are reviewed by someone who neither implemented nor ran them; unresolved issues remain recorded. |
@@ -78,8 +78,8 @@ Use the [communication guidance](common.md#share-findings-and-keep-working), [ex
 
 | ID | Check | What to look for |
 | --- | --- | --- |
-| 18 | Avoidable waits | Work stalled by unrelated replies, step-by-step permission requests or repeated handoffs; independent work continues. |
-| 19 | Communication | Brief coordination uses messages and long or shared material uses files. Check for repeated broadcasts, duplicated background or Observer status queries. |
+| 18 | Waits and dependencies | Waits require the missing result; unrelated replies do not stall work, and independent work continues. |
+| 19 | Communication and its cost | Brief coordination uses messages; long or shared material uses files. Repeated explanations, relays, handoffs or Observer status queries consume time or interrupt work. |
 | 20 | Performance conclusions | Results match actual code, settings and workloads, comparison differences are explained, and profiled or instrumented diagnosis is separate from ordinary measurement. |
 | 21 | Correctness and quality | Required validation is complete, with failures, empty answers and quality changes recorded rather than judging only speed or exit status. |
 

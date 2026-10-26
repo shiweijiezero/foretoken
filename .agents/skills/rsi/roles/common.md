@@ -33,7 +33,9 @@ Use messages for short findings, questions and coordination. Put long explanatio
 
 Observers gather evidence by reading work and session records rather than asking members for updates. They send their findings to the lead, who arranges any corrections; the team does not wait for the check to finish.
 
-While waiting for a reply, continue work that does not need that answer. If progress really is blocked, explain what is missing and who can provide it. Routine updates do not need replies, and completion notifications remove the need to keep asking for status. Transfers of GPUs or running jobs still need someone to accept them. The lead follows the shared records and steps in when direction, scope or resources need to change. If members spend most of their time handing off work and relearning context, use fewer, larger assignments with continuing owners.
+While waiting for a reply, continue work that does not need that answer. If progress really is blocked, explain what is missing and who can provide it. Routine updates do not need replies, and completion notifications remove the need to keep asking for status. Transfers of GPUs or running jobs still need someone to accept them. The lead follows the shared records and steps in when direction, scope or resources need to change.
+
+Use session timelines to notice time spent repeating explanations, relaying messages, handing off work and relearning context. If communication displaces research or delays experiments, combine exchanges and use fewer, larger assignments with continuing owners. Judge the time spent and work delayed, not message count alone.
 
 ## Prepare candidates while evaluations run
 
