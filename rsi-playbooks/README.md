@@ -51,15 +51,9 @@ Workers turn specific questions into code or configuration changes that can be e
 
 Experimenters schedule experiments, build and deploy approaches, run evaluations and save results. They release unused resources afterward. When GPUs are available, they check which approaches are ready and ask Workers for missing versions or information.
 
-[Observers](../.agents/skills/rsi/roles/observer.md) periodically check how the whole team is working: whether roles are being fulfilled, resources are used well, and research is moving beyond repeated setup or shallow tuning. Each round uses new agents without inherited conversation history. They read work and session files, verify and report each checklist item, then send the lead suggested changes without asking other members for updates.
+[Observers](../.agents/skills/rsi/roles/observer.md) periodically check team progress, research depth and resource use, then suggest adjustments to the lead. Each round uses new agents that independently read work and session records and follow an itemized checklist.
 
 Set subagent counts and the Observer check interval in the [task file](templates/task-template.md).
-
-Prepare the environment alongside research and development, continuing implementation and exploration that do not depend on setup.
-
-The lead sets research priorities and budgets, and Experimenters arrange the runs. When enough GPUs are available, give each experiment its own group. Arrange an order only when experiments need the same devices. One Experimenter can test approaches from several Workers and manage several GPU groups; available resources determine how many experiments can run at once.
-
-Keep research findings and experiment progress in shared records. Short questions and coordination can use messages; long explanations or material for several readers go in shared files, with a brief message linking to them. Continue other work while waiting for a reply, and ask the lead to decide changes in direction or resources. Keep research and execution members who know a question working together to avoid repeated handoffs.
 
 See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace isolation and resource handoffs.
 
