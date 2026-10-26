@@ -78,7 +78,7 @@ class LogCollectionLifecycle:
         return LogCollectionPlan(config, tuple(actions), has_existing_releases)
 
     def install(self, plan: LogCollectionPlan, timeout: str) -> tuple[str, str]:
-        """Apply the log plan and return Grafana's URL and the managed storage StatefulSet."""
+        """Apply the log plan and return the Loki endpoint and managed storage StatefulSet."""
         config = plan.config
         endpoint = config.endpoint.rstrip("/") or (
             f"http://{self.loki.name}.{self.loki.namespace}.svc:3100"
