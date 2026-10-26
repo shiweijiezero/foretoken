@@ -9,17 +9,17 @@ English | [简体中文](common_zh.md)
 
 A Worker turns an idea into a code or configuration change and hands that candidate to an Experimenter. The Experimenter evaluates it in an assigned environment and returns the results so the Worker can explain and improve the approach. Advisors continue exploring mechanisms and methods, while the lead uses the team's findings to adjust research priorities and resources.
 
-Related work should stay with members who already understand it. This lets them build on earlier findings instead of reconstructing the same background for every iteration.
+Related research and execution work should stay with members who already understand it. This lets them build on earlier findings instead of reconstructing the same background for every iteration. [Observers](observer.md) are the exception: the lead creates new agents for each team check.
 
 ## Learn the framework first
 
-Every role—the lead, Advisors, Workers and Experimenters—starts by learning how Foretoken is designed and used. Begin with the [project README](../../../../README.md), then use architecture guidance, relevant component documentation and maintained examples to understand how the control plane, data plane, inference engines and benchmark tools work together. This includes how services are deployed, requests are executed, and evaluations and results are produced.
+Every role, including the Observer, starts by learning how Foretoken is designed and used. Begin with the [project README](../../../../README.md), then use architecture guidance, relevant component documentation and maintained examples to understand how the control plane, data plane, inference engines and benchmark tools work together. This includes how services are deployed, requests are executed, and evaluations and results are produced.
 
 With that shared understanding, each member studies the source, configuration and earlier experiments relevant to their question. They identify capabilities the framework already provides and the parts their work could affect. The lead supplies the source locations, and members read the originals and check them against the implementation. When versions or task scope change, refresh the affected parts of that understanding.
 
 ## Assign complete questions
 
-The lead gives each research question an owner, explains what is already known and what needs to be learned, and provides the relevant code, references, configuration and experiment records. That owner follows the question through investigation, implementation and analysis. Advisors and Workers begin reading papers, comparing methods and inspecting source while the environment is being prepared.
+The lead gives each research question an owner, explains what is already known and what needs to be learned, and provides the relevant code, references, configuration and experiment records. That owner follows the question through investigation, implementation and analysis. Assign environment preparation separately so Advisors and Workers can proceed with source analysis, implementation and checks that do not need that environment.
 
 Each assignment explains what may change, which workloads and generation settings must stay the same, and how much time and compute are available. Research tests uncertain benefits; a speedup need not be proven before implementation begins. Also name who will run the experiment, which checkout and environment to use, and where to save results. Members work independently within these agreements and ask the lead to coordinate changes to priorities, resource budgets, shared environments or comparison conditions.
 
@@ -29,9 +29,13 @@ Keep the complete proposal in `<output-dir>/iterations/<name>/notes/`, where `<o
 
 For example, an Advisor who finds a potentially faster method can send the findings and sources directly to the Worker studying that question. When the code is ready, the Worker asks the assigned Experimenter to test it. Reviewers also send specific issues to the person who can fix the code or run the missing comparison, without routing every exchange through the lead.
 
-Messages explain a finding, a version ready to test, a difficulty or a decision needed, with links to the relevant records. Give the background once, then describe what changed; keep the full evidence in shared files. Send related questions or review findings together to the people who need to act. Notify everyone when a change affects the whole team, and alert the executor immediately if an ongoing experiment will produce invalid results.
+Use messages for short findings, questions and coordination. Put long explanations, full evidence or anything several people need to read in a shared file, then send a brief summary and its exact path. Give the background once and describe later changes without copying the whole document into messages. The [records guide](../../../../rsi-playbooks/experiment-records.md#share-documents-and-code) explains where files live and who writes them. Notify everyone when a change affects the whole team, and alert the executor immediately if an ongoing experiment will produce invalid results.
 
-While waiting for a reply, continue work that does not need that answer. If progress really is blocked, explain what is missing and who can provide it. Routine updates do not need replies, and completion notifications remove the need to keep asking for status. Transfers of GPUs or running jobs still need someone to accept them. The lead follows the shared records and steps in when direction, scope or resources need to change. If members spend most of their time handing off work and relearning context, use fewer, larger assignments with continuing owners.
+Observers gather evidence by reading work and session records rather than asking members for updates. They send their findings to the lead, who arranges any corrections; the team does not wait for the check to finish.
+
+While waiting for a reply, continue work that does not need that answer. If progress really is blocked, explain what is missing and who can provide it. Routine updates do not need replies, and completion notifications remove the need to keep asking for status. Transfers of GPUs or running jobs still need someone to accept them. The lead follows the shared records and steps in when direction, scope or resources need to change.
+
+Use session timelines to notice time spent repeating explanations, relaying messages, handing off work and relearning context. If communication displaces research or delays experiments, combine exchanges and use fewer, larger assignments with continuing owners. Judge the time spent and work delayed, not message count alone.
 
 ## Prepare candidates while evaluations run
 
@@ -77,4 +81,4 @@ When an assignment ends, the member reports the conclusion, result locations, op
 
 On a user pause, stop or deadline, the lead stops scheduling new experiments. Each owner stops or hands over their jobs and preserves the results. A GPU collector's deadline controls only that collector, so other jobs need their own stop action.
 
-Count Workers, Experimenters and Advisors while they are actually doing assigned work, once per member. Exclude the lead and members who are waiting, blocked or finished. Mark intervals with insufficient evidence as unknown.
+Count Workers, Experimenters, Advisors and Observers while they are actually doing assigned work, once per member. Observers count only during a check, not between rounds. Exclude the lead and members who are waiting, blocked or finished. Mark intervals with insufficient evidence as unknown.

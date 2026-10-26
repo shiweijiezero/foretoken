@@ -16,10 +16,15 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 ```bash
 mkdir -p results/my-experiment/figures
 cp rsi-playbooks/templates/progress-template.yaml results/my-experiment/figures/progress.yaml
+```
+
+在 `progress.yaml` 中填写标题、对照条件和更新时间，再按下文填入基线和测量结果。基线尚未测得时，保留 `baseline.value: null`。然后生成图片：
+
+```bash
 python3 rsi-playbooks/scripts/plot_progress.py results/my-experiment/figures/progress.yaml
 ```
 
-填写标题、对照条件和更新时间。命令在 YAML 旁生成 `progress-milestones.png`、`progress-search.png` 及其 SVG 版本。空模板会生成待测图片。按[报告模板](templates/report-template_zh.md)将 PNG 放在结果汇总表之后。
+命令在 YAML 旁生成 `progress-milestones.png`、`progress-search.png` 及其 SVG 版本。基线尚未测得时生成待测图片。按[报告模板](templates/report-template_zh.md)将 PNG 放在结果汇总表之后。
 
 每个指标和每组对照条件分别使用独立文件，例如 `progress-c1-throughput.yaml` 和 `progress-c16-latency.yaml`。同一命令可传入多个文件，输出名沿用各输入文件去掉扩展名后的名称。预览样式时，将[虚构数据示例](templates/progress-example.yaml)复制到临时目录，再对副本执行绘图命令。
 

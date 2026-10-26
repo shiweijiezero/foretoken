@@ -21,6 +21,8 @@ Available resources: <node count and available GPUs, CPU cores and memory per no
 Advisor count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank for the lead to choose>
 Worker count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank for the lead to choose>
 Experimenter count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank for the lead to choose>
+Observer count: 1
+Observer check interval: <time between team checks, for example 1h>
 Maximum parallel experiments: <simultaneous independent experiments, for example 4; or have the agent determine and record the limit from the resource budget>
 Evaluation workloads: <specified dataset, length and concurrency groups, or agent-selected>
 Optimization objectives: <primary metric and target, conditions to preserve, and per-group or aggregate judgment; open-ended exploration is also valid>
@@ -31,8 +33,10 @@ Deliverables: <full iteration history: motivation, approach and changes, measure
 
 A starting configuration is an exploration aid, not an additional constraint. Check it against the task and current environment, then evolve it within the allowed changes. Without one, discover an initial deployment and record it before making comparisons. Use prior retained results when their conditions still apply.
 
+Observer count is the number of new agents created for each check, not a permanent team size. It defaults to 1 when omitted or blank; set it to 0 to disable checks. When enabled, specify the interval here. The lead fills in a missing interval before execution and arranges the reminders and fresh agents through the [RSI skill](../../.agents/skills/rsi/SKILL.md#arrange-periodic-team-checks).
+
 The parallel-experiment limit counts independent experiments running at once; request concurrency belongs in the workload. Distinguish the final deployment budget from each experiment's needs. Smaller diagnostic experiments may use fewer devices; allocate the remaining resources to other useful work while preserving comparison conditions.
 
 Workloads can reference existing configurations or [recipes](../../benchmarks/docs/recipes.md). For multiple workload groups, specify whether objectives apply to each group or to an aggregate result.
 
-See the [Qwen3.5-35B-A3B optimization task](../tasks/qwen3.5-35b-a3b.md) for a filled-in example. Follow the [shared workflow](../README.md#reuse-the-environment-across-iterations) for execution and the [experiment records guide](../experiment-records.md) for results.
+See the [Qwen3.5-35B-A3B optimization task](../tasks/qwen3.5-35b-a3b.md) for a filled-in example. Agents follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and the [experiment records guide](../experiment-records.md) for results.

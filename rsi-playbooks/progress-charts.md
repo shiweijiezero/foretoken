@@ -16,10 +16,15 @@ Use the Python environment installed for Foretoken, which includes Matplotlib an
 ```bash
 mkdir -p results/my-experiment/figures
 cp rsi-playbooks/templates/progress-template.yaml results/my-experiment/figures/progress.yaml
+```
+
+In `progress.yaml`, fill in the title, comparison conditions and update time, then add the baseline and measurements as described below. Leave `baseline.value: null` until the baseline is measured. Generate the charts:
+
+```bash
 python3 rsi-playbooks/scripts/plot_progress.py results/my-experiment/figures/progress.yaml
 ```
 
-Fill in the title, comparison conditions and update time. The command writes `progress-milestones.png`, `progress-search.png` and their SVG versions beside the YAML file. The empty template produces pending-measurement charts. Insert the PNGs after the report's results tables using the [report template](templates/report-template.md).
+The command writes `progress-milestones.png`, `progress-search.png` and their SVG versions beside the YAML file. An unmeasured baseline produces pending-measurement charts. Insert the PNGs after the report's results tables using the [report template](templates/report-template.md).
 
 Use a separate file for each metric and comparison condition, such as `progress-c1-throughput.yaml` and `progress-c16-latency.yaml`. Pass multiple files to the same command; each output name uses its input's filename stem. For a style preview, copy the [synthetic example](templates/progress-example.yaml) to a temporary directory and render that copy.
 

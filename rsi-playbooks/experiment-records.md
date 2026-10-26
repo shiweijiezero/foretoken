@@ -52,6 +52,9 @@ results/decode/parallelism/
 │   ├── progress.yaml          # Chart data for one metric and comparison condition
 │   ├── progress-milestones.png
 │   └── progress-search.png
+├── team/                      # Agent-maintained team and observation notes
+│   ├── README.md              # Task, reminders and follow-up decisions
+│   └── observations/          # One dated note per Observer check
 └── iterations/tp2/
     ├── notes/
     │   ├── iteration.md       # Summaries, document links and decisions
@@ -80,9 +83,24 @@ The lead provides all members with a readable experiment directory, its host and
 
 Code stays in its assigned checkout or worktree. The proposal names its owner, host, absolute code path, branch and revision, links relevant files or a saved diff, and notes any uncommitted changes.
 
-Send a summary and complete file paths to the people who need the findings. Later messages add new findings, changes or questions without repeating all the background. Discuss open choices directly with the person responsible, record decisions in the notes, and continue other work while waiting for replies. Members can read one another's documents and code as needed. Each document has one writer; save substantial reviews or alternative proposals in the author's own files.
+Follow the [team's communication guidance](../.agents/skills/rsi/roles/common.md#share-findings-and-keep-working): brief coordination uses messages, while long explanations and material for several readers go in shared files. Send the summary and exact path, then describe later changes without repeating all the background. Discuss open choices directly with the person responsible, record decisions in the notes, and continue other work while waiting for replies. Each document has one writer; save substantial reviews or alternative proposals in the author's own files.
 
 Supporting research, scripts, preparation logs and cleanup records also belong under the iteration's `notes/`, organized as needed. Filenames such as `plan.md` and `analysis.md` are examples. Benchmark commands create missing iteration notes without replacing existing content; members maintain the report and additional files. Keep original run artifacts under `runs/`. Before deleting a referenced checkout, preserve its required code and update the links; retain cited evidence.
+
+## Keep team and session records
+
+The Observer finds research notes, results and resource observations from the task and experiment directory, then locates the lead's and members' session files. The lead need not prepare an index or find files for it.
+
+Use the runtime's saved session files. Common locations are:
+
+- Claude Code: JSONL under `~/.claude/projects/`, including a session's `subagents/` files. See [session records](https://code.claude.com/docs/en/sub-agents#resume-subagents).
+- Codex: rollout JSONL under `$CODEX_HOME/sessions/`; `CODEX_HOME` defaults to `~/.codex`. See [state locations](https://learn.chatgpt.com/docs/config-file/config-advanced#config-and-state-locations).
+
+Paths vary with configuration and version. The Observer identifies this task's files from working directories, timestamps, session IDs and parent/child metadata, then records the actual paths.
+
+Prefer original files, or use the runtime's read-only interface or export and identify the source. Label summaries and partial records rather than treating them as full transcripts. Inspect only this task's records, preserve the originals and use existing task access for remote hosts. Do not ask members for status or explanations of their work.
+
+The lead records the task link, check interval, next check time and reminder identity in `<output-dir>/team/README.md`. Observers save dated notes under `team/observations/`, reporting every [checklist item](../.agents/skills/rsi/roles/observer.md#work-through-the-checklist), including passed, not-applicable and unresolved items. The lead links each note and records actions, owners or reasons for declining suggestions for the next check. Link existing task records rather than creating another queue. The overall report can link team notes separately from performance measurements.
 
 ## Analyze results
 
@@ -123,6 +141,6 @@ Update the report after each measured iteration, including failed attempts, and 
 
 Write for readers who did not participate in the experiment, separating supported conclusions from hypotheses and pending validation. Before measurements are available, state the objective, starting conditions and what remains unmeasured.
 
-Every report update includes updating the chart data, regenerating both figures and viewing them to check the result. Experimenters supply the evidence; the writer selects comparable measurements and cumulative versions.
+Every report update includes updating the chart data, regenerating both figures and viewing them to check the result.
 
-On pause, stop, resumption or completion, update the same report and charts with the reason, results obtained, retained changes and unfinished validation. Replace obsolete plans with the actual state and share the report path again. Keep the original start and deadline when resuming.
+On pause, stop or completion, update the same report with the reason, results obtained, retained changes and unfinished validation. Replace obsolete plans with the actual state and share the report path again.
