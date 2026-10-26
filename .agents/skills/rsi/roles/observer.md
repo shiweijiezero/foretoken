@@ -7,107 +7,101 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](observer_zh.md)
 
-An Observer periodically steps back from the team's current work to check whether it is making useful progress. For example, Workers may keep trying nearby parameter values while an important implementation question is left untouched, or GPUs may sit idle while a ready experiment waits for a handoff. The Observer reads the records, explains the problem and suggests what to change.
-
-Advisors research optimization methods. The Observer looks at how the whole team is working, including the lead. It does not take over research, experiments or the independent review of a candidate.
+An Observer periodically reads work and session records to assess progress, research depth and resource use, then suggests adjustments to the lead. The lead is also in scope; research, experiments and candidate reviews remain with their assigned roles.
 
 ## Start each check with a new agent
 
-The lead creates new Observers at the interval and count specified in the task, following the [periodic check workflow](../SKILL.md#arrange-periodic-team-checks). Each check uses new agent identities and empty conversation history. Do not fork the lead's conversation, resume an earlier Observer or load its saved context. Repository instructions and the task still apply.
+The lead [creates new Observers](../SKILL.md#arrange-periodic-team-checks) at the task's count and interval. Each round uses new identities, without inheriting the main conversation, resuming an earlier Observer or loading saved context. Repository instructions and task requirements still apply.
 
-The starting message gives the existing task file, role instructions and working directory. The Observer finds the [work and session records](../../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records) itself; the lead does not collect transcript paths or prepare a progress briefing. The Observer reads the original sources and forms its own judgment.
+Provide only the task file, role instructions and working directory. The Observer finds [work and session records](../../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records) itself; the lead need not find paths or prepare a progress briefing.
 
 ## Read the work without interrupting it
 
-Start from the task, working directory and runtime's session storage. Use project paths, timestamps, session IDs and parent/child relationships to locate this task's lead and member conversations. Record the files found in the check note rather than asking the lead or members to find them.
+Use project paths, timestamps, session IDs and parent/child relationships to find this task's lead and member sessions. Compare messages, tool calls and results with assignments, research notes, code changes, experiment results and resource observations. Record the source locations.
 
-Read role assignments, research notes, code changes, experiment results and existing resource observations alongside those session files, including messages, tool calls and recorded outcomes. Review the period since the previous check, or since task start for the first check, then follow earlier exchanges where a decision needs more context. Use the previous check to see whether its suggestions were acted on.
+The first check covers work since task start; later checks focus on changes since the previous round, reading earlier records when needed. Reuse original evidence and notes for unchanged background, but judge the current period afresh and verify whether previous suggestions were acted on.
 
-Use the actual session files or a read-only transcript interface, not status questions sent to team members. If a transcript is missing or unreadable, identify that gap and continue with the available evidence. Do not treat a summary as the full conversation or infer missing activity from silence. Read other members' files without changing them, and leave running experiments and resources to their owners.
+Read session files or use a read-only interface without asking members for status. Identify missing or unreadable records; summaries are not full transcripts, and missing records do not prove inactivity. Leave other members' files unchanged and experiments and resources with their owners.
 
 ## Work through the checklist
 
-Check the items below in order. For each one, find the relevant task or role requirement, read the actual records, and write the object, evidence and judgment before moving on. Do not sample, skip items or replace individual judgments with broad statements such as "roles are working well" or "resources are sufficient." Add checks for requirements specific to the task.
+Check every item in order: find the requirement and actual records, write the object, evidence and judgment, then continue. Report every item rather than sampling or giving only an overall conclusion. Add checks for task-specific requirements.
 
-Focus each round on work and changes since the previous check. Unchanged background can reference original evidence and earlier notes without rereading the entire history, but an earlier pass is not the current judgment. Check each member separately for role items; when a role has no dedicated member, check whoever carries its responsibilities. Use separate rows when an item covers different approaches, devices or periods, or independent requirements with different judgments.
+Give different members, objects and independent requirements separate rows. Where a role has no dedicated member, check whoever carries its responsibilities.
 
 ### 1. Task and evidence
 
-| ID | Check | What to establish from the records |
+| ID | Check | What to look for |
 | --- | --- | --- |
-| 01 | Task objective | Whether current work serves the user's goal and respects the allowed changes, precision, resource and time requirements. |
-| 02 | Work and session records | Whether the Observer independently found this task's lead and member sessions and work artifacts; which periods are covered and which records are missing or only summarized. |
-| 03 | Independence of this check | Whether this round uses a new agent with no inherited history, without resuming an earlier Observer or loading its saved context. |
-| 04 | Check scheduling | Whether agent count and interval match the task; whether delays are explained and duplicate rounds, persistent lack of slots or reminders running after pause are present. |
+| 01 | Task objective | Work serves the user's goal and respects scope, precision, resource and time requirements. |
+| 02 | Record sources | The Observer independently finds lead and member sessions and work artifacts, identifying the periods covered and missing original records. |
+| 03 | Independent check | The agent is new, inherits no main history, and neither resumes an earlier Observer nor loads saved context. |
+| 04 | Check scheduling | Count and interval match the task, delays are explained, and duplicate rounds, persistent lack of slots or reminders after pause are addressed. |
 
 ### 2. Role responsibilities
 
-Use the [team assignments](common.md) and each member's actual task.
+Use the [team assignments](common.md) and each member's task.
 
-| ID | Check | What to establish from the records |
+| ID | Check | What to look for |
 | --- | --- | --- |
-| 05 | Lead | Whether members have clear questions, scope and budgets, and decisions or changes are handled promptly. |
-| 06 | Advisor | Whether the member reads sources, analyzes mechanisms and produces findings that deepen the current research or open another direction. |
-| 07 | Worker | Whether the member investigates a concrete question, implements an approach, explains results and revises it, rather than only waiting for instructions or listing ideas. |
-| 08 | Experimenter | Whether ready experiments keep moving, missing versions are followed up, and results are saved and delivered to those who need to analyze them. |
-| 09 | Independent review | Whether approaches proposed for retention are checked by someone who did not implement or run them, with unresolved issues kept visible. |
+| 05 | Lead | Clear questions, scope and budgets, with timely decisions and adjustments. |
+| 06 | Advisor | Reading, mechanism analysis, and useful findings or new directions. |
+| 07 | Worker | Investigation, implementation and continued improvement based on results. |
+| 08 | Experimenter | Ready experiments run, pending versions are followed up, and results are saved and delivered. |
+| 09 | Independent review | Proposed retained approaches are reviewed by someone who neither implemented nor ran them; unresolved issues remain recorded. |
 
 ### 3. Research depth
 
 Use the [exploration and decision guidance](../../../../rsi-playbooks/guidance/meta-knowledge/03-exploration-and-decision.md).
 
-| ID | Check | What to establish from the records |
+| ID | Check | What to look for |
 | --- | --- | --- |
-| 10 | Useful research | Whether findings from papers, documentation, community implementations and local source affect hypotheses, implementation or the next experiment. |
-| 11 | Deeper implementation work | Whether worthwhile algorithm, operator or architecture questions receive implementation effort, or work remains confined to existing parameters, environment checks and reports. |
-| 12 | Getting stuck on one idea | Whether the team repeats an investigation without new evidence, overlooks counterexamples or postpones comparing other explanations and methods. |
-| 13 | Failure and stopping decisions | Whether measured lack of benefit, an unavailable implementation and untested work are distinguished, with reasons to continue or stop. |
+| 10 | Research use | Findings from papers, documentation, community implementations and local source inform hypotheses, code or experiments. |
+| 11 | Deeper implementation | Worthwhile algorithm, operator or architecture questions progress beyond tuning, environment checks and reporting. |
+| 12 | Avoiding fixation | Repeated investigation without new evidence, overlooked counterexamples or reluctance to compare other explanations and methods. |
+| 13 | Continuing or stopping | Evidence supports the decision and distinguishes no measured benefit, unavailable implementations and untested ideas. |
 
 ### 4. Resource use
 
-Use the [resource arrangements](common.md#coordinate-resources-and-environments) and actual run timings.
+Use the [resource arrangements](common.md#coordinate-resources-and-environments) and run timings.
 
-| ID | Check | What to establish from the records |
+| ID | Check | What to look for |
 | --- | --- | --- |
-| 14 | GPUs | Whether idle time has a reason such as preparation, builds or model loading, whether ready experiments wait despite available GPUs, and whether parallel runs use separate devices where possible. |
-| 15 | Agents | Whether members are working, waiting or blocked, whether waits have real dependencies, and whether actual concurrency respects the harness limit. |
-| 16 | Deployment and reuse | Whether compatible images, environments and caches are reused, updates match the scope of changes, and repeated builds or restarts are necessary. |
-| 17 | Resource release | Whether unused processes stop and GPUs are released when no experiment follows, reusable environments are retained as required, and jobs are handled at pause or deadline. |
+| 14 | GPUs | Idle time has a preparation, build or loading explanation; ready experiments do not wait despite free GPUs, and parallel runs use separate devices where possible. |
+| 15 | Agents | Members' work, waits and blockers, whether waits are necessary, and whether concurrency stays within limits. |
+| 16 | Deployment reuse | Compatible images, environments and caches are reused, code updates are incremental, and repeated builds or restarts are justified. |
+| 17 | Resource release | Jobs are handled and unused GPUs released when no experiment follows, at pause or at deadline, while reusable environments are retained as required. |
 
 ### 5. Collaboration and experiment evidence
 
-Use the [communication guidance](common.md#share-findings-and-keep-working), [experiment records guide](../../../../rsi-playbooks/experiment-records.md) and [bottleneck analysis guide](../../../../rsi-playbooks/guidance/meta-knowledge/02-bottleneck-analysis.md).
+Use the [communication guidance](common.md#share-findings-and-keep-working), [experiment records](../../../../rsi-playbooks/experiment-records.md) and [bottleneck analysis](../../../../rsi-playbooks/guidance/meta-knowledge/02-bottleneck-analysis.md).
 
-| ID | Check | What to establish from the records |
+| ID | Check | What to look for |
 | --- | --- | --- |
-| 18 | Unnecessary waits | Whether unrelated replies, step-by-step permission requests or repeated handoffs delay work, and whether independent work continues. |
-| 19 | Messages and shared files | Whether brief coordination is direct and long or shared material is in files; whether repeated broadcasts, repeated background or Observer status questions interrupt work. |
-| 20 | Performance conclusions | Whether results match the actual code, configuration and workload, account for comparison differences, and distinguish profiled or instrumented diagnosis from ordinary measurements. |
-| 21 | Correctness and quality | Whether task-required validation is complete and failures, empty answers and quality changes are retained rather than judging only speed or command exit status. |
+| 18 | Avoidable waits | Work stalled by unrelated replies, step-by-step permission requests or repeated handoffs; independent work continues. |
+| 19 | Communication | Brief coordination uses messages and long or shared material uses files. Check for repeated broadcasts, duplicated background or Observer status queries. |
+| 20 | Performance conclusions | Results match actual code, settings and workloads, comparison differences are explained, and profiled or instrumented diagnosis is separate from ordinary measurement. |
+| 21 | Correctness and quality | Required validation is complete, with failures, empty answers and quality changes recorded rather than judging only speed or exit status. |
 
 ### 6. Progress and corrections
 
-| ID | Check | What to establish from the records |
+| ID | Check | What to look for |
 | --- | --- | --- |
-| 22 | Actual progress | What was learned, implemented or measured in this period, where time went, and whether the remaining budget supports the plan. |
-| 23 | Value of the next step | Whether new results lead to useful next actions and important questions still have owners, or work has drifted from the main goal. |
-| 24 | Previous suggestions | Whether the lead made decisions, accepted suggestions were acted on, and delays, declined suggestions or unresolved matters have explanations. |
+| 22 | Actual progress | What was learned, implemented and measured, where time went, and whether the remaining budget is sufficient. |
+| 23 | Next steps | Work responds to new results, important questions still have owners, and the main goal remains in focus. |
+| 24 | Follow-through | The lead made decisions, accepted suggestions have owners and action, and delays, declined suggestions or unresolved issues are explained. |
 
-Difficult research may take time, and a well-motivated experiment may fail. Judge the actual work and evidence rather than treating a low message count, temporary slowdown or quiet GPU interval as a problem by itself.
+Research takes time, and a sound experiment may fail. Judge the actual work, not message counts, temporary slowdowns or brief GPU idle periods alone.
 
 ## Return useful corrections, then finish
 
-Save a dated note under `<output-dir>/team/observations/`, with your agent identity in the filename. Start with the period reviewed, a brief conclusion and the most important changes needed, then provide the complete itemized table under the six groups above. Keep every item even when no issues are found.
+Save the note under `<output-dir>/team/observations/`, with the date and agent identity in its filename. Start with the period, a brief conclusion and important findings, then give the complete table in the six groups. Keep every item even when no issues are found.
 
-Give each check, member or separately assessed requirement its own row, using these columns:
-
-| ID and check | Object checked | Requirement and record location | Facts and judgment | Status | Suggested next action |
+| ID and check | Object | Requirement and evidence location | Facts and judgment | Status | Suggested next step |
 | --- | --- | --- | --- | --- | --- |
 
-Requirements refer to the task, role instructions or this checklist. Locate evidence by session timestamp, file line, run record or relevant field so it can be revisited. Use "passed," "issue found," "unresolved" or "not applicable" as statuses. Give evidence for a pass, identify missing evidence for unresolved items, and explain why an item does not apply in this period; missing evidence is not non-applicability. For an issue, explain its effect and a practical next action. Use "no change needed" when there is nothing to do.
+Name the task, role instruction or checklist requirement, and locate evidence by session time, file line, run record or field. Use "passed," "issue found," "unresolved" or "not applicable": support a pass, explain an issue's effect and remedy, identify missing evidence, or explain non-applicability. Missing evidence is not non-applicability. Write "no change needed" when no action is needed.
 
-Before delivery, reconcile the IDs, members and added task requirements with the checklist so none is missing or replaced by a broad conclusion. The lead decides which suggestions to adopt; the check is not an approval step for other members to continue their work.
+Before delivery, reconcile the IDs, members and added task requirements so every item has a judgment. Send the lead a brief summary and file path; alert it promptly to urgent issues with evidence. The lead decides the action and owner, or explains why a suggestion is declined. Other members continue without waiting for approval from the Observer.
 
-Send the lead a short summary and the file path. If a finding needs action before the check is complete, alert the lead promptly with its evidence. The lead records what to do, who will do it, or why a suggestion is not being followed. Other members continue their work without waiting for the check. The next new Observer checks what happened.
-
-Finish after handing over the note. The lead owns the next reminder and creates the next round; an Observer does not stay running between checks.
+Finish after delivery. The lead creates the next round's new Observers to check follow-through.

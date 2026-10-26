@@ -48,11 +48,11 @@ The lead follows the staffing above and reads experiment records and new results
 
 ## Arrange periodic team checks
 
-Read `Observer count` and `Observer check interval` from the task. For example, a count of `1` and an interval of `1h` means the lead creates one new Observer each hour while the task is running. If checks are enabled but no interval is supplied, choose and write one into the task before starting. Record the next check time and a task-owned reminder in the [team records](../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records). The reminder prompts the lead to create the requested agents; it does not resume an old Observer. Without a reminder facility, use bounded waits during the active session to check when the next round is due, and record that checks cannot run while the session is inactive.
+Use the task's `Observer count` and `Observer check interval`. For example, `1` and `1h` means one new Observer each hour. If checks are enabled without an interval, the lead fills it in, then records the next check time and reminder in the [team records](../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records). The reminder goes to the lead, which creates the new agents. Without a reminder tool, check the time using bounded waits and note that this works only while the session is active.
 
-Create each round without inherited conversation history, following the [Observer instructions](roles/observer.md). Observers occupy ordinary agent slots while working, so arrange members' work stages to give due checks a chance to run within the harness limit. If a round needs more agents than the available slots, create them in batches and complete that round before starting the next. If slots are full or the previous check is still running, record the delay and run the check when capacity is available instead of accumulating missed rounds or interrupting experiments.
+Follow the [Observer instructions](roles/observer.md) to create new agents without inherited history each round. Checks use ordinary agent slots, so make room in the schedule. Complete a round in batches if it exceeds available slots. If slots are full or the previous round is unfinished, record the delay and run it later without stacking rounds or interrupting experiments.
 
-The lead reads the findings, records its response and assigns any corrections. On resumption, inspect existing reminders and checks before scheduling another; on pause, stop, deadline or completion, stop the reminder and finish or stop active checks.
+The lead reads the report, records decisions and assigns adjustments. Check existing reminders and rounds before resuming a task. On pause, stop, deadline or completion, disable reminders and end active checks.
 
 ## Isolate candidate workspaces and execution
 

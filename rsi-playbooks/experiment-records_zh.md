@@ -85,13 +85,18 @@ results/decode/parallelism/
 
 ## 保存团队与会话记录
 
-Observer 需要看到团队实际做过什么，以及决定是怎样形成的。它从任务文件和实验目录找到调研笔记、结果与资源采样，再自行定位主 Agent 和成员的会话文件。主 Agent 不为它另做会话索引，也不代它找文件。
+Observer 从任务文件和实验目录找到调研笔记、结果和资源采样，再自行查找主 Agent 与成员的会话文件，无需主 Agent 整理索引或代找文件。
 
-会话记录直接使用 Claude Code 或 Codex 已经保存的文件。Claude Code 常见位置是 `~/.claude/projects/` 下的 JSONL，包括会话目录中的 `subagents/` 文件；Codex 常见位置是 `$CODEX_HOME/sessions/` 下的 rollout JSONL，默认 home 为 `~/.codex`。Observer 根据工作目录、时间、session ID 和父子关系等元数据识别本任务的文件，把实际路径记入巡查笔记。不同配置和版本可能改变目录结构。参见 [Claude Code 会话记录](https://code.claude.com/docs/en/sub-agents#resume-subagents)和 [Codex 状态目录](https://learn.chatgpt.com/docs/config-file/config-advanced#config-and-state-locations)。
+直接使用运行环境保存的会话文件，常见位置如下：
 
-优先直接读取这些文件。如果运行环境通过只读接口或导出提供会话，Observer 就使用该方式并记下来。只有摘要或部分内容时要明确注明，不能当成原始消息、工具调用和结果的完整记录。只检查本任务的会话，原文件留在运行环境的保存位置；远端记录使用任务已有的访问信息。成员无需代找会话文件，也无需再发消息复述工作。
+- Claude Code：`~/.claude/projects/` 下的 JSONL，包括会话目录中的 `subagents/` 文件，见[会话记录说明](https://code.claude.com/docs/en/sub-agents#resume-subagents)。
+- Codex：`$CODEX_HOME/sessions/` 下的 rollout JSONL；`CODEX_HOME` 默认是 `~/.codex`，见[状态目录说明](https://learn.chatgpt.com/docs/config-file/config-advanced#config-and-state-locations)。
 
-主 Agent 在 `<output-dir>/team/README.md` 记录任务链接、巡查间隔、下次检查时间和提醒标识。每名 Observer 在 `team/observations/` 下写自己的带日期笔记，按 [Observer 清单](../.agents/skills/rsi/roles/observer_zh.md#按清单逐项检查)逐项报告对象、证据、判断、状态和建议，包括通过、不适用及待核实的项目。主 Agent 链接笔记，记下采取的行动和负责人，或不采纳建议的原因。后续巡查据此检查变化。已有任务记录直接链接，不另建一套队列；整体报告可以单独链接团队笔记，不把巡查意见混入性能测量。
+具体路径随配置和版本变化。Observer 根据工作目录、时间、session ID 和父子关系识别本任务的文件，将实际路径记入巡查笔记。
+
+优先读原文件，也可使用运行环境的只读接口或导出，并注明来源。摘要或部分内容要标明，不能当作完整会话。只检查本任务的记录，保留原文件，远端访问沿用任务已有信息，不向成员询问或要求复述。
+
+主 Agent 在 `<output-dir>/team/README.md` 记录任务链接、巡查间隔、下次时间和提醒标识。Observer 在 `team/observations/` 下保存带日期的笔记，按[清单](../.agents/skills/rsi/roles/observer_zh.md#按清单逐项检查)逐项报告，保留通过、不适用和待核实的项目。主 Agent 链接笔记，记录行动、负责人或不采纳的原因，供下轮核查。直接链接已有任务记录，不另建队列；整体报告可单独链接团队笔记，不与性能测量混写。
 
 ## 分析结果
 

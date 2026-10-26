@@ -85,13 +85,18 @@ Supporting research, scripts, preparation logs and cleanup records also belong u
 
 ## Keep team and session records
 
-An Observer needs to see what the team actually did, including how decisions were reached. It locates research notes, results and resource observations from the task and experiment directory, then finds the lead's and members' session files itself. The lead does not prepare a separate transcript index or search for files on its behalf.
+The Observer finds research notes, results and resource observations from the task and experiment directory, then locates the lead's and members' session files. The lead need not prepare an index or find files for it.
 
-Use the session files written by Claude Code or Codex. Claude Code commonly stores JSONL transcripts under `~/.claude/projects/`, including a session's `subagents/` files. Codex commonly stores rollout JSONL files under `$CODEX_HOME/sessions/`, with `~/.codex` as the default home. The Observer uses working directories, timestamps, session IDs and parent/child metadata to identify this task's files, then records the actual paths in its note. Configuration and runtime versions may change the layout. See [Claude Code session records](https://code.claude.com/docs/en/sub-agents#resume-subagents) and [Codex state locations](https://learn.chatgpt.com/docs/config-file/config-advanced#config-and-state-locations).
+Use the runtime's saved session files. Common locations are:
 
-Prefer direct reading of those files. If the runtime provides transcripts through a read-only interface or export instead, the Observer uses that route and records it. Identify when only a summary or partial transcript is available; it is not a substitute for the original messages, tool calls and results. Inspect only this task's sessions, keep original files in the runtime's storage, and use existing task access information for remote hosts. Members do not need to find transcripts or repeat their work in status replies.
+- Claude Code: JSONL under `~/.claude/projects/`, including a session's `subagents/` files. See [session records](https://code.claude.com/docs/en/sub-agents#resume-subagents).
+- Codex: rollout JSONL under `$CODEX_HOME/sessions/`; `CODEX_HOME` defaults to `~/.codex`. See [state locations](https://learn.chatgpt.com/docs/config-file/config-advanced#config-and-state-locations).
 
-The lead keeps the task link, check interval, next check time and reminder identity in `<output-dir>/team/README.md`. Each Observer writes its own dated file under `team/observations/`, reporting the object, evidence, judgment, status and suggestion for every item in the [Observer checklist](../.agents/skills/rsi/roles/observer.md#work-through-the-checklist), including passed, not-applicable and unresolved items. The lead links the note and records resulting actions and owners, or the reason for not taking a suggestion. Later checks use these records to see what changed. Link existing task records rather than maintaining another queue here. The overall report can link these team notes separately from performance measurements.
+Paths vary with configuration and version. The Observer identifies this task's files from working directories, timestamps, session IDs and parent/child metadata, then records the actual paths.
+
+Prefer original files, or use the runtime's read-only interface or export and identify the source. Label summaries and partial records rather than treating them as full transcripts. Inspect only this task's records, preserve the originals and use existing task access for remote hosts. Do not ask members for status or explanations of their work.
+
+The lead records the task link, check interval, next check time and reminder identity in `<output-dir>/team/README.md`. Observers save dated notes under `team/observations/`, reporting every [checklist item](../.agents/skills/rsi/roles/observer.md#work-through-the-checklist), including passed, not-applicable and unresolved items. The lead links each note and records actions, owners or reasons for declining suggestions for the next check. Link existing task records rather than creating another queue. The overall report can link team notes separately from performance measurements.
 
 ## Analyze results
 
