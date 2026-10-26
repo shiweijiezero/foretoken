@@ -28,8 +28,6 @@ Results include aggregate metrics and per-request records.
 | Mean reported cached input tokens | Mean `usage.prompt_tokens_details.cached_tokens` among successful requests that report it |
 | Benchmark duration (s) | Duration of the whole benchmark run |
 
-Total output tokens appear in terminal summaries, W&B and comparison CSVs alongside duration and throughput. When older results lack this field, `foretoken plot` derives it from complete successful-request records. Insufficient evidence remains unavailable, and the original files are unchanged.
-
 A failed conversation turn skips the remaining turns without replacement. `not_executed_reasons` distinguishes these skips (`failed_predecessor`) from requests excluded by the time limit (`duration`). `failure_reasons` groups recorded failures by HTTP status and error message.
 
 Conversation workloads also report attempted and completed conversations, HTTP turns, average turns per conversation, and conversation starts per second. Successful requests and successfully completed conversations are counted separately.
