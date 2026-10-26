@@ -33,19 +33,21 @@ foretoken plot results/baseline results/candidate
 
 ```bash
 foretoken plot results/baseline results/candidate \
-  --x-metric decode_interactivity_p95 \
+  --x-metric decode_interactivity --x-stat p95 \
   --y-metric total_tokens_per_second_per_gpu \
   --frontier max-max --label-values --columns 2
 ```
 
-`--x-metric` 和 `--y-metric` 接受已保存的标量指标名。自选坐标轴默认按扫描顺序连接各点；用 `--frontier` 指定横纵轴的优化方向，可选 `max-max`、`min-max`、`max-min` 或 `min-min`。`--frontier none` 连接全部扫描点。
+用 `--x-metric` 或 `--y-metric` 选择指标，用 `--x-stat` 或 `--y-stat` 选择统计量。每 GPU 总 token 吞吐量这类标量指标不需要统计量。自选坐标轴默认按扫描顺序连接各点；用 `--frontier` 指定横纵轴的优化方向，可选 `max-max`、`min-max`、`max-min` 或 `min-min`。`--frontier none` 连接全部扫描点。
 
-用 `decode_interactivity_p<N>` 选择解码速度分位数，`N` 为 0 到 100 之间的数，可以包含小数。例如，一条命令可比较多个分位数：
+`decode_interactivity` 使用 `p<N>` 选择分位数，`N` 为 0 到 100 之间的数，可以包含小数。一条命令可以比较多个分位数：
 
 ```bash
 foretoken plot results/baseline results/candidate \
-  --metric decode_interactivity_p50 decode_interactivity_p95 decode_interactivity_p99.9
+  --metric decode_interactivity --stat p50 p95 p99.9
 ```
+
+`--metric` 和 `--stat` 有多个值时，单个指标或统计量会应用到另一列表的所有值；否则两个列表必须等长，按顺序配对。例如，`--metric ttft tpot --stat p95 p99` 选择 TTFT P95 和 TPOT P99。
 
 解码速度基于成功请求的 TPOT，总吞吐量中的缓存输入只计一次。定义和所需数据见[绘图派生指标](metrics_zh.md#绘图派生指标)。本次测量的 GPU 数不可用时，用 `--gpu-count N` 提供其 GPU 总数；若与已记录的本次测量容量冲突则报错。
 
@@ -83,10 +85,10 @@ gpu_hour_cost:
 ```bash
 foretoken plot results/baseline results/candidate \
   --pricing pricing.yaml --min-interactivity 200 \
-  --interactivity-metric decode_interactivity_p95 --columns 2
+  --interactivity-metric decode_interactivity --interactivity-stat p95 --columns 2
 ```
 
-命令在每组固定负载下，为各方案选择平均 P95 解码速度达到 200 tokens/s/user、且平均收入最高的实测点。`--interactivity-metric` 独立于绘图坐标轴，选择门槛所用的速度统计，默认为 `decode_interactivity_p90`。不加 `--min-interactivity` 则考虑全部测量点。选点只使用实测数据，不插值；收入和利润先按每次运行计算，再汇总重复测量。
+命令在每组固定负载下，为各方案选择平均 P95 解码速度达到 200 tokens/s/user、且平均收入最高的实测点。`--interactivity-metric` 和 `--interactivity-stat` 独立于绘图坐标轴，分别选择门槛使用的指标和统计量，默认值为 `decode_interactivity` 和 `p90`。不加 `--min-interactivity` 则考虑全部测量点。选点只使用实测数据，不插值；收入和利润先按每次运行计算，再汇总重复测量。
 
 收益估算需要所有成功请求的输入、输出和缓存输入用量，以及 GPU 数量。缺失的缓存用量保持不可用。柱状图表示算力成本、盈利或亏损，并标出总收入；CSV 保留每个点的条件满足情况和选择状态。
 
@@ -94,10 +96,12 @@ foretoken plot results/baseline results/candidate \
 
 | 输出 | 内容 |
 | --- | --- |
-| `tradeoff-*.csv` | 图中坐标、配对样本数、标准差及可用的基准变化 |
-| `economics-*.csv` | 价格、每 GPU 每小时的估算值、重复次数、所选交互速度指标及运行点选择 |
+| `tradeoff-*.csv` | 图中坐标、所选指标与统计量、配对样本数、标准差及可用的基准变化 |
+| `economics-*.csv` | 价格、每 GPU 每小时的估算值、重复次数、所选交互速度指标与统计量及运行点选择 |
 | `comparison-summary.csv` | 各方案、各负载的标量指标统计 |
 | 使用 `--base` 时的 `comparison-base.csv` | 基准与候选的数值、相对变化、失败情况、条件差异和结果路径 |
+
+指标与统计量列保留每个选择，`x_metric_key`、`interactivity_key` 等字段标识导出记录中对应的实际数值。
 
 误差条表示重复运行的样本标准差，只有一次测量时不提供。权衡图的两个轴，以及带速度下限的收益选点，使用同一组可用的重复运行；标量表分别统计各指标的可用样本。指标缺失或基准为零时，对应比较保持不可用，CSV 中标明状态。
 
@@ -107,6 +111,8 @@ foretoken plot results/baseline results/candidate \
 foretoken plot results/baseline --metric ttft generation_tokens_per_second
 ```
 
-命令导出首 token 延迟分布和输出吞吐量汇总图。跨运行的性能对照使用整次运行的指标，例如 `generation_tokens_per_second` 和 `ttft_p95_seconds`。显式指定权衡图选项或 `--pricing` 后，命令导出所选图形和表格；可加 `--metric` 同时生成其他指标图。评测分数见[质量结果](eval/README_zh.md#查看评分)。
+命令导出首 token 延迟分布和输出吞吐量汇总图。跨运行的性能对照使用整次运行的摘要。显式指定权衡图选项或 `--pricing` 后，命令导出所选图形和表格；可加 `--metric` 同时生成其他指标图。评测分数见[质量结果](eval/README_zh.md#查看评分)。
+
+用 `--metric ttft --stat p95` 选择已保存的 P95 摘要，用 `--metric latency --stat mean` 选择平均延迟。延迟、TTFT、TPOT 和 ITL 的统计量必须已存在于保存结果中；也可以直接选择 `ttft_p95_seconds` 这类已保存的标量字段。
 
 添加 `--sync_wandb`，可将已有结果及单次运行图表上传到原来的 W&B 运行，跨运行对照图保留在本地。恢复和发布行为见 [W&B 结果补传](perf/wandb_zh.md#恢复上传)。

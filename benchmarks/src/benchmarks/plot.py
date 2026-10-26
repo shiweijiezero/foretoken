@@ -45,13 +45,13 @@ def main(argv: Sequence[str] | None = None) -> None:
                 *options.sources,
                 output_dir=output,
                 columns=options.columns,
-                metrics=options.metrics,
+                metrics=tuple(selection.key for selection in options.metrics),
                 methods=options.methods,
                 base=options.base,
                 tradeoff=options.tradeoff,
                 pricing_path=options.pricing,
                 min_interactivity=options.min_interactivity,
-                interactivity_metric=options.interactivity_metric,
+                interactivity=options.interactivity,
                 gpu_count=options.gpu_count,
             )
             owner = artifacts.source

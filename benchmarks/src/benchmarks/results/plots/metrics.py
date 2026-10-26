@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-from benchmarks.config.plot import DEFAULT_INTERACTIVITY_METRIC, decode_interactivity_percentile
+from benchmarks.config.plot import DEFAULT_INTERACTIVITY, decode_interactivity_percentile
 from benchmarks.results.plots.data import _numeric
 from benchmarks.results.recording.database import read_records
 from benchmarks.results.recording.requests import (
@@ -50,7 +50,7 @@ def enrich_plot_metrics(
     throughput = dict(metrics.get("throughput", {}))
     result = {**metrics, "throughput": throughput}
     requested = (
-        DERIVED_PLOT_METRICS | {DEFAULT_INTERACTIVITY_METRIC}
+        DERIVED_PLOT_METRICS | {DEFAULT_INTERACTIVITY.key}
         if selected is None else derived_plot_metrics(selected)
     )
     percentiles = {name: percentile for name in requested

@@ -48,7 +48,7 @@ def render_tradeoffs(
     rows = _coordinates(points, summary, options, selected)
     if not any(row["status"] == "measured" for row in rows):
         if strict:
-            raise ValueError(f"No paired measurements for {options.x_metric} and {options.y_metric}; "
+            raise ValueError(f"No paired measurements for {options.x.key} and {options.y.key}; "
                              "per-GPU axes require recorded GPU capacity or --gpu-count")
         return
     base = base_methods[0] if len(base_methods) == 1 else None
@@ -104,7 +104,7 @@ def render_tradeoffs(
                         annotations.append(((start[0] + row["x"]) / 2, (start[1] + row["y"]) / 2,
                                             f"{options.compare_axis}: {row['change_percent']:+.1f}%", "#333333"))
             title = f"Performance trade-off · {group}" + (f"\n{details}" if details else "")
-            _style(axis, title, _metric_display(options.x_metric)[1], _metric_display(options.y_metric)[1])
+            _style(axis, title, _metric_display(options.x.key)[1], _metric_display(options.y.key)[1])
             axis.margins(x=0.16, y=0.19)
             if len(panel_methods) > 1:
                 _legend(figure, axis, columns)
@@ -119,7 +119,7 @@ def _coordinates(
     """Pair axes within each repetition before computing their mean and error bars."""
     coordinates = paired_summaries(
         [point for point in points if _method(point) in methods],
-        (options.x_metric, options.y_metric),
+        (options.x.key, options.y.key),
     )
     attempts = {(_method(row), str(row["combination"])): row for row in summary}
     identities = {(_method(point), str(point["combination"])): point for point in points
@@ -133,10 +133,11 @@ def _coordinates(
                "status": "measured", "paired_samples": 0,
                "runs": counts.get("runs"), "requested_runs": counts.get("requested_runs"),
                "failed_runs": counts.get("failed_runs"), "error_type": "run stddev"}
-        for coordinate, metric in (("x", options.x_metric), ("y", options.y_metric)):
-            values = coordinates.get((method, combination), {}).get(metric)
-            scale, label = _metric_display(metric)
-            row.update({f"{coordinate}_metric": metric, f"{coordinate}_axis": label,
+        for coordinate, selection in (("x", options.x), ("y", options.y)):
+            values = coordinates.get((method, combination), {}).get(selection.key)
+            scale, label = _metric_display(selection.key)
+            row.update({f"{coordinate}_metric": selection.metric, f"{coordinate}_stat": selection.stat,
+                        f"{coordinate}_metric_key": selection.key, f"{coordinate}_axis": label,
                         coordinate: values["mean"] * scale if values else None,
                         f"{coordinate}_stddev": values["stddev"] * scale
                         if values and values["stddev"] is not None else None})
