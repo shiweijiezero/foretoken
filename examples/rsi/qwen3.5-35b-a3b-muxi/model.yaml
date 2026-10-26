@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: ModelService
+metadata:
+  name: qwen3-5-35b-a3b
+spec:
+  model: Qwen/Qwen3.5-35B-A3B
+  source: hf
+  backend: vllm
+  replicas: 1
+  nodes: 1
+  resources:
+    requests:
+      cpu: "8"
+      memory: 96G
+      gpu:
+        count: 2
+    limits:
+      cpu: "24"
+      memory: 192G
+  timeouts:
+    startup: 30m
+    drain: 2m
+  engineArgs:
+    dtype: bfloat16
+    tensor-parallel-size: 2
+    max-model-len: 36864
+    max-num-seqs: 16
+    max-num-batched-tokens: 4096
+    async-scheduling: true
+    speculative-config:
+      method: mtp
+      num_speculative_tokens: 4
+  env:
+    # Use queued MACA dispatch to avoid direct-dispatch memory faults.
+    MACA_DIRECT_DISPATCH: "0"
+    MACA_CPU_THREAD_POLICY: "-1"
+    VLLM_USE_V2_MODEL_RUNNER: "1"
+    VLLM_GDN_DECODE_KERNEL: triton

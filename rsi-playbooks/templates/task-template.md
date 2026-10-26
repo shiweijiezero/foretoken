@@ -39,4 +39,4 @@ The parallel-experiment limit counts independent experiments running at once; re
 
 Workloads can reference existing configurations or [recipes](../../benchmarks/docs/recipes.md). For multiple workload groups, specify whether objectives apply to each group or to an aggregate result.
 
-See the [Qwen3.5-35B-A3B optimization task](../tasks/qwen3.5-35b-a3b.md) for a filled-in example. Agents follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and the [experiment records guide](../experiment-records.md) for results.
+See the Qwen3.5-35B-A3B tasks for [NVIDIA](../tasks/qwen3.5-35b-a3b-nvidia.md) and [MetaX](../tasks/qwen3.5-35b-a3b-muxi.md) for filled-in examples. Agents follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and the [experiment records guide](../experiment-records.md) for results.

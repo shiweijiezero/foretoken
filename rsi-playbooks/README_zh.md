@@ -15,7 +15,7 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 ```
 
-以 [Qwen3.5-35B-A3B 任务](tasks/qwen3.5-35b-a3b_zh.md)或[任务模板](templates/task-template_zh.md)为起点，编写自己的任务文件，例如 `my_docs/rsi/my-task_zh.md`。`my_docs/` 已被 Git 忽略，可用于保存本地任务。
+以 [Qwen3.5-35B-A3B NVIDIA 任务](tasks/qwen3.5-35b-a3b-nvidia_zh.md)为起点，其他硬件任务见[已有任务](tasks/README_zh.md)。自定义任务可通过[任务模板](templates/task-template_zh.md)编写，例如保存为 `my_docs/rsi/my-task_zh.md`。`my_docs/` 已被 Git 忽略。
 
 ### 2. 修改任务设置
 
@@ -32,7 +32,7 @@ cd foretoken
 
 ### 3. 启动 Agent
 
-下面使用前面准备的任务文件。文件名不同，就替换指令中的路径。
+下面以 NVIDIA 任务为例，使用自定义任务时替换路径。
 
 #### Claude Code
 
@@ -43,7 +43,7 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 在会话中输入：
 
 ```text
-/goal 使用 RSI skill 和 Agent Team，完成 my_docs/rsi/my-task_zh.md 中的优化任务。
+/goal 使用 RSI skill 和 Agent Team，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia_zh.md 中的优化任务。
 ```
 
 #### Codex
@@ -51,7 +51,7 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 在仓库目录打开 Codex，输入：
 
 ```text
-/goal 使用 RSI skill，完成 my_docs/rsi/my-task_zh.md 中的优化任务。
+/goal 使用 RSI skill，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia_zh.md 中的优化任务。
 ```
 
 ## 查看进展

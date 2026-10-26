@@ -39,4 +39,4 @@ Observer 数量指每轮新建的巡查 Agent 数，不是常驻人数。省略�
 
 评测负载可以引用已有配置或 [recipes](../../benchmarks/docs/recipes_zh.md)；多组负载的目标应说明按各组还是整体结果判断。
 
-填写可参考 [Qwen3.5-35B-A3B 优化任务](../tasks/qwen3.5-35b-a3b_zh.md)。Agent 按 [RSI skill](../../.agents/skills/rsi/SKILL_zh.md)执行，运行结果按[实验记录手册](../experiment-records_zh.md)保存。
+填写可参考适用于 [NVIDIA](../tasks/qwen3.5-35b-a3b-nvidia_zh.md) 和[沐曦](../tasks/qwen3.5-35b-a3b-muxi_zh.md)的 Qwen3.5-35B-A3B 优化任务。Agent 按 [RSI skill](../../.agents/skills/rsi/SKILL_zh.md)执行，运行结果按[实验记录手册](../experiment-records_zh.md)保存。

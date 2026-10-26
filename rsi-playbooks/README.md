@@ -15,7 +15,7 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 ```
 
-Use the [Qwen3.5-35B-A3B task](tasks/qwen3.5-35b-a3b.md) or [task template](templates/task-template.md) to write your task file, for example `my_docs/rsi/my-task.md`. The `my_docs/` directory is ignored by Git and can hold local tasks.
+Start with the [Qwen3.5-35B-A3B NVIDIA task](tasks/qwen3.5-35b-a3b-nvidia.md). Other hardware tasks are listed in [existing tasks](tasks/README.md). To define your own, use the [task template](templates/task-template.md) and save it, for example, as `my_docs/rsi/my-task.md`. The `my_docs/` directory is ignored by Git.
 
 ### 2. Set the task requirements
 
@@ -32,7 +32,7 @@ Confirm the following settings. Leave choices to the agents where you do not nee
 
 ### 3. Start the agents
 
-The commands below use the task file prepared above. Replace the path if you chose another filename.
+The commands below use the NVIDIA task. Replace the path to use your own task file.
 
 #### Claude Code
 
@@ -43,7 +43,7 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 Enter in the session:
 
 ```text
-/goal Use the RSI skill and an Agent Team to complete my_docs/rsi/my-task.md.
+/goal Use the RSI skill and an Agent Team to complete rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia.md.
 ```
 
 #### Codex
@@ -51,7 +51,7 @@ Enter in the session:
 Open Codex in the repository and enter:
 
 ```text
-/goal Use the RSI skill to complete my_docs/rsi/my-task.md.
+/goal Use the RSI skill to complete rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia.md.
 ```
 
 ## Follow progress
