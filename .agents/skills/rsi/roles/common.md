@@ -19,7 +19,7 @@ With that shared understanding, each member studies the source, configuration an
 
 ## Assign complete questions
 
-The lead gives each research question an owner, explains what is already known and what needs to be learned, and provides the relevant code, references, configuration and experiment records. That owner follows the question through investigation, implementation and analysis. Advisors and Workers begin reading papers, comparing methods and inspecting source while the environment is being prepared.
+The lead gives each research question an owner, explains what is already known and what needs to be learned, and provides the relevant code, references, configuration and experiment records. That owner follows the question through investigation, implementation and analysis. Assign environment preparation separately so Advisors and Workers can proceed with source analysis, implementation and checks that do not need that environment.
 
 Each assignment explains what may change, which workloads and generation settings must stay the same, and how much time and compute are available. Research tests uncertain benefits; a speedup need not be proven before implementation begins. Also name who will run the experiment, which checkout and environment to use, and where to save results. Members work independently within these agreements and ask the lead to coordinate changes to priorities, resource budgets, shared environments or comparison conditions.
 

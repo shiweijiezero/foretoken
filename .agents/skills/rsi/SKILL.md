@@ -18,7 +18,7 @@ Before starting, every role [learns how Foretoken works](roles/common.md#learn-t
 
 The team starts experiments only when the user requests execution or resumption. A new task records its start and deadline; a resumed task first checks existing jobs and results and keeps the original time budget. A supplied configuration is a starting point that can evolve with evidence. If none is supplied, the team records an initial approach for comparison. The team builds on existing findings and continues until the task's end conditions are met.
 
-While the Experimenter prepares the runtime and initial measurements, Advisors and Workers begin reading papers, official documentation, community implementations and local source to identify worthwhile questions. Work that can use these sources need not wait for available GPUs or a complete profile.
+Start research and implementation alongside environment preparation. The Experimenter prepares the runtime and initial measurements, Advisors search and analyze sources, and Workers develop key changes and run available local checks. While the environment is unavailable, prioritize implementation and exploration that can proceed independently; complete environment-dependent validation when it is ready.
 
 Before allocating resources, the lead checks the task's nodes, current users and available GPU windows, following the [resource coordination guidance](roles/common.md#coordinate-resources-and-environments). If a node cannot be used, the lead records the reason and addresses problems that can be resolved.
 
