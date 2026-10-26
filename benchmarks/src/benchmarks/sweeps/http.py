@@ -8,8 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import replace
-from pathlib import Path
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, cast
 
 from loguru import logger
 from pydantic import ConfigDict, TypeAdapter, ValidationError
@@ -20,6 +19,8 @@ from benchmarks.config.benchmark import (
     ParameterSweepConfig,
     normalize_output_token_limit,
     parse_duration_seconds,
+    select_service,
+    service_choice,
 )
 from benchmarks.config.decoding import (
     BOOLEAN,
@@ -52,10 +53,6 @@ _DATASET_WEIGHTS = TypeAdapter(str | list[float], config=ConfigDict(strict=True,
 _WEIGHT_VALUES = TypeAdapter(list[float], config=ConfigDict(hide_input_in_errors=True))
 _SLO_CRITERIA = TypeAdapter(dict[str, str] | list[dict[str, str]], config=ConfigDict(strict=True, hide_input_in_errors=True))
 _EXTRA_BODY = TypeAdapter(dict[str, Any], config=ConfigDict(strict=True, hide_input_in_errors=True))
-_SERVICE_CHOICE = TypeAdapter(
-    dict[Literal["name", "path", "url", "model", "health_url"], str],
-    config=ConfigDict(strict=True, hide_input_in_errors=True),
-)
 
 
 def _dataset_selectors(value: Any) -> list[str]:
@@ -176,24 +173,11 @@ class ParameterSweepBenchmark:
         return definition, combinations
 
 
-def _service_choice(value: Any) -> dict[str, str]:
-    """Normalize a Kustomize path or named endpoint choice for one sweep method."""
-    if isinstance(value, str):
-        path = value.strip()
-        if not path:
-            raise ValueError("sweep service paths cannot be empty")
-        return {"name": Path(path).name, "path": path}
-    value = _SERVICE_CHOICE.validate_python(value)
-    if not value.get("name", "").strip() or bool(value.get("path")) == bool(value.get("url")):
-        raise ValueError("sweep service requires a non-empty name and exactly one path or url")
-    return value
-
-
 class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
     """Apply and execute HTTP points while the core owns sweep orchestration."""
 
     axis_fields: ClassVar[dict[str, Callable[[Any], Any]]] = {
-        "service": _service_choice,
+        "service": service_choice,
         **{key: field[2] for key, field in _SWEEP_FIELDS.items()},
     }
 
@@ -230,15 +214,7 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
             )
         if "service" in point:
             choice = cast(dict[str, str], point["service"])
-            path = choice.get("path", "")
-            if path:
-                path = str((Path.cwd() / Path(path).expanduser()).resolve())
-            updated = replace(updated, service=replace(
-                config.service, name=choice["name"], kustomize_path=path,
-                instance_name="" if choice.get("url") else config.service.instance_name,
-                url=choice.get("url", ""), model=choice.get("model", config.service.model),
-                health_url=choice.get("health_url", ""),
-            ))
+            updated = replace(updated, service=select_service(config.service, choice))
         return updated
 
     def validate_point(self, config: BenchmarkConfig) -> None:

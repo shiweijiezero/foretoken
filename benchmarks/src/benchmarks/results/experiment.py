@@ -21,12 +21,13 @@ from urllib.parse import urlsplit, urlunsplit
 
 from loguru import logger
 
+from benchmarks.config.agentx import AgentXConfig
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.config.evaluation import EvaluationConfig
 from benchmarks.config.video import VideoBenchmarkConfig
 from benchmarks.results.recording.logs import capture_run_logs
 
-_Config = TypeVar("_Config", BenchmarkConfig, EvaluationConfig, VideoBenchmarkConfig)
+_Config = TypeVar("_Config", BenchmarkConfig, EvaluationConfig, VideoBenchmarkConfig, AgentXConfig)
 
 
 @contextmanager
@@ -54,7 +55,7 @@ def experiment_output(config: _Config, command: str, arguments: Sequence[str]) -
     generated.mkdir()
     started = time.monotonic()
     public_selectors = set()
-    if isinstance(config, BenchmarkConfig):
+    if isinstance(config, (BenchmarkConfig, AgentXConfig)):
         public_selectors = {"--model", "--dataset"}
     elif isinstance(config, VideoBenchmarkConfig):
         public_selectors = {"--dataset"}

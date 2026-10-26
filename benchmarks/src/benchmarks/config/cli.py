@@ -43,7 +43,7 @@ def parse_benchmark_arguments(
             "Measure HTTP latency and throughput for Foretoken and "
             "OpenAI-compatible inference services"
         ),
-        epilog="For video generation, use --video; run foretoken perf --video --help for its options.",
+        epilog="Use --agentx for official AgentX replay or --video for video generation; add --help to either mode for its options.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     _add_benchmark_arguments(parser)
@@ -513,14 +513,14 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
     sources = paths or urls
     if models and len(models) not in (1, len(sources)):
         raise ValueError("--model accepts one shared value or one value per service")
-    service_choices = _service_choices(paths, urls, models)
+    service_choices = build_service_choices(paths, urls, models)
     first_choice = service_choices[0] if service_choices else {}
     return BenchmarkConfig(
         service=ModelServiceSource(
             kustomize_path=first_choice.get("path", ""),
             url=first_choice.get("url", ""),
             health_url=namespace.health_url,
-            model=first_choice.get("model", ""),
+            model=first_choice.get("model", models[0] if len(models) == 1 else ""),
             api_key=namespace.api_key,
             timeout_seconds=namespace.timeout,
             max_retries=namespace.max_retries,
@@ -607,7 +607,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
     )
 
 
-def _service_choices(
+def build_service_choices(
     paths: tuple[str, ...], urls: tuple[str, ...], models: tuple[str, ...],
 ) -> tuple[dict[str, str], ...]:
     """Assign readable, distinct CLI method labels without changing explicit sweep names."""

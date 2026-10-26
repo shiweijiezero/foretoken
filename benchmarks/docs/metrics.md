@@ -61,6 +61,25 @@ Trade-off coordinates use repetitions where both selected metrics are available.
 
 GPU normalization uses the measurement's `gpu_count` in `metrics.json`. Older results without that field can use `environment.json`'s `before.declared_gpu_count` when its model matches the measurement. `--gpu-count` supplies a missing total capacity for the measurement; a conflict with its recorded capacity is an error. Financial plots apply explicit uncached-input, cached-input, and output prices to the corresponding token rates. Revenue per GPU-hour is `3600 × sum(tokens/s/GPU × price per million) / 1,000,000`; profit subtracts the configured GPU hourly cost. Missing token usage remains unavailable, including missing cache usage.
 
+## AgentX metrics
+
+`foretoken perf --agentx` retains the official profiling rates and request counts. Warmup records stay outside these aggregates. Its latency statistics have separate names because native timing distributions include failed requests with usable observations:
+
+| Metric | Meaning |
+| --- | --- |
+| `agentx_interactivity` with statistic `p<N>` | Reciprocal of the selected native token-interval percentile in seconds. Full-response ITL is preferred; the actual source is retained in `metrics.json` under `agentx.interactivity_source` |
+| `agentx_latency` with `mean` or an available `p<N>` | Native request latency in seconds |
+| `agentx_ttft` with `mean` or an available `p<N>` | Native time to first token in seconds |
+| `agentx_itl` with `mean` or an available `p<N>` | The native token interval used for AgentX interactivity, in seconds |
+
+Official summary percentiles are preserved. Additional interactivity percentiles use linear interpolation over the retained native profiling observations, matching the official harness and including timed failures. They do not use warmup or substitute another percentile. This differs from `decode_interactivity`, whose TPOT distribution includes successful requests only.
+
+The shared throughput fields retain the official input and output rates, per-user output rate when session concurrency is known, and per-GPU rates when capacity is known. `total_output_tokens` sums complete completion usage from successful profiling requests. Cache and uncached-input rates split the official input rate using complete usage from all reported successful profiling requests.
+
+Native throughput uses its profiling observation window; `benchmark_time` retains the native first-request-to-last-response duration, which can differ. AgentX GPU normalization uses declared capacity; GPU allocation timelines and Prometheus window aggregates are not exported.
+
+Check `agentx.submission_valid` and its reasons separately from execution completion. See [AgentX replay](perf/agentx.md) for datasets, controls, and native reports.
+
 ## GPU allocation
 
 Kustomize performance runs sample allocated GPU counts on the same elapsed-time axis as load, Ready replicas, and SLO windows. `gpu_allocation.json` preserves boundary samples, unknown intervals, and failed-read times. `metrics.json` reports `gpu_seconds` and `gpu_hours` separately for each device resource name, plus observation coverage. Full-window totals remain unavailable when coverage is incomplete; `observed_gpu_seconds` is a partial diagnostic area and is not a total. GPU resource names are never averaged or combined across NVIDIA, MetaX, or other device types. An explicitly observed zero allocation is a valid measurement.

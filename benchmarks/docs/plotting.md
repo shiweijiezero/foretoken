@@ -51,6 +51,8 @@ With several `--metric` and `--stat` values, a single metric or statistic is sha
 
 Decode speed is based on successful requests' TPOT; total token throughput includes cached input once. Definitions and required measurements are in [derived plot metrics](metrics.md#derived-plot-metrics). When the measurement's GPU count is unavailable, supply its total GPU count with `--gpu-count N`. A conflict with the recorded capacity for that measurement is an error.
 
+For AgentX results, choose `--x-metric agentx_interactivity --x-stat p95` to use the native token interval, preferring full-response ITL. It includes timed failed requests and is separate from TPOT-based decode speed. See [AgentX metrics](metrics.md#agentx-metrics) for its timing and availability rules.
+
 ### Show changes from a baseline
 
 ```bash
@@ -89,6 +91,8 @@ foretoken plot results/baseline results/candidate \
 ```
 
 For each method and fixed workload, this selects the measured point with the highest mean revenue whose mean P95 decode speed reaches 200 tokens/s/user. `--interactivity-metric` and `--interactivity-stat` choose the metric and statistic for this constraint independently of the plotted axes; their defaults are `decode_interactivity` and `p90`. Omit `--min-interactivity` to consider every point. The command uses measured points without interpolation and calculates each run's revenue and profit before combining repetitions.
+
+For an AgentX speed floor, use `--interactivity-metric agentx_interactivity --interactivity-stat p95`. Its threshold uses the same native statistic as the AgentX performance curve.
 
 Financial estimates require input, output, and cached-input usage for every successful request, plus a GPU count. Missing cache usage stays unavailable. The bars show compute cost, positive profit or loss, and total revenue; the CSV records each point's eligibility and selection status.
 

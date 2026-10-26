@@ -18,8 +18,8 @@ from benchmarks.results.measurements.requests import RequestMeasurement
 class BenchmarkRun:
     """Result of one benchmark: its run record, aggregated metrics, per-request measurements, and artifacts.
 
-    ``measurements`` is ``None`` when a composition publishes only aggregated
-    points. ``artifacts`` maps a name to a file produced by the run. ``time_origin``
+    ``measurements`` is ``None`` for native records or aggregated points.
+    ``artifacts`` maps a name to a file produced by the run. ``time_origin``
     is the monotonic clock value corresponding to elapsed time zero for observers.
     """
 
@@ -44,7 +44,7 @@ class ResultSink(Protocol):
 
 
 class ResultConfiguration(Protocol):
-    """Expose the result choices shared by HTTP, video, and quality run configurations."""
+    """Expose result destinations and serializable inputs shared by benchmark runners."""
 
     outputs: BenchmarkOutputConfig
     wandb: WandbRunConfig

@@ -36,6 +36,7 @@ dependencies = [
     "tabulate[widechars]>=0.9",
     "tqdm>=4.65",
     "transformers>=4.40",
+    "uv>=0.9",
     "wandb>=0.24.0",
 ]
 

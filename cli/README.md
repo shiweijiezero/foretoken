@@ -212,6 +212,8 @@ foretoken perf --url http://localhost:8000/v1/chat/completions \
 
 URL mode takes the full request endpoint and an explicit prompt or dataset. `--output local` saves each run under `results/` without requiring a W&B account. See [performance benchmarks](../benchmarks/docs/perf/README.md) for datasets, concurrency, arrival rate and parameter sweeps.
 
+Add `--agentx` for [official AgentX replay](../benchmarks/docs/perf/agentx.md) with long-context, multi-turn agent workloads.
+
 ### eval
 
 Score model answers using lm-evaluation-harness or EvalScope. This example evaluates 100 GSM8K math problems:

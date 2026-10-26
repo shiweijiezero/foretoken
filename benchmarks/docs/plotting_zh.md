@@ -51,6 +51,8 @@ foretoken plot results/baseline results/candidate \
 
 解码速度基于成功请求的 TPOT，总吞吐量中的缓存输入只计一次。定义和所需数据见[绘图派生指标](metrics_zh.md#绘图派生指标)。本次测量的 GPU 数不可用时，用 `--gpu-count N` 提供其 GPU 总数；若与已记录的本次测量容量冲突则报错。
 
+AgentX 结果用 `--x-metric agentx_interactivity --x-stat p95` 选择原生 token 间隔，优先采用完整响应 ITL。它包含具有计时的失败请求，与基于 TPOT 的解码速度分开。计时和数据条件见 [AgentX 指标](metrics_zh.md#agentx-指标)。
+
 ### 标出相对基准的变化
 
 ```bash
@@ -89,6 +91,8 @@ foretoken plot results/baseline results/candidate \
 ```
 
 命令在每组固定负载下，为各方案选择平均 P95 解码速度达到 200 tokens/s/user、且平均收入最高的实测点。`--interactivity-metric` 和 `--interactivity-stat` 独立于绘图坐标轴，分别选择门槛使用的指标和统计量，默认值为 `decode_interactivity` 和 `p90`。不加 `--min-interactivity` 则考虑全部测量点。选点只使用实测数据，不插值；收入和利润先按每次运行计算，再汇总重复测量。
+
+AgentX 的速度下限使用 `--interactivity-metric agentx_interactivity --interactivity-stat p95`，与 AgentX 性能曲线采用同一原生统计量。
 
 收益估算需要所有成功请求的输入、输出和缓存输入用量，以及 GPU 数量。缺失的缓存用量保持不可用。柱状图表示算力成本、盈利或亏损，并标出总收入；CSV 保留每个点的条件满足情况和选择状态。
 

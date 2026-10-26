@@ -13,7 +13,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from benchmarks.config.plot import decode_interactivity_percentile
+from benchmarks.config.plot import interactivity_percentile
 from benchmarks.results.measurements.sweeps import _scalar_metrics, summarize_sweep
 
 
@@ -281,6 +281,9 @@ def _selected_sweep_rows(
         "speculative_decoding_target_forward_mean_seconds",
         "speculative_decoding_draft_time_share_ratio",
         "speculative_decoding_target_forward_time_share_ratio",
+        "agentx_latency_p95_seconds",
+        "agentx_ttft_p95_seconds",
+        "agentx_interactivity_p90",
     }
     default_metrics.update(
         str(row["metric"])
@@ -359,10 +362,20 @@ def _sweep_series(
 
 def _metric_display(metric: str) -> tuple[int, str]:
     """Resolve the existing measured-to-display scale and unit label for one sweep metric."""
-    percentile = decode_interactivity_percentile(metric)
-    if percentile is not None:
+    interactivity = interactivity_percentile(metric)
+    if interactivity is not None:
+        family, percentile = interactivity
         label = str(percentile).removesuffix(".0")
-        return 1, f"TPOT-based P{label} decode speed (tokens/s/user)"
+        description = "TPOT-based decode speed" if family == "decode_interactivity" else "AgentX interactivity"
+        return 1, f"{description} · P{label} (tokens/s/user)"
+    for prefix, label, scale, unit in (
+        ("agentx_latency_", "AgentX request latency", 1, "s"),
+        ("agentx_ttft_", "AgentX TTFT", 1, "s"),
+        ("agentx_itl_", "AgentX token interval", 1000, "ms"),
+    ):
+        if metric.startswith(prefix) and metric.endswith("_seconds"):
+            statistic = metric.removeprefix(prefix).removesuffix("_seconds")
+            return scale, f"{label} {statistic} ({unit})"
     milliseconds = (
         metric.startswith(("tpot_", "itl_")) and metric.endswith("_seconds")
         or metric in {"speculative_decoding_draft_mean_seconds", "speculative_decoding_target_forward_mean_seconds"}

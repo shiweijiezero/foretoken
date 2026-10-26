@@ -38,6 +38,8 @@ foretoken perf examples/quickstart/qwen3-0.6b \
 
 [性能评测示例](docs/perf/README_zh.md)涵盖数据集、多轮对话、请求速率、轨迹回放、参数扫描、SLO 搜索和视频生成。定义与单位见[性能指标](docs/metrics_zh.md)。
 
+使用 `foretoken perf --agentx` 运行[官方 AgentX 会话回放](docs/perf/agentx_zh.md)，测量长上下文前缀复用和并行子 agent 等负载。
+
 ## 评测模型质量
 
 ```bash
@@ -63,7 +65,7 @@ foretoken eval examples/quickstart/qwen3-0.6b \
 | `wandb` | 打印结果、保留本地文件，并在后台发布到 W&B |
 | `plot` | 保存结果并导出 PDF、SVG、PNG 和 CSV |
 | `experiment` | 按实验迭代组织结果，并保存本次运行的源码和命令信息 |
-| `raw` | 性能评测额外保存实际请求和响应内容，并保留本地结果 |
+| `raw` | HTTP 文本性能评测额外保存实际请求和响应内容，并保留本地结果 |
 | `local,wandb,plot` | 保存结果、导出图表，并上传 W&B |
 | `local,quiet` | 保存本地文件，不打印控制台汇总 |
 | `local,wandb,quiet` | 保存并上传结果，不打印控制台汇总 |

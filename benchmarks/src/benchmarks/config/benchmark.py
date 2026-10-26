@@ -8,13 +8,18 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field, replace
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
 from pydantic import ConfigDict, TypeAdapter
 
 OutputTokenLimit = int | list[int]
 _DURATION = TypeAdapter(str | float, config=ConfigDict(strict=True, hide_input_in_errors=True))
 _OUTPUT_TOKEN_LIMIT = TypeAdapter(OutputTokenLimit, config=ConfigDict(strict=True, hide_input_in_errors=True))
+_SERVICE_CHOICE = TypeAdapter(
+    dict[Literal["name", "path", "url", "model", "health_url"], str],
+    config=ConfigDict(strict=True, hide_input_in_errors=True),
+)
 
 # Accepted search names map only to measurements emitted by the request aggregator.
 SLO_SEARCH_METRICS = {
@@ -48,6 +53,16 @@ class ModelServiceSource:
     name: str = ""
     instance_name: str = ""
 
+    def to_dict(self) -> dict[str, Any]:
+        """Snapshot a selected service for benchmark records without authentication."""
+        return {
+            "name": self.name, "kustomize_path": self.kustomize_path,
+            "url": self.url, "health_url": self.health_url, "model": self.model,
+            "timeout": self.timeout_seconds, "max_retries": self.max_retries,
+            "wait_timeout": self.wait_timeout,
+            **({"instance_name": self.instance_name} if self.instance_name else {}),
+        }
+
     def validate(self, *, require_model: bool = True) -> None:
         """Require one service source and, normally, a model for an existing URL."""
         if bool(self.kustomize_path) == bool(self.url):
@@ -60,6 +75,32 @@ class ModelServiceSource:
             raise ValueError("--max-retries must be >= 0")
         if require_model and self.url and not self.model:
             raise ValueError("--model is required with --url")
+
+
+def service_choice(value: Any) -> dict[str, str]:
+    """Decode one explicit sweep service, retaining its public comparison name."""
+    if isinstance(value, str):
+        path = value.strip()
+        if not path:
+            raise ValueError("sweep service paths cannot be empty")
+        return {"name": Path(path).name, "path": path}
+    value = _SERVICE_CHOICE.validate_python(value)
+    if not value.get("name", "").strip() or bool(value.get("path")) == bool(value.get("url")):
+        raise ValueError("sweep service requires a non-empty name and exactly one path or url")
+    return value
+
+
+def select_service(source: ModelServiceSource, choice: dict[str, str]) -> ModelServiceSource:
+    """Apply a named sweep selection while retaining the command's credentials and wait policy."""
+    path = choice.get("path", "")
+    if path:
+        path = str((Path.cwd() / Path(path).expanduser()).resolve())
+    return replace(
+        source, name=choice["name"], kustomize_path=path,
+        instance_name="" if choice.get("url") else source.instance_name,
+        url=choice.get("url", ""), model=choice.get("model", source.model),
+        health_url=choice.get("health_url", ""),
+    )
 
 
 @dataclass
@@ -539,17 +580,7 @@ class BenchmarkConfig:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize only user configuration for result and W&B snapshots."""
-        service = {
-            "name": self.service.name,
-            "kustomize_path": self.service.kustomize_path,
-            "url": self.service.url,
-            "health_url": self.service.health_url,
-            "model": self.service.model,
-            "timeout": self.service.timeout_seconds,
-            "max_retries": self.service.max_retries,
-            "wait_timeout": self.service.wait_timeout,
-            **({"instance_name": self.service.instance_name} if self.service.instance_name else {}),
-        }
+        service = self.service.to_dict()
 
         load = {
             "max_concurrency": self.load.max_concurrency,

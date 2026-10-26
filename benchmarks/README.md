@@ -38,6 +38,8 @@ Performance time values may include a unit such as `s`, `min`, or `h`; unitless 
 
 [Performance examples](docs/perf/README.md) cover datasets, conversations, arrival rates, trace replay, parameter sweeps, SLO searches, and video generation. Definitions and units are in [Performance metrics](docs/metrics.md).
 
+Use `foretoken perf --agentx` for [official AgentX session replay](docs/perf/agentx.md), including long-context prefix reuse and parallel subagents.
+
 ## Evaluate model quality
 
 ```bash

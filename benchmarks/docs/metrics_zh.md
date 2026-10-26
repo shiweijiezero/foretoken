@@ -61,6 +61,25 @@ CLI 分别选择指标与统计量，导出记录用 `decode_interactivity_p95` 
 
 每 GPU 指标使用 `metrics.json` 记录的本次测量 `gpu_count`；不含该字段的旧结果，在模型匹配时可使用 `environment.json` 的 `before.declared_gpu_count`。`--gpu-count` 用于补充本次测量缺失的 GPU 总数，若与已记录的本次测量容量冲突则报错。收益图按显式提供的非缓存输入、缓存输入和输出价格，对相应用量计价。每 GPU 每小时收入为 `3600 × sum(tokens/s/GPU × 每百万 token 价格) / 1,000,000`，利润再减去配置的 GPU 每小时成本。缺失的 token 用量保持不可用，包括缓存用量。
 
+## AgentX 指标
+
+`foretoken perf --agentx` 保留官方 profiling 的速率和请求计数，预热记录不参与这些汇总。原生计时分布包含具有可用观测值的失败请求，因此延迟统计使用独立名称：
+
+| 指标 | 含义 |
+| --- | --- |
+| `agentx_interactivity`，统计量为 `p<N>` | 原生 token 间隔分位数换算为秒后的倒数，优先采用完整响应 ITL；实际来源保存在 `metrics.json` 的 `agentx.interactivity_source` 中 |
+| `agentx_latency`，统计量为 `mean` 或已有的 `p<N>` | 原生请求延迟，单位秒 |
+| `agentx_ttft`，统计量为 `mean` 或已有的 `p<N>` | 原生首 token 延迟，单位秒 |
+| `agentx_itl`，统计量为 `mean` 或已有的 `p<N>` | AgentX 交互速度所使用的原生 token 间隔，单位秒 |
+
+官方汇总中已有的分位数原样保留；额外的交互速度分位数由保留的原生 profiling 观测按线性插值计算，与官方客户端一致，包含具有计时的失败请求，不混入预热或用其他分位数代替。这与仅统计成功请求 TPOT 的 `decode_interactivity` 不同。
+
+共用吞吐字段保留官方输入和输出速率；已知会话并发数时记录每用户输出速率，已知容量时记录每 GPU 速率。`total_output_tokens` 汇总成功 profiling 请求的完整输出用量。缓存和非缓存输入速率根据所有已报告成功 profiling 请求的完整用量比例，拆分官方输入速率。
+
+原生吞吐率使用 profiling 观测窗口；`benchmark_time` 保留原生首请求到末响应的时长，两者可能不同。AgentX 按声明的 GPU 容量归一化，不导出 GPU 分配时序和 Prometheus 窗口聚合值。
+
+运行是否完成与 `agentx.submission_valid` 及其原因分别查看。数据集、控制参数和原生报告见 [AgentX 回放](perf/agentx_zh.md)。
+
 ## GPU 分配量
 
 Kustomize 性能评测会在与负载、Ready 副本和 SLO 窗口相同的经过时间轴上采样已分配 GPU 数量。`gpu_allocation.json` 保留边界样本、未知时间段和读取失败时刻。`metrics.json` 按设备资源名分别记录 `gpu_seconds` 与 `gpu_hours`，并记录观测覆盖率。覆盖不完整时，完整窗口总量保持不可用；`observed_gpu_seconds` 只是部分观测面积，不是总量。不同 NVIDIA、MetaX 或其他设备类型不会平均或合并。明确观测到的零分配是有效数据。

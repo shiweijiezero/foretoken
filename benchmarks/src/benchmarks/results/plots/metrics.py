@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Derive offline chart metrics from complete saved HTTP measurement evidence."""
+"""Derive offline chart metrics from saved HTTP measurements and native AgentX reports."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-from benchmarks.config.plot import DEFAULT_INTERACTIVITY, decode_interactivity_percentile
+from benchmarks.config.plot import DEFAULT_INTERACTIVITY, interactivity_percentile
 from benchmarks.results.plots.data import _numeric
 from benchmarks.results.recording.database import read_records
 from benchmarks.results.recording.requests import (
@@ -30,21 +30,22 @@ DERIVED_PLOT_METRICS = frozenset({
 
 
 def derived_plot_metrics(selected: Collection[str]) -> set[str]:
-    """Select supported derived fields, including requested decode-speed percentiles."""
+    """Select token totals, normalized rates, and HTTP or AgentX interactivity percentiles."""
     return {name for name in selected
-            if name in DERIVED_PLOT_METRICS or decode_interactivity_percentile(name) is not None}
+            if name in DERIVED_PLOT_METRICS or interactivity_percentile(name) is not None}
 
 
 def enrich_plot_metrics(
     directory: Path, metrics: dict[str, Any], *, gpu_count: int | None = None,
     selected: Collection[str] | None = None,
 ) -> dict[str, Any]:
-    """Return chart-ready HTTP metrics without changing saved measurements.
+    """Return chart-ready metrics without changing saved HTTP or AgentX measurements.
 
     Saved measured values retain precedence; unavailable values may be derived.
-    Request-level TPOT supplies decode interactivity; chunk-level ITL quantiles
-    describe a different distribution.
-    Token accounting requires all successful records and their relevant usage.
+    HTTP request-level TPOT supplies decode interactivity; AgentX uses its native
+    token-interval distribution, including timed failures. Native summary
+    percentiles take precedence over derivation from retained profiling records.
+    HTTP token accounting requires all successful records and their relevant usage.
     An existing output-token total, including an unavailable value, is preserved.
     A supplied GPU count fills missing capacity but cannot replace recorded capacity.
     ``selected`` limits derivation to requested fields; existing values are retained.
@@ -55,8 +56,15 @@ def enrich_plot_metrics(
         DERIVED_PLOT_METRICS | {DEFAULT_INTERACTIVITY.key}
         if selected is None else derived_plot_metrics(selected)
     )
-    percentiles = {name: percentile for name in requested
-                   if (percentile := decode_interactivity_percentile(name)) is not None}
+    native = {name for name in requested
+              if (choice := interactivity_percentile(name)) is not None and choice[0] == "agentx_interactivity"}
+    if native:
+        from benchmarks.integrations.agentx.reports import enrich_interactivity
+
+        result = enrich_interactivity(directory / "native", result, native)
+    requested -= native
+    percentiles = {name: choice[1] for name in requested
+                   if (choice := interactivity_percentile(name)) is not None}
     missing = {name for name in requested if name != "total_output_tokens" and _numeric(
         metrics.get(name) if name in percentiles else throughput.get(name)
     ) is None}

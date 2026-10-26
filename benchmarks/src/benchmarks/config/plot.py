@@ -26,14 +26,14 @@ class MetricSelection:
         if not self.metric:
             raise ValueError("Metric name must not be empty")
         if self.stat is None:
-            if self.metric == "decode_interactivity":
-                raise ValueError("decode_interactivity requires a percentile statistic such as p95")
-            decode_interactivity_percentile(self.metric)
+            if self.metric in {"decode_interactivity", "agentx_interactivity"}:
+                raise ValueError(f"{self.metric} requires a percentile statistic such as p95")
+            interactivity_percentile(self.metric)
             return self.metric
-        if self.metric == "decode_interactivity":
+        if self.metric in {"decode_interactivity", "agentx_interactivity"}:
             _percentile_value(self.stat)
             return f"{self.metric}_{self.stat}"
-        if self.metric in {"latency", "ttft", "tpot", "itl"}:
+        if self.metric in {"latency", "ttft", "tpot", "itl", "agentx_latency", "agentx_ttft", "agentx_itl"}:
             if self.stat != "mean":
                 _percentile_value(self.stat)
             return f"{self.metric}_{self.stat}_seconds"
@@ -85,12 +85,12 @@ def _percentile_value(stat: str) -> float:
     return percentile
 
 
-def decode_interactivity_percentile(metric: str) -> float | None:
-    """Resolve a saved decode-speed field's TPOT percentile, or None for other metrics."""
-    prefix = "decode_interactivity_p"
-    if not metric.startswith(prefix):
-        return None
-    return _percentile_value("p" + metric.removeprefix(prefix))
+def interactivity_percentile(metric: str) -> tuple[str, float] | None:
+    """Identify a speed metric's timing family and percentile without merging their semantics."""
+    for family in ("decode_interactivity", "agentx_interactivity"):
+        if metric.startswith(f"{family}_"):
+            return family, _percentile_value(metric.removeprefix(f"{family}_"))
+    return None
 
 
 def _metric_selections(metrics: Sequence[str], stats: Sequence[str]) -> tuple[MetricSelection, ...]:
@@ -164,8 +164,8 @@ def parse_plot_arguments(argv: Sequence[str] | None = None) -> PlotOptions:
         metrics = _metric_selections(args.metric, args.stat)
         for selection in (*metrics, x, y, interactivity):
             _ = selection.key
-        if interactivity.metric != DEFAULT_INTERACTIVITY.metric:
-            parser.error("--interactivity-metric requires decode_interactivity")
+        if interactivity.metric not in {"decode_interactivity", "agentx_interactivity"}:
+            parser.error("--interactivity-metric requires decode_interactivity or agentx_interactivity")
     except ValueError as error:
         parser.error(str(error))
     if (args.interactivity_metric is not None or args.interactivity_stat is not None) and args.pricing is None:

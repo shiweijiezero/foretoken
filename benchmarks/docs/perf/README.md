@@ -6,7 +6,7 @@ Use `foretoken perf` to compare response latency, token generation speed, and th
 
 ## Setup
 
-Complete the [shared setup](../../README.md#get-started), then run commands from the repository root. The examples use `examples/quickstart/qwen3-0.6b`.
+Complete the [shared setup](../../README.md#get-started), then run commands from the repository root. The basic examples use `examples/quickstart/qwen3-0.6b`.
 
 For Foretoken deployments, use the Kustomize directory so the CLI resolves the service URL, model and Gateway routing headers automatically.
 
@@ -26,6 +26,7 @@ export MODEL_ID=Qwen/Qwen3-0.6B
 | Replay real conversations | [Local conversations](conversations.md), [Hugging Face datasets](huggingface.md), [ShareGPT](sharegpt.md), [tool data](tools.md) |
 | Mix datasets or control arrivals | [Multiple datasets](multi-dataset.md), [arrival rate and concurrency](arrival-rate.md) |
 | Replay recorded traffic | [StudyChat](studychat.md), [Mooncake traces](mooncake-trace.md) |
+| Replay agent sessions | [AgentX](agentx.md) |
 | Compare load settings | [Parameter sweeps](sweep.md), [SLO concurrency search](slo.md) |
 | Measure video generation | [Video workloads](video.md) |
 | Compare runs and inspect charts | [W&B output](wandb.md) |
