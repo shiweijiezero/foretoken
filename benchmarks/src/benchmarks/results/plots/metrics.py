@@ -42,8 +42,8 @@ def enrich_plot_metrics(
     """Return chart-ready metrics without changing saved HTTP or AgentX measurements.
 
     Saved measured values retain precedence; unavailable values may be derived.
-    HTTP request-level TPOT supplies decode interactivity; AgentX uses its native
-    token-interval distribution, including timed failures. Native summary
+    HTTP request-level TPOT supplies decode interactivity; AgentX uses successful
+    profiling requests' native token-interval distribution. Native summary
     percentiles take precedence over derivation from retained profiling records.
     HTTP token accounting requires all successful records and their relevant usage.
     An existing output-token total, including an unavailable value, is preserved.

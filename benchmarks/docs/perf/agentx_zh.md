@@ -65,7 +65,7 @@ AgentX 使用 trace 记录的响应长度。`foretoken perf --agentx --help` 列
 | `native/profile_export_aiperf.json` | 官方 profiling 汇总、配置及无效原因 |
 | `native/profile_export.jsonl` | 原生逐请求指标，含 warmup 或 profiling 阶段标记 |
 
-AgentX 交互速度优先采用原生的完整响应 token 间隔，并包含具有可用计时的失败请求。绘图时将它与 Foretoken 基于成功请求 TPOT 的解码速度分别选择：
+AgentX 交互速度使用成功 profiling 请求的原生 token 间隔，优先采用完整响应 ITL。绘图时将它与 Foretoken 基于 TPOT 的解码速度分别选择：
 
 ```bash
 foretoken plot results/baseline results/candidate \

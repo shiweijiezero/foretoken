@@ -51,7 +51,7 @@ foretoken plot results/baseline results/candidate \
 
 解码速度基于成功请求的 TPOT，总吞吐量中的缓存输入只计一次。定义和所需数据见[绘图派生指标](metrics_zh.md#绘图派生指标)。本次测量的 GPU 数不可用时，用 `--gpu-count N` 提供其 GPU 总数；若与已记录的本次测量容量冲突则报错。
 
-AgentX 结果用 `--x-metric agentx_interactivity --x-stat p95` 选择原生 token 间隔，优先采用完整响应 ITL。它包含具有计时的失败请求，与基于 TPOT 的解码速度分开。计时和数据条件见 [AgentX 指标](metrics_zh.md#agentx-指标)。
+AgentX 结果用 `--x-metric agentx_interactivity --x-stat p95` 选择成功 profiling 请求的原生 token 间隔，优先采用完整响应 ITL。原生 ITL 与 Foretoken 基于 TPOT 的解码速度分别定义。计时和数据条件见 [AgentX 指标](metrics_zh.md#agentx-指标)。
 
 ### 标出相对基准的变化
 

@@ -63,7 +63,7 @@ CLI 分别选择指标与统计量，导出记录用 `decode_interactivity_p95` 
 
 ## AgentX 指标
 
-`foretoken perf --agentx` 保留官方 profiling 的速率和请求计数，预热记录不参与这些汇总。原生计时分布包含具有可用观测值的失败请求，因此延迟统计使用独立名称：
+`foretoken perf --agentx` 保留官方 profiling 的速率和请求计数，预热记录不参与这些汇总。计时字段使用 `agentx_` 前缀，保留原生指标定义。分布只统计成功的 profiling 请求；错误仍计入请求数和失败数：
 
 | 指标 | 含义 |
 | --- | --- |
@@ -72,7 +72,7 @@ CLI 分别选择指标与统计量，导出记录用 `decode_interactivity_p95` 
 | `agentx_ttft`，统计量为 `mean` 或已有的 `p<N>` | 原生首 token 延迟，单位秒 |
 | `agentx_itl`，统计量为 `mean` 或已有的 `p<N>` | AgentX 交互速度所使用的原生 token 间隔，单位秒 |
 
-官方汇总中已有的分位数原样保留；额外的交互速度分位数由保留的原生 profiling 观测按线性插值计算，与官方客户端一致，包含具有计时的失败请求，不混入预热或用其他分位数代替。这与仅统计成功请求 TPOT 的 `decode_interactivity` 不同。
+官方汇总中已有的分位数原样保留；额外的交互速度分位数由成功的原生 profiling 观测按线性插值计算，与官方客户端一致，不包含预热和失败请求。AgentX 使用原生 ITL，`decode_interactivity` 使用 Foretoken 的逐请求 TPOT。
 
 共用吞吐字段保留官方输入和输出速率；已知会话并发数时记录每用户输出速率，已知容量时记录每 GPU 速率。`total_output_tokens` 汇总成功 profiling 请求的完整输出用量。缓存和非缓存输入速率根据所有已报告成功 profiling 请求的完整用量比例，拆分官方输入速率。
 

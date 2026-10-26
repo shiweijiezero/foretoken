@@ -51,7 +51,7 @@ With several `--metric` and `--stat` values, a single metric or statistic is sha
 
 Decode speed is based on successful requests' TPOT; total token throughput includes cached input once. Definitions and required measurements are in [derived plot metrics](metrics.md#derived-plot-metrics). When the measurement's GPU count is unavailable, supply its total GPU count with `--gpu-count N`. A conflict with the recorded capacity for that measurement is an error.
 
-For AgentX results, choose `--x-metric agentx_interactivity --x-stat p95` to use the native token interval, preferring full-response ITL. It includes timed failed requests and is separate from TPOT-based decode speed. See [AgentX metrics](metrics.md#agentx-metrics) for its timing and availability rules.
+For AgentX results, choose `--x-metric agentx_interactivity --x-stat p95` to use successful profiling requests' native token intervals, preferring full-response ITL. This native ITL definition is separate from Foretoken's TPOT-based decode speed. See [AgentX metrics](metrics.md#agentx-metrics) for its timing and availability rules.
 
 ### Show changes from a baseline
 

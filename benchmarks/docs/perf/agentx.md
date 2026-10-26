@@ -65,7 +65,7 @@ The console reports observed requests, throughput, interactivity, and the native
 | `native/profile_export_aiperf.json` | Official profiling summary, configuration, and validity reasons |
 | `native/profile_export.jsonl` | Native per-request metrics, including their warmup or profiling phase |
 
-AgentX interactivity uses the native full-response token interval when available and includes failed requests that have usable timing observations. Select it separately from Foretoken's successful-request TPOT-based decode speed:
+AgentX interactivity uses successful profiling requests' native token intervals, preferring full-response ITL when available. Select it separately from Foretoken's TPOT-based decode speed:
 
 ```bash
 foretoken plot results/baseline results/candidate \

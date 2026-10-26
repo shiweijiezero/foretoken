@@ -63,7 +63,7 @@ GPU normalization uses the measurement's `gpu_count` in `metrics.json`. Older re
 
 ## AgentX metrics
 
-`foretoken perf --agentx` retains the official profiling rates and request counts. Warmup records stay outside these aggregates. Its latency statistics have separate names because native timing distributions include failed requests with usable observations:
+`foretoken perf --agentx` retains the official profiling rates and request counts. Warmup records stay outside these aggregates. Timing fields use the `agentx_` prefix to retain the native metric definitions. Their distributions use successful profiling requests; errors remain in the request and failure counts:
 
 | Metric | Meaning |
 | --- | --- |
@@ -72,7 +72,7 @@ GPU normalization uses the measurement's `gpu_count` in `metrics.json`. Older re
 | `agentx_ttft` with `mean` or an available `p<N>` | Native time to first token in seconds |
 | `agentx_itl` with `mean` or an available `p<N>` | The native token interval used for AgentX interactivity, in seconds |
 
-Official summary percentiles are preserved. Additional interactivity percentiles use linear interpolation over the retained native profiling observations, matching the official harness and including timed failures. They do not use warmup or substitute another percentile. This differs from `decode_interactivity`, whose TPOT distribution includes successful requests only.
+Official summary percentiles are preserved. Additional interactivity percentiles use linear interpolation over successful native profiling observations, matching the official harness. Warmup and failed requests are excluded. AgentX uses native ITL; `decode_interactivity` uses Foretoken's request-level TPOT.
 
 The shared throughput fields retain the official input and output rates, per-user output rate when session concurrency is known, and per-GPU rates when capacity is known. `total_output_tokens` sums complete completion usage from successful profiling requests. Cache and uncached-input rates split the official input rate using complete usage from all reported successful profiling requests.
 

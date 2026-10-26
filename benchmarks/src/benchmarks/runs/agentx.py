@@ -18,7 +18,7 @@ from benchmarks.config.agentx import AgentXConfig
 from benchmarks.integrations.agentx import HARNESS_VERSION, AgentXExecutionError
 from benchmarks.integrations.agentx.reports import read_metrics
 from benchmarks.integrations.agentx.runtime import profile_command
-from benchmarks.model_service import ModelService
+from benchmarks.model_service import ModelService, require_health_endpoint
 from benchmarks.results.output import ResultOutputs
 from benchmarks.results.reporting.agentx import agentx_sinks
 from benchmarks.results.types import BenchmarkRun
@@ -39,8 +39,6 @@ def run_agentx(
         native = directory / "native"
         native.mkdir()
         if config.service.health_url:
-            from benchmarks.integrations.openai import require_health_endpoint
-
             asyncio.run(require_health_endpoint(config.service.health_url))
         arguments, environment = profile_command(config, service, native)
         logger.info("AgentX {} · model={} · native results={}", HARNESS_VERSION, service.model, native)

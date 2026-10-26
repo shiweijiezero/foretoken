@@ -41,9 +41,9 @@ def read_metrics(
     """Normalize one native run for result publication, retaining AgentX timing semantics.
 
     Native summary rates and counts take precedence over observed records.
-    Timings remain in the AgentX namespace because their distributions include
-    failed requests with usable observations. Missing reports retain observed
-    request counts and unavailable metrics for the runner's failure diagnostics.
+    Timings retain the native successful-request distributions and completion
+    boundaries in the AgentX namespace. Missing reports retain observed request
+    counts and unavailable metrics for the runner's failure diagnostics.
     """
     summary = _summary(directory)
     if concurrency is None:
@@ -95,7 +95,7 @@ def read_metrics(
             "was_cancelled": summary.get("was_cancelled"),
             "summary_available": bool(summary),
             "interactivity_source": itl_source,
-            "timed_failures_included": True,
+            "timed_failures_included": False,
         },
     }
     for name, tag in (("latency", "request_latency"), ("ttft", "time_to_first_token"), ("itl", itl_source)):
@@ -112,7 +112,7 @@ def read_metrics(
 def enrich_interactivity(
     directory: Path, metrics: dict[str, Any], selected: Collection[str],
 ) -> dict[str, Any]:
-    """Derive missing AgentX percentiles from all timed profiling records, including failures.
+    """Derive missing AgentX percentiles from successful profiling records.
 
     Official summary quantiles and previously retained values take precedence.
     A known native observation count must match the raw timing coverage before
@@ -142,7 +142,8 @@ def enrich_interactivity(
             missing[name] = percentile
     if missing:
         values = [value for row in _profiling_records(directory)
-                  if (value := _seconds(row.get("metrics", {}).get(source), "value")) is not None]
+                  if row.get("error") is None
+                  and (value := _seconds(row.get("metrics", {}).get(source), "value")) is not None]
         expected = _finite(native.get("count"))
         complete = bool(values) and (expected is None or expected == len(values))
         quantiles = np.percentile(values, list(missing.values()), method="linear") if complete else ()
@@ -234,11 +235,11 @@ def _observe_records(directory: Path) -> _ObservedRecords:
     full_response_seen = False
     for row in _profiling_records(directory):
         metrics = row["metrics"]
-        full_response_seen = full_response_seen or _FULL_RESPONSE_ITL in metrics
         if row.get("error") is not None:
             failures += 1
             continue
         successes += 1
+        full_response_seen = full_response_seen or _FULL_RESPONSE_ITL in metrics
         prompt = _token_usage(metrics, "usage_prompt_tokens")
         cached = _token_usage(metrics, "usage_prompt_cache_read_tokens")
         completion = _token_usage(metrics, "usage_completion_tokens")
