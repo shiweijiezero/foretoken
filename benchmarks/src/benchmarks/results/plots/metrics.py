@@ -11,6 +11,7 @@ from typing import Any
 
 import numpy as np
 
+from benchmarks.config.plot import DEFAULT_INTERACTIVITY_METRIC, decode_interactivity_percentile
 from benchmarks.results.plots.data import _numeric
 from benchmarks.results.recording.database import read_records
 from benchmarks.results.recording.requests import (
@@ -20,12 +21,17 @@ from benchmarks.results.recording.requests import (
 
 
 DERIVED_PLOT_METRICS = frozenset({
-    "decode_interactivity_p90",
     "generation_tokens_per_second_per_gpu",
     "total_tokens_per_second_per_gpu",
     "cached_prompt_tokens_per_second_per_gpu",
     "uncached_prompt_tokens_per_second_per_gpu",
 })
+
+
+def derived_plot_metrics(selected: Collection[str]) -> set[str]:
+    """Select supported derived fields, including requested decode-speed percentiles."""
+    return {name for name in selected
+            if name in DERIVED_PLOT_METRICS or decode_interactivity_percentile(name) is not None}
 
 
 def enrich_plot_metrics(
@@ -43,14 +49,21 @@ def enrich_plot_metrics(
     """
     throughput = dict(metrics.get("throughput", {}))
     result = {**metrics, "throughput": throughput}
-    requested = DERIVED_PLOT_METRICS if selected is None else DERIVED_PLOT_METRICS.intersection(selected)
+    requested = (
+        DERIVED_PLOT_METRICS | {DEFAULT_INTERACTIVITY_METRIC}
+        if selected is None else derived_plot_metrics(selected)
+    )
+    percentiles = {name: percentile for name in requested
+                   if (percentile := decode_interactivity_percentile(name)) is not None}
     missing = {name for name in requested if _numeric(
-        metrics.get(name) if name == "decode_interactivity_p90" else throughput.get(name)
+        metrics.get(name) if name in percentiles else throughput.get(name)
     ) is None}
     if not missing and gpu_count is None:
         return result
 
-    normalized_fields = missing - {"decode_interactivity_p90"}
+    missing_percentiles = {name: percentile for name, percentile in sorted(percentiles.items(), key=lambda item: item[1])
+                           if name in missing}
+    normalized_fields = missing - percentiles.keys()
     recorded_capacity = metrics.get("gpu_count")
     before = {}
     if "gpu_count" not in metrics and (normalized_fields or gpu_count is not None):
@@ -62,7 +75,7 @@ def enrich_plot_metrics(
         for name in normalized_fields
     )
     capacity_available = any(value is not None for value in (recorded_capacity, legacy_capacity, gpu_count))
-    raw_needed = "decode_interactivity_p90" in missing or legacy_capacity is not None or raw_rates and capacity_available
+    raw_needed = bool(missing_percentiles) or legacy_capacity is not None or raw_rates and capacity_available
     measurements = load_http_measurements(read_request_records(directory)) if raw_needed else []
     if legacy_capacity is not None:
         models = {item.model for item in measurements if item.model is not None}
@@ -80,18 +93,18 @@ def enrich_plot_metrics(
         "cached_prompt_tokens_per_second": _numeric(throughput.get("cached_prompt_tokens_per_second")),
         "uncached_prompt_tokens_per_second": _numeric(throughput.get("uncached_prompt_tokens_per_second")),
     }
-    interactivity = None
+    interactivities = dict.fromkeys(missing_percentiles)
     if complete:
         # One-token responses have no decode interval; missing usage cannot
         # establish whether an unmeasured interval should belong in the sample.
         outputs = [_numeric(item.output_tokens) for item in successful]
-        if "decode_interactivity_p90" in missing and all(value is not None for value in outputs):
+        if missing_percentiles and all(value is not None for value in outputs):
             decode = [item for item in successful if item.output_tokens > 1]
             tpots = [_numeric(item.tpot) for item in decode]
             if tpots and all(value is not None and value >= 0 for value in tpots):
-                p90 = float(np.percentile(tpots, 90, method="inverted_cdf"))
-                if p90 > 0:
-                    interactivity = 1 / p90
+                quantiles = np.percentile(tpots, list(missing_percentiles.values()), method="inverted_cdf")
+                interactivities.update({name: 1 / float(value) if value > 0 else None
+                                        for name, value in zip(missing_percentiles, quantiles)})
 
         if duration is not None and duration > 0:
             inputs = [_numeric(item.input_tokens) for item in successful]
@@ -110,8 +123,7 @@ def enrich_plot_metrics(
                 rates["cached_prompt_tokens_per_second"] = sum(cached) / duration
                 rates["uncached_prompt_tokens_per_second"] = (sum(inputs) - sum(cached)) / duration
 
-    if "decode_interactivity_p90" in missing:
-        result["decode_interactivity_p90"] = interactivity
+    result.update(interactivities)
     for name, rate in rates.items():
         field = f"{name}_per_gpu"
         if field in missing:

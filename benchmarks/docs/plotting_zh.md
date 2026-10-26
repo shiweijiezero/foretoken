@@ -29,18 +29,25 @@ foretoken plot results/baseline results/candidate
 
 ### 选择坐标轴
 
-以 P90 解码速度为横轴、每 GPU 总 token 吞吐量为纵轴：
+以 P95 解码速度为横轴、每 GPU 总 token 吞吐量为纵轴：
 
 ```bash
 foretoken plot results/baseline results/candidate \
-  --x-metric decode_interactivity_p90 \
+  --x-metric decode_interactivity_p95 \
   --y-metric total_tokens_per_second_per_gpu \
   --frontier max-max --label-values --columns 2
 ```
 
 `--x-metric` 和 `--y-metric` 接受已保存的标量指标名。自选坐标轴默认按扫描顺序连接各点；用 `--frontier` 指定横纵轴的优化方向，可选 `max-max`、`min-max`、`max-min` 或 `min-min`。`--frontier none` 连接全部扫描点。
 
-P90 解码速度基于成功请求的 TPOT，总吞吐量中的缓存输入只计一次。定义和所需数据见[绘图派生指标](metrics_zh.md#绘图派生指标)。本次测量的 GPU 数不可用时，用 `--gpu-count N` 提供其 GPU 总数；若与已记录的本次测量容量冲突则报错。
+用 `decode_interactivity_p<N>` 选择解码速度分位数，`N` 为 0 到 100 之间的数，可以包含小数。例如，一条命令可比较多个分位数：
+
+```bash
+foretoken plot results/baseline results/candidate \
+  --metric decode_interactivity_p50 decode_interactivity_p95 decode_interactivity_p99.9
+```
+
+解码速度基于成功请求的 TPOT，总吞吐量中的缓存输入只计一次。定义和所需数据见[绘图派生指标](metrics_zh.md#绘图派生指标)。本次测量的 GPU 数不可用时，用 `--gpu-count N` 提供其 GPU 总数；若与已记录的本次测量容量冲突则报错。
 
 ### 标出相对基准的变化
 
@@ -75,10 +82,11 @@ gpu_hour_cost:
 
 ```bash
 foretoken plot results/baseline results/candidate \
-  --pricing pricing.yaml --min-interactivity 200 --columns 2
+  --pricing pricing.yaml --min-interactivity 200 \
+  --interactivity-metric decode_interactivity_p95 --columns 2
 ```
 
-命令在每组固定负载下，为各方案选择平均 P90 解码速度达到 200 tokens/s/user、且平均收入最高的实测点。不加 `--min-interactivity` 则考虑全部测量点。选点只使用实测数据，不插值；收入和利润先按每次运行计算，再汇总重复测量。
+命令在每组固定负载下，为各方案选择平均 P95 解码速度达到 200 tokens/s/user、且平均收入最高的实测点。`--interactivity-metric` 独立于绘图坐标轴，选择门槛所用的速度统计，默认为 `decode_interactivity_p90`。不加 `--min-interactivity` 则考虑全部测量点。选点只使用实测数据，不插值；收入和利润先按每次运行计算，再汇总重复测量。
 
 收益估算需要所有成功请求的输入、输出和缓存输入用量，以及 GPU 数量。缺失的缓存用量保持不可用。柱状图表示算力成本、盈利或亏损，并标出总收入；CSV 保留每个点的条件满足情况和选择状态。
 
@@ -87,7 +95,7 @@ foretoken plot results/baseline results/candidate \
 | 输出 | 内容 |
 | --- | --- |
 | `tradeoff-*.csv` | 图中坐标、配对样本数、标准差及可用的基准变化 |
-| `economics-*.csv` | 价格、每 GPU 每小时的估算值、重复次数及运行点选择 |
+| `economics-*.csv` | 价格、每 GPU 每小时的估算值、重复次数、所选交互速度指标及运行点选择 |
 | `comparison-summary.csv` | 各方案、各负载的标量指标统计 |
 | 使用 `--base` 时的 `comparison-base.csv` | 基准与候选的数值、相对变化、失败情况、条件差异和结果路径 |
 

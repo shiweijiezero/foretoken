@@ -47,12 +47,12 @@ Time curves also show request throughput, in-flight requests, failure rate and l
 
 | Metric | Meaning |
 | --- | --- |
-| `decode_interactivity_p90` | TPOT-based P90 decode speed in tokens/s/user: the reciprocal of the nearest-rank P90 of successful requests' TPOT values. One-token responses have no decode interval and are excluded. Complete successful-request output counts and the eligible requests' TPOT values are required |
+| `decode_interactivity_p<N>` | TPOT-based decode speed in tokens/s/user: `1 / P<N>(TPOT)`, using the nearest-rank percentile of successful requests' TPOT values. `N` may be an integer or decimal from 0 to 100, such as `50`, `95`, or `99.9`. One-token responses have no decode interval and are excluded. Complete successful-request output counts and the eligible requests' TPOT values are required |
 | `total_tokens_per_second_per_gpu` | Input plus output tokens per second, divided by the recorded GPU count. Input usage already includes cached tokens |
 | `cached_prompt_tokens_per_second_per_gpu` | Cached input tokens per second per GPU, requiring cached-input usage for every successful request |
 | `uncached_prompt_tokens_per_second_per_gpu` | Input tokens minus cached input tokens per second per GPU, requiring complete input and cached-input usage |
 
-The P90 decode-speed calculation uses a distribution of requests, separate from the pooled chunk-interval distribution in `itl`. It excludes TTFT and differs from output throughput divided by configured concurrency. Every run's derived values are calculated before means and standard deviations across repeated runs.
+The decode-speed calculation takes the reciprocal of the selected TPOT percentile, rather than a percentile of individual request speeds. It uses a distribution of requests, separate from the pooled chunk-interval distribution in `itl`, and excludes TTFT. It also differs from output throughput divided by configured concurrency. Every run's derived values are calculated before means and standard deviations across repeated runs.
 
 Trade-off coordinates use repetitions where both selected metrics are available. Revenue selection with a speed floor likewise uses repetitions with both revenue and speed. Their CSVs retain `paired_samples` alongside the full attempt and failure counts; scalar comparison tables report each metric's available repetitions independently.
 

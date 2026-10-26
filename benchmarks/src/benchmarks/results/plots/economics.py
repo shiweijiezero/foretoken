@@ -13,7 +13,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from benchmarks.results.plots.data import _method, _numeric, _slug, paired_summaries, workload_slices
+from benchmarks.config.plot import DEFAULT_INTERACTIVITY_METRIC
+from benchmarks.results.plots.data import _method, _metric_display, _numeric, _slug, paired_summaries, workload_slices
 from benchmarks.results.plots.rendering import FigureWriter, _legend, _style
 
 
@@ -80,18 +81,19 @@ def price_metrics(metrics: dict[str, Any], method: str, pricing: Pricing) -> dic
 
 def render_economics(
     points: list[dict[str, Any]], summary: list[dict[str, Any]], writer: FigureWriter, pricing: Pricing,
-    *, min_interactivity: float | None = None, columns: int = 1,
+    *, min_interactivity: float | None = None,
+    interactivity_metric: str = DEFAULT_INTERACTIVITY_METRIC, columns: int = 1,
 ) -> None:
     """Export measured operating-point choices and signed profit bars for each fixed workload.
 
     Each method contributes its highest mean-revenue point meeting the optional
-    mean P90 decode-speed floor. Revenue and speed use the same repeated runs;
-    missing required values exclude that repetition from both statistics. Every
-    point remains in the table with its selection status and repeat counts.
+    mean decode-speed floor for the selected metric. Revenue and speed use the
+    same repeated runs; missing required values exclude that repetition from
+    both statistics. Every point retains its selection status and repeat counts.
     """
     point_by_key = {(_method(point), str(point["combination"])): point for point in points}
     metrics = (
-        "revenue_per_gpu_hour", "cost_per_gpu_hour", "profit_per_gpu_hour", "decode_interactivity_p90",
+        "revenue_per_gpu_hour", "cost_per_gpu_hour", "profit_per_gpu_hour", interactivity_metric,
         "cached_prompt_tokens_per_second_per_gpu", "uncached_prompt_tokens_per_second_per_gpu",
         "generation_tokens_per_second_per_gpu",
     )
@@ -101,7 +103,7 @@ def render_economics(
             coordinates[_method(row), str(row["combination"])][row["metric"]] = row
     required = ("revenue_per_gpu_hour", "cost_per_gpu_hour", "profit_per_gpu_hour")
     if min_interactivity is not None:
-        required += ("decode_interactivity_p90",)
+        required += (interactivity_metric,)
     paired = paired_summaries(points, required)
     records = []
     for key, values in coordinates.items():
@@ -112,6 +114,7 @@ def render_economics(
             "method": key[0], "combination": key[1],
             "max_concurrency": bench.get("max_concurrency", point.get("max_concurrency")),
             "currency": pricing.currency, "minimum_interactivity": min_interactivity,
+            "interactivity_metric": interactivity_metric,
             "input_per_million": pricing.input_per_million,
             "cached_input_per_million": pricing.cached_input_per_million,
             "output_per_million": pricing.output_per_million,
@@ -127,11 +130,11 @@ def render_economics(
             row[f"{metric}_available_samples"] = values.get(metric, {}).get("samples", 0)
         if not values.get("revenue_per_gpu_hour", {}).get("samples"):
             row["status"] = "missing_pricing_metrics"
-        elif min_interactivity is not None and not values.get("decode_interactivity_p90", {}).get("samples"):
+        elif min_interactivity is not None and not values.get(interactivity_metric, {}).get("samples"):
             row["status"] = "missing_interactivity"
         elif not row["paired_samples"]:
             row["status"] = "no_paired_metrics"
-        elif min_interactivity is not None and row["decode_interactivity_p90"] < min_interactivity:
+        elif min_interactivity is not None and row[interactivity_metric] < min_interactivity:
             row["status"] = "below_minimum_interactivity"
         else:
             row["status"] = "eligible"
@@ -153,7 +156,7 @@ def render_economics(
             panel = selected[offset:offset + 6]
             name = base + (f"-panel-{offset // 6 + 1}" if len(selected) > 6 else "")
             title = f"Revenue and cost · {group}" + (f"\n{details}" if details else "")
-            _economics_figure(panel, writer, name, title, pricing, min_interactivity, columns)
+            _economics_figure(panel, writer, name, title, pricing, min_interactivity, interactivity_metric, columns)
             plotted = True
     if not plotted:
         raise ValueError(
@@ -164,7 +167,7 @@ def render_economics(
 
 def _economics_figure(
     rows: list[dict[str, Any]], writer: FigureWriter, name: str, title: str, pricing: Pricing,
-    minimum: float | None, columns: int,
+    minimum: float | None, interactivity_metric: str, columns: int,
 ) -> None:
     """Draw cost plus positive profit, with losses below zero and a separate revenue marker."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -203,14 +206,16 @@ def _economics_figure(
         label = textwrap.fill(row["method"], width=16 if columns == 1 else 24)
         if row["max_concurrency"] is not None:
             label += f"\nc{row['max_concurrency']}"
-        speed = row["decode_interactivity_p90"]
+        speed = row[interactivity_metric]
         if speed is not None:
             label += f" · {speed:.1f} tok/s/user"
         labels.append(label)
     axis.set_xticks(positions, labels)
     axis.axhline(0, linewidth=0.7, color="#52514e")
     if minimum is not None:
-        title += f"\nP90 decode speed ≥ {minimum:g} tokens/s/user"
+        title += f"\n{_metric_display(interactivity_metric)[1]} ≥ {minimum:g}"
+    elif any(row[interactivity_metric] is not None for row in rows):
+        title += f"\n{_metric_display(interactivity_metric)[1]}"
     _style(axis, title, "Measured operating point", f"{pricing.currency} / GPU-hour")
     axis.margins(y=0.2)
     _legend(figure, axis, columns)

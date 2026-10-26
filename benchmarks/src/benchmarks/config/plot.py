@@ -7,9 +7,13 @@ from __future__ import annotations
 
 import argparse
 import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+
+DEFAULT_INTERACTIVITY_METRIC = "decode_interactivity_p90"
 
 
 @dataclass(frozen=True)
@@ -38,8 +42,27 @@ class PlotOptions:
     tradeoff: TradeoffOptions | None
     pricing: Path | None
     min_interactivity: float | None
+    interactivity_metric: str
     gpu_count: int | None
     sync_wandb: bool
+
+
+def decode_interactivity_percentile(metric: str) -> float | None:
+    """Resolve a decode-speed metric's TPOT percentile for CLI, calculations, and labels.
+
+    Other metric families return None. Decode-speed selectors accept decimal
+    percentiles from 0 through 100, including fractional tail percentiles.
+    """
+    prefix = "decode_interactivity_p"
+    if not metric.startswith(prefix):
+        return None
+    suffix = metric.removeprefix(prefix)
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", suffix):
+        raise ValueError(f"Invalid decode-speed metric {metric!r}; use decode_interactivity_p<N> with 0 <= N <= 100")
+    percentile = float(suffix)
+    if not 0 <= percentile <= 100:
+        raise ValueError(f"Decode-speed percentile must be between 0 and 100, got {suffix}")
+    return percentile
 
 
 def parse_plot_arguments(argv: Sequence[str] | None = None) -> PlotOptions:
@@ -74,12 +97,25 @@ def parse_plot_arguments(argv: Sequence[str] | None = None) -> PlotOptions:
     parser.add_argument("--pricing", type=Path, metavar="YAML",
                         help="Token prices and GPU-hour costs for revenue, cost, and profit figures")
     parser.add_argument("--min-interactivity", type=float, metavar="TOKENS_PER_SECOND",
-                        help="Minimum TPOT-based P90 decode speed when selecting revenue points")
+                        help="Minimum decode speed under --interactivity-metric when selecting revenue points")
+    parser.add_argument("--interactivity-metric", metavar="METRIC",
+                        help=f"Decode-speed percentile used for revenue selection (default: {DEFAULT_INTERACTIVITY_METRIC})")
     parser.add_argument("--gpu-count", type=int,
                         help="GPU capacity for saved results that did not record it")
     parser.add_argument("--sync_wandb", action="store_true",
                         help="Also synchronize saved results and per-run figures to their original W&B runs")
     args = parser.parse_args(argv)
+    interactivity_metric = DEFAULT_INTERACTIVITY_METRIC if args.interactivity_metric is None else args.interactivity_metric
+    try:
+        for metric in (*args.metric, args.x_metric, args.y_metric):
+            if metric is not None:
+                decode_interactivity_percentile(metric)
+        if decode_interactivity_percentile(interactivity_metric) is None:
+            parser.error("--interactivity-metric requires decode_interactivity_p<N>")
+    except ValueError as error:
+        parser.error(str(error))
+    if args.interactivity_metric is not None and args.pricing is None:
+        parser.error("--interactivity-metric requires --pricing")
     if args.min_interactivity is not None:
         if args.pricing is None or not math.isfinite(args.min_interactivity) or args.min_interactivity < 0:
             parser.error("--min-interactivity requires --pricing and a finite nonnegative speed")
@@ -102,5 +138,6 @@ def parse_plot_arguments(argv: Sequence[str] | None = None) -> PlotOptions:
         sources=tuple(args.sources), output_dir=args.output_dir, columns=args.columns,
         metrics=tuple(args.metric), methods=tuple(args.method), base=args.base,
         tradeoff=tradeoff, pricing=args.pricing, min_interactivity=args.min_interactivity,
+        interactivity_metric=interactivity_metric,
         gpu_count=args.gpu_count, sync_wandb=args.sync_wandb,
     )
