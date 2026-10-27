@@ -50,6 +50,15 @@ Enter in the session:
 
 #### Codex
 
+If Codex cannot create the requested team because of its agent limit, set a suitable cap in the user configuration, `~/.codex/config.toml` (or `$CODEX_HOME/config.toml` when `CODEX_HOME` is set):
+
+```toml
+[agents]
+max_concurrent_threads_per_session = 16
+```
+
+Choose enough slots for concurrent Explorers, Workers and Experimenters plus an Observer round. The cap excludes the lead; leaving it unset uses Codex's default. Start a new session after changing it and confirm its available capacity. Actual staffing still comes from the task's assignments. See the official [Codex subagent settings](https://learn.chatgpt.com/docs/agent-configuration/subagents#global-settings).
+
 In the Codex desktop app, open the repository and review the Foretoken project hooks under Settings → Hooks. If using the terminal CLI, run `codex` from the repository and review the hooks with:
 
 ```text

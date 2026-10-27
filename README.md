@@ -162,6 +162,8 @@ In the Codex CLI, enter the following commands separately, reviewing and trustin
 
 In the desktop app, review the Foretoken project hooks under Settings → Hooks, then enter the `/goal` command above in the chat.
 
+For larger Codex teams, [raise the agent concurrency limit](rsi-playbooks/README.md#codex) before starting the session.
+
 To pause, use `/goal clear` in Claude Code or `/goal pause` in Codex, and ask the agents to stop this task's experiments and collectors. For more detailed objectives and constraints, fill in the [task template](rsi-playbooks/templates/task-template.md) and reference the task file in your prompt. See the [RSI playbooks](rsi-playbooks/README.md) for the full workflow.
 
 ## Gateway Mode
