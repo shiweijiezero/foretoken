@@ -18,6 +18,8 @@ Before starting, every role [learns how Foretoken works](roles/common.md#learn-t
 
 The team starts experiments only when the user requests execution or resumption. A new task records its start and deadline; a resumed task first checks existing jobs and results and keeps the original time budget. A supplied configuration is a starting point that can evolve with evidence. If none is supplied, the team records an initial approach for comparison. The team builds on existing findings and continues until the task's end conditions are met.
 
+Activate this root session's [continuation binding](continuation.md#enable-the-task) after establishing the task. Project hooks then act only on this RSI session and its registered members. If the harness has not loaded or trusted them, report that limitation and handle native completion notifications directly.
+
 Start research and implementation alongside environment preparation. The Experimenter prepares the runtime and initial measurements, Explorers search and analyze sources, and Workers develop key changes and run available local checks. While the environment is unavailable, prioritize implementation and exploration that can proceed independently; complete environment-dependent validation when it is ready.
 
 Before allocating resources, the lead checks the task's nodes, current users and available GPU windows, following the [resource coordination guidance](roles/common.md#coordinate-resources-and-environments). If a node cannot be used, the lead records the reason and addresses problems that can be resolved.
@@ -44,7 +46,7 @@ The harness's actual concurrency limit still applies, including any slot used by
 
 Research and execution assignments include absolute paths to the task, role instructions, code and evidence, together with the reference approach and relevant decisions. Members read the original sources themselves and use stable names such as `worker-01` and `experimenter-01`. Observers receive the task file, role instructions and working directory, find the records themselves, and use a new name each round, such as `observer-r03-01`. When the harness assigns the lead a messaging address, the team uses that address.
 
-The lead follows the staffing above and reads experiment records and new results to track progress. Use observed durations, the number of candidates waiting and the remaining budget to adjust preparation work and concurrent experiments separately. Keep members who know a question working together; see [sharing findings and continuing work](roles/common.md#share-findings-and-keep-working).
+The lead maintains the requested roles as members finish stages, using native completion and idle notifications to assign the next useful question or record a real dependency. Register [concrete next steps](continuation.md#arrange-a-members-next-step) for continuing members; Observers and one-time reviewers remain unregistered. Use experiment records, durations and remaining budget to adjust research and execution separately, keeping familiar owners with their questions.
 
 ## Arrange periodic team checks
 
@@ -110,6 +112,6 @@ A stop marker, deadline, SIGINT or SIGTERM lets the collector exit after its cur
 
 ## Pause or finish
 
-On a user pause, stop or deadline, the lead stops scheduling new experiments and notifies the team. Each owner stops their processes and confirms exit. Unfinished work is preserved on pause; at task completion, required results are saved before unused resources are removed.
+On a user pause, stop or deadline, the lead [releases the continuation binding](continuation.md#wait-pause-or-finish), stops scheduling new experiments and notifies the team. Each owner stops their processes and confirms exit. Unfinished work is preserved on pause; at task completion, required results are saved before unused resources are removed.
 
 The lead checks retained changes and measurements, including sampling coverage and unresolved questions. The writer updates the existing report to reflect the pause or end state and objectives actually achieved, following the [report workflow](../../../rsi-playbooks/experiment-records.md#maintain-the-user-facing-report), and shares its path with the user.

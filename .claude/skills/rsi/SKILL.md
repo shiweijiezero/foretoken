@@ -18,6 +18,8 @@ Use an interactive Agent Team. Confirm Teams are enabled before creating members
 
 The user sets one `/goal` in the lead session for the task outcome, team progress and delivery. Members do not need separate goals. Use shared Task tools for owners and dependencies when available.
 
+Follow the shared [continuation workflow](../../../.agents/skills/rsi/continuation.md) with `--harness claude`. Register native member IDs or teammate names only for continuing research and execution roles; the project `TeammateIdle` hook can deliver their next step without creating another teammate.
+
 Give parallel writers task branches and independent checkouts with absolute paths. Prepare checkouts separately from team creation: passing `isolation` to the Agent tool creates an ordinary subagent rather than a teammate.
 
 On resume, check the original budget, experiment records, jobs and members before recreating missing teammates. On pause or stop, have members stop task-owned jobs and preserve results; `/goal clear` cancels the goal but does not stop experiment processes.

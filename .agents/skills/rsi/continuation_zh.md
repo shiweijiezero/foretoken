@@ -1,0 +1,56 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+-->
+
+# 接续 RSI 工作
+
+[English](continuation.md) | 简体中文
+
+项目 hook 帮助成员接着推进已分配的研究问题，并提醒主 Agent 安排后续工作。它只作用于明确启用的 RSI 会话；普通开发、review 和聊天没有绑定，不受影响。
+
+## 启用本次任务
+
+使用 Python 3.11+ 和工作区中的 hook 配置。Codex 读取 `.codex/hooks.json`，需要通过 `/hooks` 审阅并信任其中的定义；Claude Code 读取项目的 `.claude/settings.json`。两者都无需修改全局设置，具体机制见 [Codex](https://learn.chatgpt.com/docs/hooks) 和 [Claude Code](https://code.claude.com/docs/en/hooks) 官方说明。
+
+主 Agent 确定任务和原始截止时间后启用接续。将 `RSI_HARNESS` 设为 `codex` 或 `claude`，`RSI_SESSION` 设为原生主会话 ID，`RSI_TASK` 设为任务文件路径，`RSI_DEADLINE` 设为带 UTC 偏移的 ISO 截止时间，在任务工作区执行：
+
+```bash
+python -I .agents/skills/rsi/scripts/continuation.py activate \
+  --harness "$RSI_HARNESS" --session "$RSI_SESSION" \
+  --task "$RSI_TASK" --deadline "$RSI_DEADLINE"
+```
+
+没有时间预算的任务省略 `--deadline`。暂停的任务可再次启用，保留原截止时间；已完成任务不再恢复。返回的状态表示 hook 绑定，不是运行环境中的实际活跃人数。
+
+## 安排成员的下一步
+
+例如，Worker 向 Experimenter 交付候选后，可以继续研究调用链中尚未解释的部分。在当前阶段结束前登记这项具体且已授权的工作。将 `RSI_AGENT` 设为成员的原生 ID，`RSI_ROLE` 设为 `explorer`、`worker` 或 `experimenter`，`RSI_NEXT_STEP` 写明下一问题和相关资料路径：
+
+```bash
+python -I .agents/skills/rsi/scripts/continuation.py assign \
+  --harness "$RSI_HARNESS" --session "$RSI_SESSION" \
+  --agent "$RSI_AGENT" --role "$RSI_ROLE" --next-step "$RSI_NEXT_STEP"
+```
+
+Claude 队友也可使用明确的 teammate name。身份取自运行环境或原始会话元数据，不能用界面显示名称代替。Observer 和一次性审查成员不登记，完成后正常结束。
+
+`SubagentStop` 发生时，hook 取出已登记的下一步，让同一成员继续；Claude 的 `TeammateIdle` 使用同一份待办。每条指令只交付一次，之后结束时不会重复。已登记的成员完成后没有下一步时，主 Agent 在下一次 `Stop` 收到一次提醒，核对角色目标并通过原生工具接续工作。
+
+使用相同的 harness 和主会话 ID 调用 `status`，可查看尚待交付的指令。hook 不创建成员，也不判断新研究是否值得做，这些仍由主 Agent 决定。
+
+## 等待、暂停与结束
+
+后续确实依赖尚未返回的结果时，将成员设为 `waiting`；研究问题已回答时设为 `done`。`RSI_REASON` 写明结论，或缺少的证据和恢复条件：
+
+```bash
+python -I .agents/skills/rsi/scripts/continuation.py release \
+  --harness "$RSI_HARNESS" --session "$RSI_SESSION" \
+  --agent "$RSI_AGENT" --state waiting --reason "$RSI_REASON"
+```
+
+主 Agent 再分配其他有价值的问题，或说明该角色暂缺的原因。等待或完成的成员只有重新分配工作后才会继续。
+
+任务暂停或停止前，省略 `--agent`，用 `--state paused` 解除主会话的接续；任务完成时使用 `--state complete`。待交付指令会清空，实验和采集器仍按 RSI 流程清理。到期或会话结束后，hook 也不再继续工作；Codex 的 `Interrupt` 会暂停绑定。恢复时重新启用同一任务，再登记下一步。
+
+绑定统一保存在仓库的 Git common directory 中，关联 worktree 共用，按 harness 和主会话隔离；实验记录仍保存在原位置。团队分工中保留主会话和成员身份，恢复后的主 Agent 即可管理原绑定。

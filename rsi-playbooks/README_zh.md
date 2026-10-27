@@ -34,6 +34,8 @@ cd foretoken
 
 下面以 NVIDIA 任务为例，使用自定义任务时替换路径。
 
+仓库包含用于[接续 RSI 工作](../.agents/skills/rsi/continuation_zh.md)的项目 hook，需要 Python 3.11+，只对明确启用的 RSI 会话生效。使用 Codex 时，启动前通过 `/hooks` 审阅并信任项目 hook。任务启用和派工由 RSI 主 Agent 管理，普通开发和聊天不受影响。
+
 #### Claude Code
 
 ```bash
