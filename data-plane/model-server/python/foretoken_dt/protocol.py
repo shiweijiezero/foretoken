@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Control messages for draft peers; tensor bytes remain in Mooncake buffers."""
+"""Control messages for native Draft/Target tensor transfers and retained turns."""
 
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from vllm.platforms import current_platform
+
+PEER_PROTOCOL_VERSION = 3
+TransferProtocol = Literal["tcp", "rdma", "nccl"]
 
 
 class Message(BaseModel):
@@ -19,7 +23,7 @@ class Settings(Message):
 
     role: Literal["draft", "target"]
     endpoint: str | None = None
-    protocol: Literal["tcp", "rdma"] = "tcp"
+    protocol: TransferProtocol
 
     @classmethod
     def from_engine(cls, config):
@@ -27,6 +31,8 @@ class Settings(Message):
         value = config.additional_config.get("foretoken_dt")
         if value is None:
             raise ValueError("the DT worker requires additional_config.foretoken_dt")
+        value = dict(value)
+        value.setdefault("protocol", "nccl" if current_platform.is_cuda() else "tcp")
         result = cls.model_validate(value)
         if result.role == "target" and result.endpoint is None:
             raise ValueError("the DT Target requires a Draft endpoint")
@@ -45,6 +51,7 @@ class TensorRegion(Message):
 class OpenPeer(Message):
     """Bind one Target worker's input and output capacities to a Draft peer."""
 
+    protocol_version: int
     peer_id: str
     method: str
     vocab_size: int = Field(gt=0)
@@ -55,8 +62,18 @@ class OpenPeer(Message):
     max_requests: int = Field(gt=0)
     num_candidates: int = Field(gt=0)
     feature_dtype: Literal["float16", "bfloat16", "float32"]
-    protocol: Literal["tcp", "rdma"]
+    protocol: TransferProtocol
+    return_probabilities: bool
     logits: TensorRegion | None = None
+    nccl_ids: tuple[str, str] | None = None
+
+
+class PrepareBatch(Message):
+    """Announce transfer shapes before Target execution produces their contents."""
+
+    sequence: int = Field(ge=0)
+    feature_rows: int = Field(ge=0)
+    num_requests: int = Field(gt=0)
 
 
 class ProposalRequest(Message):

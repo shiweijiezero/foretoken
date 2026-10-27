@@ -14,9 +14,12 @@ class DraftContext:
     def __init__(self):
         self.tensor = None
         self.end = 0
+        self.current = None
+        self.current_start = 0
+        self.copied: torch.cuda.Event | None = None
 
-    def append(self, start, rows):
-        """Copy one completed transfer before its shared receive buffer can be reused."""
+    def append(self, start, rows, copy_stream=None):
+        """Retain the current GPU interval and a host history for native KV replay."""
         if start != self.end:
             raise ValueError("Target features must extend the retained prefix")
         if not rows.shape[0]:
@@ -35,14 +38,34 @@ class DraftContext:
                 pin_memory=True,
             )
             if previous is not None:
+                if self.copied is not None:
+                    self.copied.synchronize()
                 self.tensor[:start].copy_(previous[:start])
-        self.tensor[start:end].copy_(rows)
+        self.current_start = start
+        if rows.is_cuda:
+            self.current = rows.clone()
+            copy_stream.wait_stream(torch.cuda.current_stream(rows.device))
+            with torch.cuda.stream(copy_stream):
+                self.tensor[start:end].copy_(self.current, non_blocking=True)
+                self.current.record_stream(copy_stream)
+                if self.copied is None:
+                    self.copied = torch.cuda.Event(blocking=True)
+                self.copied.record(copy_stream)
+        else:
+            self.tensor[start:end].copy_(rows)
         self.end = end
 
     def read(self, start, count):
         """Return the scheduled interval, including replay after native KV preemption."""
         if start < 0 or start + count > self.end:
             raise ValueError("Draft execution exceeds its confirmed feature prefix")
+        if self.current is not None and start >= self.current_start:
+            offset = start - self.current_start
+            return self.current[offset : offset + count]
+        # Older intervals are needed only when native KV is replayed. The hot
+        # turn reads its received GPU slice while the host history is retained.
+        if self.copied is not None:
+            self.copied.synchronize()
         return self.tensor[start : start + count]
 
 

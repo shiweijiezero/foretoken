@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use futures::{StreamExt, future::try_join_all};
+use futures::{StreamExt, stream::select_all};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
@@ -28,6 +28,8 @@ pub(super) struct OpenPeer {
     pub max_model_len: usize,
     pub max_requests: usize,
     pub num_candidates: usize,
+    pub protocol: String,
+    pub return_probabilities: bool,
     pub logits: Option<Value>,
     // The native worker owns validation of tensor layouts, methods and transport settings.
     #[serde(flatten)]
@@ -50,6 +52,14 @@ pub(super) struct ProposalRequest {
     generate: bool,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrepareBatch {
+    sequence: u64,
+    feature_rows: usize,
+    num_requests: usize,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ProposeBatch {
@@ -60,7 +70,8 @@ pub(super) struct ProposeBatch {
 #[derive(Serialize)]
 pub(super) struct Proposal {
     sequence: u64,
-    token_ids: Vec<Vec<u32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    token_ids: Option<Vec<Vec<u32>>>,
 }
 
 #[derive(Deserialize)]
@@ -72,6 +83,8 @@ pub(super) struct FinishRequests {
 #[derive(Deserialize)]
 #[serde(tag = "operation", content = "payload", rename_all = "snake_case")]
 pub(super) enum PeerCommand {
+    Connect,
+    Prepare(PrepareBatch),
     Propose(ProposeBatch),
     Finish(FinishRequests),
     Close,
@@ -87,6 +100,7 @@ struct Session {
 #[derive(Default)]
 struct PeerRequests {
     sequence: u64,
+    prepared: bool,
     sessions: HashMap<String, Session>,
 }
 
@@ -114,6 +128,18 @@ impl Peer {
         self.requests.lock().unwrap().sessions.len()
     }
 
+    /// Announces tensor shapes while Target computation is still producing their contents.
+    pub async fn prepare(&self, client: &DraftClient, batch: PrepareBatch) -> Result<(), String> {
+        if batch.sequence != self.requests.lock().unwrap().sequence {
+            return Err("DT input preparation sequence is out of order".into());
+        }
+        client
+            .rpc::<(), _>("dt_prepare", (&self.spec.peer_id, json!(batch)))
+            .await?;
+        self.requests.lock().unwrap().prepared = true;
+        Ok(())
+    }
+
     /// Delivers one received batch through native admission, scheduling, sampling and output dispatch.
     pub async fn propose(
         &self,
@@ -121,14 +147,15 @@ impl Peer {
         batch: ProposeBatch,
     ) -> Result<Proposal, String> {
         let neural = self.spec.num_features != 0;
-        let capture_q = self.spec.logits.is_some();
+        let capture_q = self.spec.return_probabilities;
+        let gpu_output = self.spec.protocol == "nccl";
         let num_turns = batch
             .requests
             .iter()
             .filter(|r| r.generate && r.generation < self.spec.max_model_len)
             .count();
-        let stage_with_execution = neural && !capture_q && num_turns == batch.requests.len();
-        let batch_id = format!("{}:{}", self.spec.peer_id, batch.sequence);
+        let stage_with_execution =
+            neural && !capture_q && !gpu_output && num_turns == batch.requests.len();
         let mut staged = Vec::with_capacity(batch.requests.len());
         let mut turns = Vec::with_capacity(batch.requests.len());
         {
@@ -197,18 +224,21 @@ impl Peer {
                 {
                     return Err("DT confirmed prefix is empty or exceeds the context limit".into());
                 }
+                let count = if request.generate {
+                    self.spec
+                        .num_candidates
+                        .min(self.spec.max_model_len - session.confirmed_length)
+                } else {
+                    0
+                };
                 staged.push((
                     session.native_id.clone(),
                     request.context_start,
                     request.feature_offset,
                     request.feature_count,
-                    request.generate,
+                    count,
                 ));
-                let count = self
-                    .spec
-                    .num_candidates
-                    .min(self.spec.max_model_len - session.confirmed_length);
-                if !request.generate || count == 0 {
+                if count == 0 {
                     turns.push(None);
                     continue;
                 }
@@ -217,8 +247,6 @@ impl Peer {
                 }
                 let mut extra_args = HashMap::from([
                     ("dt_session".into(), json!(session.native_id)),
-                    ("dt_batch".into(), json!(batch_id)),
-                    ("dt_batch_size".into(), json!(num_turns)),
                     ("dt_generation".into(), json!(request.generation)),
                     (
                         "dt_anchor_token".into(),
@@ -230,6 +258,7 @@ impl Peer {
                         ),
                     ),
                     ("dt_capture_q".into(), json!(capture_q)),
+                    ("dt_gpu_output".into(), json!(gpu_output)),
                 ]);
                 if stage_with_execution {
                     extra_args.insert(
@@ -269,48 +298,70 @@ impl Peer {
                 }));
             }
         }
-        if !stage_with_execution && (neural || capture_q) {
+        // Core admits the received batch before scheduling. Its existing streams
+        // still own per-request cancellation and completion while one collector
+        // restores the peer's row order.
+        let mut results = Vec::with_capacity(turns.len());
+        let mut pending = HashMap::with_capacity(num_turns);
+        let mut requests = Vec::with_capacity(num_turns);
+        for (row, turn) in turns.into_iter().enumerate() {
+            if let Some(turn) = turn {
+                let count = turn.sampling_params.as_ref().unwrap().max_tokens as usize;
+                pending.insert(turn.request_id.clone(), (row, count));
+                results.push((Vec::with_capacity(self.spec.num_candidates), None));
+                requests.push(turn);
+            } else {
+                results.push((vec![0; self.spec.num_candidates], None));
+            }
+        }
+        let prepare_inputs = !stage_with_execution && (neural || capture_q || gpu_output);
+        if prepare_inputs && requests.is_empty() {
             client
                 .rpc::<(), _>("dt_stage", (&self.spec.peer_id, &staged))
                 .await?;
         }
-        // Each native output stream covers one turn. The scheduler retains its request and KV by ID.
-        let results = try_join_all(turns.into_iter().map(|turn| async move {
-            let Some(turn) = turn else {
-                return Ok((vec![0; self.spec.num_candidates], None));
-            };
-            let count = turn.sampling_params.as_ref().unwrap().max_tokens as usize;
-            let id = turn.request_id.clone();
-            let mut output = client
-                .engine()
-                .call(turn)
-                .await
-                .map_err(|e| e.to_string())?;
-            let mut tokens = Vec::with_capacity(self.spec.num_candidates);
-            while let Some(next) = output.next().await {
-                let next = next.map_err(|e| e.to_string())?;
-                tokens.extend_from_slice(&next.new_token_ids);
-                if let Some(reason) = next.finish_reason {
-                    if reason != EngineCoreFinishReason::Length || tokens.len() != count {
-                        return Err("Native Draft returned an incomplete candidate sequence".into());
-                    }
-                    tokens.resize(self.spec.num_candidates, 0);
-                    return Ok((tokens, Some((id, count))));
+        let worker_rpc = (prepare_inputs && !requests.is_empty())
+            .then_some(("dt_stage", (&self.spec.peer_id, &staged)));
+        let streams = client
+            .engine()
+            .call_batch(requests, worker_rpc)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut output = select_all(streams);
+        while let Some(next) = output.next().await {
+            let next = next.map_err(|error| error.to_string())?;
+            let &(row, count) = pending
+                .get(&next.request_id)
+                .ok_or("Native Draft returned an unknown turn")?;
+            let (tokens, proposal) = &mut results[row];
+            tokens.extend_from_slice(&next.new_token_ids);
+            if let Some(reason) = next.finish_reason {
+                if reason != EngineCoreFinishReason::Length || tokens.len() != count {
+                    return Err("Native Draft returned an incomplete candidate sequence".into());
                 }
+                tokens.resize(self.spec.num_candidates, 0);
+                *proposal = Some((next.request_id.clone(), count));
+                pending.remove(&next.request_id);
             }
-            Err("Native Draft output closed before its turn completed".to_owned())
-        }))
-        .await?;
-        if capture_q {
+        }
+        if !pending.is_empty() {
+            return Err("Native Draft output closed before its turn completed".into());
+        }
+        if capture_q && !gpu_output {
             let proposals: Vec<_> = results.iter().map(|(_, proposal)| proposal).collect();
             client
                 .rpc::<(), _>("dt_publish_probabilities", (&self.spec.peer_id, proposals))
                 .await?;
         }
-        self.requests.lock().unwrap().sequence += 1;
+        {
+            let mut state = self.requests.lock().unwrap();
+            state.sequence += 1;
+            state.prepared = false;
+        }
         Ok(Proposal {
             sequence: batch.sequence,
-            token_ids: results.into_iter().map(|(tokens, _)| tokens).collect(),
+            token_ids: (!gpu_output)
+                .then(|| results.into_iter().map(|(tokens, _)| tokens).collect()),
         })
     }
 
@@ -354,6 +405,8 @@ impl Peer {
     }
 
     pub fn in_flight(&self) -> bool {
-        self.operation.available_permits() == 0 || self.closing.load(Ordering::Acquire)
+        self.operation.available_permits() == 0
+            || self.requests.lock().unwrap().prepared
+            || self.closing.load(Ordering::Acquire)
     }
 }

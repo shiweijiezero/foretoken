@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import numpy as np
 import torch
+from torch.futures import Future as DeviceFuture
 from vllm.utils.platform_utils import is_uva_available
 from vllm.v1.utils import record_function_or_nullcontext
 from vllm.v1.worker.gpu.async_utils import async_copy_to_np, stream
@@ -18,9 +19,13 @@ from vllm.v1.worker.gpu.spec_decode.speculator import BaseSpeculator
 from websockets.sync.client import connect
 
 from .exchange import TensorExchange
+from .features import FeatureCapture
+from .nccl import NcclPeer
 from .protocol import (
+    PEER_PROTOCOL_VERSION,
     FinishRequests,
     OpenPeer,
+    PrepareBatch,
     ProposalRequest,
     ProposeBatch,
     Settings,
@@ -46,7 +51,9 @@ class StagedProposal:
     metadata: np.ndarray
     token_ids: list[np.ndarray]
     token_offsets: list[int]
-    features: torch.Tensor | None
+    feature_rows: int
+    features_transferred: Future[None] | None
+    prepare_sent: Future[None] | None
     query_start_loc: list[int]
     temperatures: np.ndarray
     seeds: np.ndarray
@@ -76,7 +83,14 @@ class RemoteProposer(BaseSpeculator):
             if is_uva_available()
             else None
         )
-        self.exchange = TensorExchange(settings.protocol)
+        self.nccl = (
+            NcclPeer(NcclPeer.create_unique_ids(), 0, self.device)
+            if settings.protocol == "nccl"
+            else None
+        )
+        self.exchange = TensorExchange(settings.protocol) if self.nccl is None else None
+        self.feature_capture: FeatureCapture | None = None
+        self.prepare_sent: Future[None] | None = None
         self.control = None
         self.control_scope = None
         self.destination: TensorRegion | None = None
@@ -110,25 +124,59 @@ class RemoteProposer(BaseSpeculator):
     def capture(self):
         """Remote work is outside the Target's CUDA graph capture."""
 
-    def _open(self, features: torch.Tensor | None) -> None:
+    def bind_target_model(self, target_model):
+        """Bind stable feature buffers and peer ownership before native graph capture."""
+        if not self.spec.uses_draft_model():
+            self.feature_capture = FeatureCapture(
+                self.config,
+                target_model,
+                self.exchange,
+                self.device,
+                self.runner.use_aux_hidden_state_outputs,
+            )
+        self._open()
+
+    def prepare_target_forward(self, input_batch):
+        """Retire feature-buffer reads before the native forward reuses their storage."""
+        if self.failed:
+            raise RuntimeError("the Draft binding has failed")
+        if self.feature_capture is not None:
+            self.feature_capture.prepare_forward()
+        if self.nccl is not None:
+            self.prepare_sent = self.executor.submit(
+                self._prepare_batch,
+                input_batch.num_tokens if self.feature_capture is not None else 0,
+                input_batch.num_reqs,
+            )
+
+    def _prepare_batch(self, rows, num_requests):
+        """Announce shapes before native execution, matching the AFD control/data split."""
+        request = PrepareBatch(
+            sequence=self.sequence, feature_rows=rows, num_requests=num_requests
+        )
+        self.control.send(
+            json.dumps(
+                {"operation": "prepare", "payload": request.model_dump()},
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        )
+
+    def _open(self) -> None:
         """Retain the control stream that owns every native Draft session for this worker."""
-        num_features = 0 if features is None else features.shape[1]
+        features = self.feature_capture
+        num_features = 0 if features is None else features.destination.shape[0]
         hidden_size = self.config.model_config.get_hidden_size()
         dtype = str(self.config.model_config.dtype).removeprefix("torch.")
-        if features is not None:
-            hidden_size = features.shape[2]
-            dtype = str(features.dtype).removeprefix("torch.")
-            self.exchange.allocate(
-                "features", [self.max_tokens, num_features, hidden_size], dtype
-            )
         logits = None
-        if self.draft_logits is not None:
+        if self.draft_logits is not None and self.exchange is not None:
             logits = self.exchange.allocate(
                 "logits",
                 [self.max_reqs, self.k, self.config.model_config.get_vocab_size()],
                 "float32",
             )
         request = OpenPeer(
+            protocol_version=PEER_PROTOCOL_VERSION,
             peer_id=self.peer_id,
             method=self.spec.method,
             vocab_size=self.config.model_config.get_vocab_size(),
@@ -140,7 +188,9 @@ class RemoteProposer(BaseSpeculator):
             num_candidates=self.k,
             feature_dtype=dtype,
             protocol=self.settings.protocol,
+            return_probabilities=self.draft_logits is not None,
             logits=logits,
+            nccl_ids=self.nccl.unique_ids if self.nccl is not None else None,
         )
         url = urlsplit(self.settings.endpoint.rstrip("/") + "/v1/internal/draft/peers")
         url = url._replace(scheme={"http": "ws", "https": "wss"}[url.scheme])
@@ -163,7 +213,15 @@ class RemoteProposer(BaseSpeculator):
                 if opened["input"] is not None
                 else None
             )
+            if self.nccl is not None:
+                # Both workers enter the native collective after accepting the
+                # control binding; neither waits for a connect ACK first.
+                self.control.send('{"operation":"connect"}')
+                self.nccl.connect()
+                self._receive_control()
         except BaseException:
+            if self.nccl is not None:
+                self.nccl.close(abort=True)
             self.control = None
             scope.__exit__(None, None, None)
             raise
@@ -172,6 +230,10 @@ class RemoteProposer(BaseSpeculator):
     def _exchange_control(self, payload):
         """Send one ordered peer operation and wait for its native completion acknowledgment."""
         self.control.send(json.dumps(payload, separators=(",", ":"), allow_nan=False))
+        return self._receive_control()
+
+    def _receive_control(self):
+        """Receive one peer acknowledgment or surface its native operation failure."""
         response = json.loads(self.control.recv())
         if "error" in response:
             raise RuntimeError(response["error"])
@@ -195,17 +257,12 @@ class RemoteProposer(BaseSpeculator):
         skip_attn_for_dummy_run=False,
         mm_inputs=None,
         is_profile=False,
-    ) -> torch.Tensor | Future[torch.Tensor]:
-        """Stage native inputs and return proposals now or when their peer operation completes."""
+    ) -> torch.Tensor | DeviceFuture[torch.Tensor]:
+        """Stage native inputs and return a future carrying the proposals' device dependency."""
         if dummy_run:
             return self.draft_tokens[: input_batch.num_reqs].zero_()
         if self.failed:
             raise RuntimeError("the Draft binding has failed")
-        features = None
-        if not self.spec.uses_draft_model():
-            features = torch.stack(aux_hidden_states or [last_hidden_states], dim=1)[
-                : input_batch.num_tokens
-            ]
         states = self.runner.req_states
         indices = input_batch.idx_mapping
         metadata = torch.stack(
@@ -238,11 +295,6 @@ class RemoteProposer(BaseSpeculator):
                 token_rows.append(self.token_history_cpu[slot, start:end])
             else:
                 token_sources.append(states.all_token_ids.gpu[slot, start:end])
-        copied_features = (
-            torch.empty_like(features, device="cpu", pin_memory=True)
-            if features is not None
-            else None
-        )
         copy_stream = self.runner.output_copy_stream
         copy_done = torch.cuda.Event(blocking=True)
         try:
@@ -255,14 +307,12 @@ class RemoteProposer(BaseSpeculator):
                     copied_metadata = async_copy_to_np(metadata)
                     for source in token_sources:
                         token_rows.append(async_copy_to_np(source))
-                    if copied_features is not None:
-                        copied_features.copy_(features, non_blocking=True)
                 finally:
                     copy_done.record(copy_stream)
         except BaseException:
             # A partial batch still owns every source and destination until DMA ends.
-            copy_done.synchronize()
             self.failed = True
+            copy_done.synchronize()
             raise
         sampling = self.runner.sampler.sampling_states
         staged = StagedProposal(
@@ -271,30 +321,44 @@ class RemoteProposer(BaseSpeculator):
             metadata=copied_metadata,
             token_ids=token_rows,
             token_offsets=token_offsets,
-            features=copied_features,
+            feature_rows=input_batch.num_tokens,
+            features_transferred=None,
+            prepare_sent=self.prepare_sent,
             query_start_loc=input_batch.query_start_loc_np.tolist(),
             temperatures=sampling.temperature.np[input_batch.idx_mapping_np],
             seeds=sampling.seeds.np[input_batch.idx_mapping_np],
             copy_done=copy_done,
-            sources=[metadata, *token_sources]
-            + ([features] if features is not None else []),
+            sources=[metadata, *token_sources],
         )
-        return self.executor.submit(self._complete_proposal, staged)
+        self.prepare_sent = None
+        if self.feature_capture is not None:
+            staged.features_transferred = self.feature_capture.begin_transfer()
+        result = DeviceFuture(devices=[self.device])
+        self.executor.submit(self._complete_proposal, staged, result)
+        return result
 
     @torch.inference_mode()
-    def _complete_proposal(self, staged: StagedProposal) -> torch.Tensor:
-        """Own ordered transfer and completion without retaining the Target execution thread."""
+    def _complete_proposal(
+        self, staged: StagedProposal, output: DeviceFuture[torch.Tensor]
+    ) -> None:
+        """Publish ordered peer output with its producer-stream dependency for native consumers."""
         try:
-            staged.copy_done.synchronize()
-            staged.sources.clear()
             if self.failed:
                 raise RuntimeError("the Draft binding has failed")
-            if self.control is None:
-                self._open(staged.features)
-            if staged.features is not None:
-                self.exchange.buffers["features"][: len(staged.features)].copy_(
-                    staged.features
-                )
+            if staged.prepare_sent is not None:
+                staged.prepare_sent.result()
+            if self.feature_capture is not None:
+                # Feature sends wait on native layer events, not on sampling
+                # metadata. The control binding owns the receiver throughout.
+                with record_function_or_nullcontext("DT Target transfer"):
+                    self.feature_capture.transfer(
+                        staged.feature_rows, self.destination, self.nccl
+                    )
+                staged.features_transferred.set_result(None)
+            if staged.prepare_sent is not None:
+                self._receive_control()
+            staged.copy_done.synchronize()
+            staged.sources.clear()
             requests = []
             for row, request_id in enumerate(staged.request_ids):
                 sampled, rejected, total_len, start = staged.metadata[row].tolist()
@@ -307,7 +371,7 @@ class RemoteProposer(BaseSpeculator):
                 context_start = session.context_count
                 feature_offset = 0
                 count = 0
-                if staged.features is not None:
+                if self.feature_capture is not None:
                     left, right = staged.query_start_loc[row : row + 2]
                     computed_end = start + right - left - rejected
                     if computed_end > context_start:
@@ -337,43 +401,97 @@ class RemoteProposer(BaseSpeculator):
                         generate=sampled > 0,
                     )
                 )
-            if self.destination is not None:
-                with record_function_or_nullcontext("DT Target transfer"):
-                    self.exchange.write(
-                        "features", len(staged.features), self.destination
+            tokens = None
+            log_q = None
+            if self.nccl is not None:
+                with (
+                    torch.cuda.device(self.device),
+                    torch.cuda.stream(self.result_stream),
+                ):
+                    tokens = torch.empty(
+                        len(requests), self.k, dtype=torch.int64, device=self.device
                     )
-            batch = ProposeBatch(sequence=self.sequence, requests=requests)
+                    if self.draft_logits is not None:
+                        log_q = torch.empty(
+                            len(requests),
+                            self.k,
+                            self.config.model_config.get_vocab_size(),
+                            dtype=torch.float32,
+                            device=self.device,
+                        )
+            sequence = self.sequence
+            batch = ProposeBatch(sequence=sequence, requests=requests)
+            payload = {"operation": "propose", "payload": batch.model_dump()}
             with record_function_or_nullcontext("DT Target proposal RPC"):
-                result = self._exchange_control(
-                    {"operation": "propose", "payload": batch.model_dump()}
-                )
-            if result["sequence"] != self.sequence:
-                raise RuntimeError("Draft returned a different proposal sequence")
-            # Complete device publication before fulfilling the CPU Future.
-            # Its consumer can then apply these independent rows on the native stream.
+                if self.nccl is not None:
+                    self.control.send(
+                        json.dumps(payload, separators=(",", ":"), allow_nan=False)
+                    )
+                else:
+                    result = self._exchange_control(payload)
+                    if result["sequence"] != sequence:
+                        raise RuntimeError(
+                            "Draft returned a different proposal sequence"
+                        )
+            # The native Future records the producing stream. Consumers inherit
+            # that dependency without waiting for the device on this IO thread.
             with torch.cuda.device(self.device), torch.cuda.stream(self.result_stream):
-                tokens = torch.tensor(
-                    result["token_ids"], dtype=torch.int64, device=self.device
-                )
+                if self.nccl is not None:
+                    self.nccl.receive_output(tokens, log_q)
+                    self.result_stream.wait_event(self.nccl.output_ready)
+                else:
+                    host_tokens = torch.tensor(
+                        result["token_ids"],
+                        dtype=torch.int64,
+                        device="cpu",
+                        pin_memory=True,
+                    )
+                    tokens = host_tokens.to(self.device, non_blocking=True)
+                    if self.draft_logits is not None:
+                        log_q = self.exchange.buffers["logits"][
+                            : len(staged.request_ids)
+                        ].to(self.device)
                 if tokens.shape != (len(staged.request_ids), self.k):
                     raise RuntimeError("Draft returned a different candidate layout")
                 if self.draft_logits is not None:
-                    log_q = self.exchange.buffers["logits"][
-                        : len(staged.request_ids)
-                    ].to(self.device)
+                    staged.indices.record_stream(self.result_stream)
                     scale = torch.as_tensor(
                         staged.temperatures, device=self.device
                     ).clamp_min(1e-20)
                     self.draft_logits[staged.indices] = log_q * scale[:, None, None]
-                self.result_stream.synchronize()
-            self.sequence += 1
-            for request in requests:
-                session = self.sessions[request.request_id]
-                session.token_count = request.generation
-                session.context_count = request.context_start + request.feature_count
-            return tokens
-        except BaseException:
+                self.sequence += 1
+                for request in requests:
+                    session = self.sessions[request.request_id]
+                    session.token_count = request.generation
+                    session.context_count = (
+                        request.context_start + request.feature_count
+                    )
+                output.set_result(tokens)
+            if self.nccl is not None:
+                # Like native PP's side-stream result, GPU consumers can proceed
+                # before CPU bookkeeping finishes. This ordered connection still
+                # joins the engine acknowledgment before admitting another turn.
+                result = self._receive_control()
+                if result["sequence"] != sequence:
+                    raise RuntimeError("Draft returned a different proposal sequence")
+        except BaseException as error:
             self.failed = True
+            if self.nccl is not None:
+                self.nccl.close(abort=True)
+            if (
+                staged.features_transferred is not None
+                and not staged.features_transferred.done()
+            ):
+                staged.features_transferred.set_exception(error)
+            if not output.done():
+                if not isinstance(error, Exception):
+                    failure = RuntimeError(
+                        "The Draft proposal operation was interrupted"
+                    )
+                    failure.__cause__ = error
+                    error = failure
+                output.set_exception(error)
+            staged.copy_done.synchronize()
             raise
 
     def remove_requests(self, request_ids: set[str]) -> None:
@@ -425,4 +543,15 @@ class RemoteProposer(BaseSpeculator):
                     self.control_scope.__exit__(None, None, None)
                     self.control = None
             finally:
-                self.exchange.close()
+                try:
+                    if self.nccl is not None:
+                        self.nccl.close(
+                            abort=self.failed or self.prepare_sent is not None
+                        )
+                finally:
+                    try:
+                        if self.feature_capture is not None:
+                            self.feature_capture.close()
+                    finally:
+                        if self.exchange is not None:
+                            self.exchange.close()

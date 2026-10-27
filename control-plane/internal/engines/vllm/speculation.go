@@ -107,7 +107,7 @@ func nativeDraftProfile(targetModel, draftModel string, args api.EngineArguments
 	return apiextensionsv1.JSON{Raw: raw}, err
 }
 
-// buildDTPlan projects only resolved native inputs; Python retains its TCP transport default.
+// buildDTPlan projects resolved native inputs; Python owns the platform's transport default.
 func buildDTPlan(group api.ModelGroupSpec) (*LaunchDTPlan, error) {
 	if group.SpeculationRole == "" {
 		return nil, nil

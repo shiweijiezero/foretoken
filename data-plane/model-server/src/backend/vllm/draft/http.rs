@@ -201,6 +201,24 @@ async fn serve_peer(client: &DraftClient, socket: &mut WebSocket) -> Result<(), 
         let peer = connection.peer.clone();
         let operation = async {
             match command {
+                PeerCommand::Connect => {
+                    client
+                        .operate(peer, |client, peer| async move {
+                            client
+                                .rpc::<(), _>("dt_connect_peer", (&peer.spec.peer_id,))
+                                .await
+                        })
+                        .await?;
+                    Ok("{}".to_owned())
+                }
+                PeerCommand::Prepare(batch) => {
+                    client
+                        .operate(peer, |client, peer| async move {
+                            peer.prepare(&client, batch).await
+                        })
+                        .await?;
+                    Ok("{}".to_owned())
+                }
                 PeerCommand::Propose(batch) => {
                     let proposal = client
                         .operate(peer, |client, peer| async move {

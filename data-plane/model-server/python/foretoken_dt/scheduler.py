@@ -96,35 +96,16 @@ class DraftTurns:
         else:
             request.dt_waiting = False
             request.dt_turn = None
-        (previous or request).dt_batch_pending = True
         super().add_request(request)
         current = self.requests[request.request_id]
         current.dt_waiting = False
+        current.next_decode_eligible_step = 0
         if current in self.running:
             current.status = RequestStatus.RUNNING
         else:
             if previous is not None:
                 self._enqueue_waiting_request(current)
-            current.status = RequestStatus.WAITING_FOR_STREAMING_REQ
-            self.num_waiting_for_streaming_input += 1
-
-        # The native client sends individual ADD messages. Keep its existing
-        # requests ineligible until the whole received turn has reached Core;
-        # otherwise the first arrivals form avoidable one-request GPU batches.
-        extra = current.sampling_params.extra_args
-        members = [
-            item
-            for item in self.requests.values()
-            if item.sampling_params.extra_args["dt_batch"] == extra["dt_batch"]
-        ]
-        if len(members) != extra["dt_batch_size"]:
-            return
-        for member in members:
-            member.dt_batch_pending = False
-            member.next_decode_eligible_step = 0
-            if member.status == RequestStatus.WAITING_FOR_STREAMING_REQ:
-                self.num_waiting_for_streaming_input -= 1
-                member.status = RequestStatus.WAITING
+            current.status = RequestStatus.WAITING
 
     def _make_cached_request_data(self, running_reqs, *args, **kwargs):
         """Publish confirmed suffixes alongside the native incremental block updates."""
@@ -236,15 +217,13 @@ class DraftTurns:
     def _preempt_request(self, request, timestamp, drop_stale_output=False):
         """Let native pressure reclaim private KV without regenerating an idle proposal."""
         super()._preempt_request(request, timestamp, drop_stale_output)
-        if request.dt_waiting or request.dt_batch_pending:
+        if request.dt_waiting:
             request.status = RequestStatus.WAITING_FOR_STREAMING_REQ
             self.num_waiting_for_streaming_input += 1
 
     def _ready(self, request):
-        return (
-            not request.dt_waiting
-            and not request.dt_batch_pending
-            and (not self.num_spec_tokens or request.num_in_flight_tokens == 0)
+        return not request.dt_waiting and (
+            not self.num_spec_tokens or request.num_in_flight_tokens == 0
         )
 
     def schedule(self, throttle_prefills=False):

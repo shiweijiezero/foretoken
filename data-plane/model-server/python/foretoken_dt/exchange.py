@@ -74,6 +74,28 @@ class TensorExchange:
                 [nbytes],
             )
 
+    def write_plane(
+        self, name: str, plane: int, rows: int, destination: TensorRegion
+    ) -> None:
+        """Publish one contiguous feature plane after its producer event completes."""
+        tensor = self.buffers[name]
+        if (
+            list(tensor.shape) != destination.shape
+            or tensor.dtype != _DTYPES[destination.dtype]
+        ):
+            raise ValueError("DT peer buffer layout differs")
+        if not 0 <= rows <= tensor.shape[1]:
+            raise ValueError("DT feature write exceeds its registered buffer")
+        if rows:
+            source = tensor[plane, :rows]
+            offset = source.data_ptr() - tensor.data_ptr()
+            self.transport.write(
+                destination.session,
+                [source.data_ptr()],
+                [destination.address + offset],
+                [source.nbytes],
+            )
+
     def release(self, name: str) -> None:
         """Release one allocation after its peer and local consumers have stopped using it."""
         tensor = self.buffers.get(name)

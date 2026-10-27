@@ -1,14 +1,17 @@
 --- a/vllm/v1/worker/gpu/model_runner.py
 +++ b/vllm/v1/worker/gpu/model_runner.py
-@@ -19,6 +19,7 @@
- import functools
- import gc
- import time
-+from concurrent.futures import Future
- from contextlib import AbstractContextManager
- from copy import deepcopy
- from dataclasses import replace
-@@ -293,7 +294,10 @@
+@@ -26,8 +26,9 @@
+
+ import numpy as np
+ import torch
+ import torch.nn as nn
++from torch.futures import Future
+
+ import vllm.envs as envs
+ from vllm.compilation.counter import compilation_counter
+ from vllm.compilation.cuda_graph import CUDAGraphStat
+@@ -292,9 +293,12 @@
+                 # Drafting may require auxiliary hidden states from target model outputs
                  self.use_aux_hidden_state_outputs = True
 
          # Draft tokens propagation - for spec-dec + struct outputs.
@@ -20,7 +23,9 @@
 
          self.pcp_manager: pcp.PCPManager | None = None
 
-@@ -1135,6 +1139,8 @@
+         # Pooling models.
+@@ -1136,8 +1140,10 @@
+             self.pooling_runner.on_requests_finished(finished_req_ids)
          preempted_req_ids = scheduler_output.preempted_req_ids
          if preempted_req_ids:
              finished_req_ids = finished_req_ids.union(preempted_req_ids)
@@ -29,7 +34,9 @@
          if self.speculator is not None and finished_req_ids:
              self.speculator.remove_requests(finished_req_ids)
          # Sorted so every TP rank frees request slots in the same order.
-@@ -1159,6 +1165,10 @@
+         # Features like batch-sharded sampling derive rank request ownership
+@@ -1160,8 +1166,12 @@
+             if outputs is not None:
                  self.postprocess_sampled(**outputs)
 
      def add_requests(self, scheduler_output: SchedulerOutput) -> None:
@@ -40,7 +47,9 @@
          for new_req_data in scheduler_output.scheduled_new_reqs:
              assert new_req_data.prefill_token_ids is not None
              req_id = new_req_data.req_id
-@@ -1455,6 +1465,8 @@
+
+@@ -1456,8 +1466,10 @@
+         seq_lens = self.input_buffers.seq_lens[:num_reqs_padded]
 
          # Some input token ids are directly read from the last sampled tokens
          # and draft tokens. Also, get the logits indices to sample tokens from.
@@ -49,7 +58,9 @@
          logits_indices = combine_sampled_and_draft_tokens(
              self.input_buffers.input_ids,
              idx_mapping,
-@@ -2214,6 +2226,7 @@
+             self.req_states.last_sampled_tokens,
+@@ -2218,8 +2230,9 @@
+             num_rejected,
              input_batch.query_start_loc,
          )
 
@@ -57,7 +68,9 @@
          if self.speculator is not None:
              assert self.sampler is not None
              if isinstance(self.speculator, DraftModelSpeculator):
-@@ -2251,10 +2264,23 @@
+                 self.speculator.observe_verification(
+@@ -2255,12 +2268,24 @@
+                     self.sampler.sampling_states.seeds.gpu,
                      dp_sync=dp_sync,
                      mm_inputs=mm_inputs,
                  )
@@ -77,13 +90,14 @@
 +                deferred_proposal = draft_tokens
 +            else:
 +                if isinstance(draft_tokens, Future):
-+                    draft_tokens = draft_tokens.result()
-+                    draft_tokens.record_stream(self.main_stream)
++                    draft_tokens = draft_tokens.wait()
 +                self.req_states.draft_tokens[input_batch.idx_mapping] = draft_tokens
              if self.adaptive_verification is not None:
                  self.adaptive_verification.record_confidences(
                      self.speculator.draft_token_confidence_probs, input_batch
-@@ -2265,7 +2291,9 @@
+                 )
+@@ -2269,9 +2294,11 @@
+             # Spec-decode and diffusion LLMs both use draft tokens but the latter does
              # not have a speculator (i.e. self.speculator is None)
              self.draft_tokens_handler.set_draft_tokens(
                  input_batch,
@@ -94,7 +108,9 @@
              )
              if self.pp_handler is not None:
                  self.pp_handler.broadcast_drafts(
-@@ -2278,6 +2306,19 @@
+                     self.req_states.draft_tokens, input_batch
+@@ -2282,8 +2309,20 @@
+         model_runner_output.kv_connector_output = kv_connector_output
          model_runner_output.ec_connector_output = ec_connector_output
 
          return async_output
@@ -107,14 +123,15 @@
 +            if request_ids.isdisjoint(batch.req_ids):
 +                pending.append((future, batch))
 +                continue
-+            draft_tokens = future.result()
-+            draft_tokens.record_stream(self.main_stream)
++            draft_tokens = future.wait()
 +            self.req_states.draft_tokens[batch.idx_mapping] = draft_tokens
 +        self.pending_draft_tokens = pending
 
      def take_draft_token_ids(self) -> DraftTokenIds | None:
          return self.draft_tokens_handler.get_draft_tokens()
-@@ -2338,6 +2379,7 @@
+
+@@ -2342,8 +2381,9 @@
+     def shutdown(self) -> None:
          """Release GPU tensors (model weights, KV caches, workspace) so that
          memory is reclaimable when running in the same process."""
          torch.accelerator.synchronize()
@@ -122,41 +139,49 @@
          if self.aux_output_connector is not None:
              self.aux_output_connector.close()
          set_offloader(None)
+         self.cudagraph_manager = None
 --- a/vllm/v1/worker/gpu/spec_decode/speculator.py
 +++ b/vllm/v1/worker/gpu/spec_decode/speculator.py
-@@ -2,6 +2,7 @@
- # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
- from abc import ABC, abstractmethod
- from collections.abc import Mapping
-+from concurrent.futures import Future
- from dataclasses import replace
- from typing import TYPE_CHECKING, Any
+@@ -7,8 +7,9 @@
 
-@@ -105,7 +106,12 @@
+ import numpy as np
+ import torch
+ import torch.nn as nn
++from torch.futures import Future
+
+ from vllm.config import VllmConfig, get_layers_from_vllm_config
+ from vllm.config.compilation import CUDAGraphMode
+ from vllm.distributed.eplb.eplb_state import EplbState
+@@ -112,9 +113,14 @@
+         dummy_run: bool = False,
          skip_attn_for_dummy_run: bool = False,
          mm_inputs: tuple[list[torch.Tensor], torch.Tensor] | None = None,
          is_profile: bool = False,
 -    ) -> torch.Tensor:
 +    ) -> torch.Tensor | Future[torch.Tensor]:
-+        """Return proposals now or a future completed after their tensor is ready.
++        """Return proposals or a future carrying their device-stream dependency.
 +
-+        Deferred producers retain input ownership across subsequent model steps
-+        and join their work before worker teardown.
++        Producers complete futures on their producing stream; consumers wait on
++        their consuming stream. Input ownership lasts until transfers complete.
 +        """
          pass
 
 
+ class DraftModelSpeculator(BaseSpeculator):
 --- a/vllm/v1/worker/gpu/spec_decode/utils.py
 +++ b/vllm/v1/worker/gpu/spec_decode/utils.py
-@@ -1,5 +1,7 @@
+@@ -1,8 +1,9 @@
  # SPDX-License-Identifier: Apache-2.0
  # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-+from concurrent.futures import Future
-+
  import numpy as np
  import torch
++from torch.futures import Future
 
-@@ -27,7 +29,7 @@
+ from vllm.config import LoadConfig, replace
+ from vllm.distributed import get_pp_group
+ from vllm.logger import init_logger
+@@ -26,42 +27,53 @@
+     return load_config
 
 
  class DraftTokensHandler:
@@ -165,7 +190,7 @@
          self.device = device
          self.copy_stream = torch.cuda.Stream(device)
          # Blocking (sleep) event to avoid busy-polling the CUDA driver lock.
-@@ -35,32 +37,42 @@
+         self.copy_event = torch.cuda.Event(blocking=True)
 
          self.req_ids: list[str] = []
          self.draft_tokens_np: np.ndarray | None = None
@@ -193,32 +218,35 @@
 -            self.draft_tokens_np = None
 -            return
 +        if input_batch.has_structured_output_reqs:
-+            self._copy_draft_tokens(draft_tokens, wait_for_compute=True)
++            self._copy_draft_tokens(draft_tokens)
 
 -        # For spec decoding + structured outputs, we must transfer the
 -        # draft tokens back to the scheduler for grammar validation.
 -        current_stream = torch.cuda.current_stream(self.device)
 -        self.copy_stream.wait_stream(current_stream)
 +    def _copy_draft_tokens(
-+        self, draft_tokens: torch.Tensor, wait_for_compute: bool
++        self, draft_tokens: torch.Tensor | Future[torch.Tensor]
 +    ) -> None:
-+        """Copy grammar inputs without waiting for unrelated compute after a completed Future."""
-+        if wait_for_compute:
++        """Order grammar copies after their producer on the stream that reads them."""
++        if not isinstance(draft_tokens, Future):
 +            self.copy_stream.wait_stream(torch.cuda.current_stream(self.device))
          with torch.cuda.stream(self.copy_stream):
++            if isinstance(draft_tokens, Future):
++                draft_tokens = draft_tokens.wait()
++            else:
++                draft_tokens.record_stream(self.copy_stream)
              self.draft_tokens_np = async_copy_to_np(draft_tokens)
 -            # draft_tokens is a temporary allocation on the main stream and read here on
 -            # copy_stream; without record_stream, the caching allocator may reuse its
 -            # memory before the async copy executes.
-+            # The asynchronous read may outlive the caller's proposal tensor.
-             draft_tokens.record_stream(self.copy_stream)
+-            draft_tokens.record_stream(self.copy_stream)
              self.copy_event.record()
 
      def get_draft_tokens(self) -> DraftTokenIds | None:
 +        if self.pending_output is not None:
-+            draft_tokens = self.pending_output.result()
-+            self._copy_draft_tokens(draft_tokens, wait_for_compute=False)
++            self._copy_draft_tokens(self.pending_output)
 +            self.pending_output = None
          if self.draft_tokens_np is not None:
              self.copy_event.synchronize()
              draft_token_ids = self.draft_tokens_np.tolist()
+         else:

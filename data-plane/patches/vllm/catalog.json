@@ -421,6 +421,18 @@
           "v1-031"
         ]
       }
+    },
+    {
+      "path": "rust/engine-batch-admission.patch",
+      "rust": true
+    },
+    {
+      "path": "compatibility/v1-031/batch-admission.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
     }
   ]
 }

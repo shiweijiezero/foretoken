@@ -3,6 +3,7 @@
 
 """Bind remote proposal IO to native Worker construction, execution and shutdown."""
 
+from dataclasses import dataclass, field
 from itertools import chain
 
 import torch
@@ -18,14 +19,15 @@ from vllm.v1.worker.gpu.spec_decode.speculator import BaseSpeculator
 
 from .context import DraftContext
 from .exchange import TensorExchange
-from .protocol import OpenPeer, Settings
-from .runner import DraftModelRunner, replace_binding
+from .nccl import NcclPeer
+from .protocol import PEER_PROTOCOL_VERSION, OpenPeer, PrepareBatch, Settings
+from .runner import DraftModelRunner, DraftOutput, replace_binding
 from .scheduler import DraftCachedRequests
 
 if Version(vllm.__version__).release[:2] != (0, 31):
     raise ImportError("DT currently requires the vLLM 0.31 native adapter")
-if not hasattr(BaseSpeculator, "add_request"):
-    raise ImportError("DT requires Foretoken's vLLM worker lifecycle patch")
+if not hasattr(BaseSpeculator, "prepare_target_forward"):
+    raise ImportError("DT requires Foretoken's vLLM proposal-input lifecycle patch")
 
 
 def validate_config(config):
@@ -89,8 +91,20 @@ class WorkerExtension:
             runner.speculator.close()
 
 
+@dataclass
+class DraftPeer:
+    """Retain one connection's transfer buffers and current native output batch."""
+
+    settings: OpenPeer
+    features: torch.Tensor | None = None
+    channel: NcclPeer | None = None
+    prepared: PrepareBatch | None = None
+    output: DraftOutput | None = None
+    sessions: list[str] = field(default_factory=list)
+
+
 class DraftWorker(gpu_worker.Worker):
-    """Own native Draft turns and Mooncake buffers for every connected Target worker."""
+    """Own native Draft turns and tensor transfers for each connected Target worker."""
 
     def init_device(self):
         """Select the thin Draft runner at the native worker's existing factory boundary."""
@@ -109,8 +123,11 @@ class DraftWorker(gpu_worker.Worker):
         ):
             raise ValueError("DT requires an autoregressive Draft with private KV")
         self.dt_settings = settings
-        self.dt_exchange = TensorExchange(settings.protocol)
-        self.dt_peers = {}
+        self.dt_exchange = (
+            TensorExchange(settings.protocol) if settings.protocol != "nccl" else None
+        )
+        self.dt_history_stream = torch.cuda.Stream(self.device)
+        self.dt_peers: dict[str, DraftPeer] = {}
 
     def compile_or_warm_up_model(self):
         """Run native warmup independently of Target connections and retained requests."""
@@ -127,6 +144,8 @@ class DraftWorker(gpu_worker.Worker):
     def dt_open_peer(self, payload):
         """Allocate registered IO only after checking this worker's actual proposal layout."""
         peer = OpenPeer.model_validate(payload)
+        if peer.protocol_version != PEER_PROTOCOL_VERSION:
+            raise ValueError("Draft and Target peer protocol versions differ")
         if peer.peer_id in self.dt_peers:
             raise ValueError("DT peer already exists")
         runner = self.model_runner
@@ -148,32 +167,96 @@ class DraftWorker(gpu_worker.Worker):
             raise ValueError(
                 "Target features differ from the native Draft input layout"
             )
-        if peer.logits is not None:
-            if spec is not None and spec.draft_sample_method != "probabilistic":
-                raise ValueError("Target requested q from a greedy neural Draft")
-            if peer.logits.shape != [
-                peer.max_requests,
-                peer.num_candidates,
-                peer.vocab_size,
-            ] or (peer.logits.dtype != "float32"):
-                raise ValueError("Target probability buffer has a different layout")
-        self.dt_peers[peer.peer_id] = peer
+        if (
+            peer.return_probabilities
+            and spec is not None
+            and spec.draft_sample_method != "probabilistic"
+        ):
+            raise ValueError("Target requested q from a greedy neural Draft")
+        if peer.logits is not None and (
+            peer.logits.shape
+            != [peer.max_requests, peer.num_candidates, peer.vocab_size]
+            or peer.logits.dtype != "float32"
+        ):
+            raise ValueError("Target probability buffer has a different layout")
+        state = DraftPeer(peer)
+        self.dt_peers[peer.peer_id] = state
         try:
+            if peer.protocol == "nccl":
+                if peer.nccl_ids is None or peer.logits is not None:
+                    raise ValueError(
+                        "NCCL peers require native IDs and GPU result buffers"
+                    )
+                state.channel = NcclPeer(peer.nccl_ids, 1, self.device)
+                if features is not None:
+                    state.features = torch.empty(
+                        peer.num_features,
+                        peer.max_tokens,
+                        peer.hidden_size,
+                        dtype=features.dtype,
+                        device=self.device,
+                    )
+                return None
+            if peer.nccl_ids is not None or peer.return_probabilities != (
+                peer.logits is not None
+            ):
+                raise ValueError(
+                    "Mooncake peer result registration differs from its sampling mode"
+                )
             if peer.logits is not None:
                 self.dt_exchange.allocate(
                     f"{peer.peer_id}:logits", peer.logits.shape, "float32"
                 )
             region = None
             if features is not None:
+                name = f"{peer.peer_id}:features"
                 region = self.dt_exchange.allocate(
-                    f"{peer.peer_id}:features",
-                    [peer.max_tokens, peer.num_features, peer.hidden_size],
+                    name,
+                    [peer.num_features, peer.max_tokens, peer.hidden_size],
                     peer.feature_dtype,
                 )
+                state.features = self.dt_exchange.buffers[name]
             return region.model_dump() if region is not None else None
         except BaseException:
-            self.dt_close_peer(peer.peer_id)
+            self.dt_close_peer(peer.peer_id, abort=True)
             raise
+
+    def dt_connect_peer(self, peer_id):
+        """Join native communicators after both roles have accepted their layouts."""
+        self.dt_peers[peer_id].channel.connect()
+
+    def dt_prepare(self, peer_id, payload):
+        """Post native receives from announced shapes while the Target computes."""
+        state = self.dt_peers[peer_id]
+        prepared = PrepareBatch.model_validate(payload)
+        if state.prepared is not None:
+            if state.output is None or state.output.pending:
+                raise RuntimeError(
+                    "The preceding Draft batch has not produced all native outputs"
+                )
+            # The ordered peer connection has joined native turn completion.
+            # Retire its bindings before receiving into the shared input buffer.
+            for session in state.sessions:
+                self.model_runner.outputs.pop(session, None)
+                context = self.model_runner.contexts.get(session)
+                if context is not None:
+                    context.current = None
+            state.sessions.clear()
+            state.output = None
+        if (
+            prepared.feature_rows > state.settings.max_tokens
+            or prepared.num_requests > state.settings.max_requests
+        ):
+            raise ValueError("The announced batch exceeds the peer's input capacity")
+        if state.channel is None:
+            raise ValueError("Explicit receive preparation requires an NCCL peer")
+        state.prepared = prepared
+        if state.features is not None:
+            state.channel.receive_features(
+                state.features, prepared.feature_rows, self.model_runner.main_stream
+            )
+        elif prepared.feature_rows:
+            raise ValueError("Ordinary Drafts do not receive Target features")
 
     def _stage_features(self, session, peer_id, context_start, feature_offset, count):
         """Retain one received interval across native execution and KV recomputation."""
@@ -182,13 +265,23 @@ class DraftWorker(gpu_worker.Worker):
         # this peer's receive buffer. The retained history already owns this turn.
         if context.end == context_start + count:
             return
+        state = self.dt_peers[peer_id]
         end = feature_offset + count
-        if end > self.dt_peers[peer_id].max_tokens:
-            raise ValueError("Target feature interval exceeds its registered input")
-        context.append(
-            context_start,
-            self.dt_exchange.buffers[f"{peer_id}:features"][feature_offset:end],
+        available = (
+            state.prepared.feature_rows
+            if state.prepared is not None
+            else state.settings.max_tokens
         )
+        if end > available:
+            raise ValueError("Target feature interval exceeds its received input")
+        with torch.cuda.stream(self.model_runner.main_stream):
+            if state.channel is not None:
+                self.model_runner.main_stream.wait_event(state.channel.input_ready)
+            context.append(
+                context_start,
+                state.features[:, feature_offset:end].movedim(0, 1),
+                self.dt_history_stream,
+            )
 
     def execute_model(self, scheduler_output):
         """Consume confirmed features before the native Worker executes their scheduled tokens."""
@@ -208,19 +301,30 @@ class DraftWorker(gpu_worker.Worker):
         return super().execute_model(scheduler_output)
 
     def dt_stage(self, peer_id, requests):
-        """Retain input-only batches and initialize probability capture before native admission."""
-        peer = self.dt_peers[peer_id]
-        for session, context_start, feature_offset, feature_count, generate in requests:
+        """Retain confirmed inputs and bind GPU output rows before native batch admission."""
+        state = self.dt_peers[peer_id]
+        peer = state.settings
+        if state.channel is not None:
+            if state.prepared is None or state.prepared.num_requests != len(requests):
+                raise ValueError("Draft request rows differ from the prepared transfer")
+            state.output = DraftOutput(peer, state.channel, requests)
+            state.sessions = [session for session, *_ in requests]
+            self.model_runner.outputs.update(
+                (session, state.output) for session in state.output.pending
+            )
+        for session, context_start, feature_offset, feature_count, count in requests:
             if peer.num_features:
                 self._stage_features(
                     session, peer_id, context_start, feature_offset, feature_count
                 )
-            if generate and peer.logits is not None:
+            if count and peer.return_probabilities and state.channel is None:
                 self.model_runner.probabilities[session] = []
+        if state.output is not None and not state.output.pending:
+            state.output.publish()
 
     def dt_publish_probabilities(self, peer_id, sessions):
         """Write actual normalized proposal laws before acknowledging the proposal batch."""
-        peer = self.dt_peers[peer_id]
+        peer = self.dt_peers[peer_id].settings
         if peer.logits is None:
             return
         output = self.dt_exchange.buffers[f"{peer_id}:logits"]
@@ -239,27 +343,38 @@ class DraftWorker(gpu_worker.Worker):
         self.dt_exchange.write(f"{peer_id}:logits", len(sessions), peer.logits)
 
     def dt_wait_execution(self):
-        """Fence preceding serialized native computation before the session owner releases data."""
+        """Fence native consumers and retained history before releasing session data."""
         self.model_runner.main_stream.synchronize()
+        self.dt_history_stream.synchronize()
 
     def dt_forget_sessions(self, sessions):
         """Release retained data after the engine has joined cancellation and pending proposals."""
         for session in sessions:
             self.model_runner.contexts.pop(session, None)
             self.model_runner.probabilities.pop(session, None)
+            self.model_runner.outputs.pop(session, None)
 
-    def dt_close_peer(self, peer_id):
-        """Release a peer after its Target and native requests have confirmed completed writes."""
-        self.dt_exchange.release(f"{peer_id}:features")
-        self.dt_exchange.release(f"{peer_id}:logits")
-        self.dt_peers.pop(peer_id, None)
+    def dt_close_peer(self, peer_id, abort=False):
+        """Close native IO before releasing buffers retained by this control connection."""
+        state = self.dt_peers.pop(peer_id, None)
+        if state is not None and state.channel is not None:
+            pending = state.prepared is not None and (
+                state.output is None or bool(state.output.pending)
+            )
+            state.channel.close(abort=abort or pending)
+        if self.dt_exchange is not None:
+            self.dt_exchange.release(f"{peer_id}:features")
+            self.dt_exchange.release(f"{peer_id}:logits")
 
     def shutdown(self):
-        """Stop device work before closing the transport's retained allocations."""
+        """Abort unfinished receives before native worker teardown waits on the device."""
         try:
+            for peer_id in list(getattr(self, "dt_peers", ())):
+                self.dt_close_peer(peer_id, abort=True)
             if hasattr(self, "dt_exchange"):
                 self.dt_wait_execution()
-                self.dt_exchange.close()
+                if self.dt_exchange is not None:
+                    self.dt_exchange.close()
         finally:
             super().shutdown()
 

@@ -1,0 +1,83 @@
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -528,8 +528,20 @@
+             # Immediately abort so the connector's request_finished hook runs
+             # to free any pre-admission KV-transfer resources.
+             self.abort_requests([request.request_id])
+
++    def add_requests(
++        self,
++        requests: list[tuple[Request, int]],
++        worker_rpc: tuple[str, tuple] | None = None,
++    ) -> None:
++        """Prepare worker inputs and admit a batch before the next scheduler step."""
++        if worker_rpc is not None:
++            method, args = worker_rpc
++            self.model_executor.collective_rpc(method, args=args)
++        for request, request_wave in requests:
++            self.add_request(request, request_wave)
++
+     def abort_requests(self, request_ids: list[str]):
+         """Abort requests from the scheduler."""
+         # TODO: The scheduler doesn't really need to know the
+         # specific finish reason, TBD whether we propagate that
+@@ -1750,8 +1762,20 @@
+                 else False
+             ),
+         )
+
++    def _preprocess_input_request(
++        self, request: EngineCoreRequest
++    ) -> tuple[Request, int] | None:
++        """Initialize one socket input and publish native preprocessing failures."""
++        try:
++            return self.preprocess_add_request(request)
++        except MultiModalCacheMissError as error:
++            self._handle_mm_cache_miss(request, error)
++        except Exception:
++            self._handle_request_preproc_error(request)
++        return None
++
+     def process_input_sockets(
+         self,
+         input_addresses: list[str],
+         coord_input_address: str | None,
+@@ -1821,22 +1845,28 @@
+                     # Deserialize the request data.
+                     request: Any
+                     if request_type == EngineCoreRequestType.ADD:
+                         req: EngineCoreRequest = add_request_decoder.decode(data_frames)
+-                        try:
+-                            request = self.preprocess_add_request(req)
+-                        except MultiModalCacheMissError as e:
+-                            # P0/P1 shadow drift -- return a retryable signal (P0
+-                            # drops the stale entry, client resends with data).
+-                            self._handle_mm_cache_miss(req, e)
+-                            continue
+-                        except Exception:
+-                            self._handle_request_preproc_error(req)
++                        request = self._preprocess_input_request(req)
++                        if request is None:
+                             continue
+                     elif request_type == EngineCoreRequestType.UTILITY:
+                         request = generic_decoder.decode(data_frames)
+                         client_idx, call_id, method, args = request
+-                        if method == FT_UTILITY_METHOD:
++                        if method == "add_requests":
++                            prepared = []
++                            for frames in args[0]:
++                                req = add_request_decoder.decode(frames)
++                                item = self._preprocess_input_request(req)
++                                if item is not None:
++                                    prepared.append(item)
++                            request = (
++                                client_idx,
++                                call_id,
++                                method,
++                                (prepared, *args[1:]),
++                            )
++                        elif method == FT_UTILITY_METHOD:
+                             self.ft_sentinel.handle_command(
+                                 client_idx, call_id, args[0]
+                             )
+                             continue

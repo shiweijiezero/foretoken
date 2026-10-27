@@ -64,7 +64,7 @@ func (reconciler *GroupReconciler) retireDraftConsumers(ctx context.Context, dra
 	return pending, nil
 }
 
-// draftPeerIngress restricts dynamically allocated Mooncake TCP channels to bound peer Groups.
+// draftPeerIngress restricts native transport TCP channels to bound peer Groups.
 // Both directions use the same frozen dependency, including Targets already draining.
 func (reconciler *GroupReconciler) draftPeerIngress(ctx context.Context, group *api.ModelGroup, pool *api.ModelPool) ([]networkingv1.NetworkPolicyIngressRule, error) {
 	if group.Spec.SpeculationRole == "" {

@@ -12,6 +12,8 @@ from vllm.v1.worker.gpu.sample.output import SamplerOutput
 from vllm.v1.worker.gpu.sample.sampler import Sampler
 
 from .context import SharedTargetLoader
+from .nccl import NcclPeer
+from .protocol import OpenPeer
 from .scheduler import DraftCachedRequests
 
 
@@ -50,6 +52,61 @@ class DraftTokens:
         return
 
 
+class DraftOutput:
+    """Collect one peer's native GPU outputs in its original request order."""
+
+    def __init__(self, peer: OpenPeer, channel: NcclPeer, requests):
+        self.channel = channel
+        self.tokens = torch.zeros(
+            len(requests), peer.num_candidates, dtype=torch.int64, device=channel.device
+        )
+        self.probabilities = (
+            torch.zeros(
+                len(requests),
+                peer.num_candidates,
+                peer.vocab_size,
+                dtype=torch.float32,
+                device=channel.device,
+            )
+            if peer.return_probabilities
+            else None
+        )
+        self.pending = {
+            session: (row, count, 0)
+            for row, (session, _, _, _, count) in enumerate(requests)
+            if count
+        }
+
+    def append(self, session, tokens, probabilities):
+        """Publish the complete batch as soon as native sampling produces its last row."""
+        row, expected, offset = self.pending[session]
+        count = min(tokens.numel(), expected - offset)
+        self.tokens[row, offset : offset + count].copy_(tokens[:count])
+        if self.probabilities is not None:
+            if probabilities is None:
+                raise RuntimeError(
+                    "Native Draft output is missing its proposal probabilities"
+                )
+            self.probabilities[row, offset : offset + count].copy_(
+                probabilities[:count]
+            )
+        offset += count
+        if offset == expected:
+            del self.pending[session]
+        else:
+            self.pending[session] = (row, expected, offset)
+        if not self.pending:
+            self.publish()
+
+    def publish(self):
+        """Queue GPU output on the peer stream before native CPU output dispatch."""
+        self.channel.send_output(
+            self.tokens,
+            self.probabilities,
+            torch.cuda.current_stream(self.tokens.device),
+        )
+
+
 class DraftModelRunner(model_runner.GPUModelRunner):
     """Reuse native model, KV, sampling and graph execution for independently owned Draft turns."""
 
@@ -61,6 +118,7 @@ class DraftModelRunner(model_runner.GPUModelRunner):
         self.contexts = {}
         self.turn_inputs = {}
         self.probabilities = {}
+        self.outputs: dict[str, DraftOutput] = {}
         if self.neural:
             self.draft_tokens_handler = DraftTokens()
 
@@ -177,10 +235,25 @@ class DraftModelRunner(model_runner.GPUModelRunner):
         # All DT requests have an explicit seed. Native sampling therefore
         # materializes the same processed logits used by the actual draw.
         for row, request_id in enumerate(input_batch.req_ids):
+            if not complete[row]:
+                continue
             extra = self.turn_inputs[request_id].sampling_params.extra_args
-            if complete[row] and extra["dt_capture_q"]:
-                log_q = self.sampler.proposal_logits[row].float().log_softmax(dim=-1)
-                self.probabilities[extra["dt_session"]].append(log_q)
+            session = extra["dt_session"]
+            destination = self.outputs.get(session)
+            log_q = (
+                self.sampler.proposal_logits[row].float().log_softmax(dim=-1)
+                if extra["dt_capture_q"]
+                else None
+            )
+            if destination is not None:
+                if session in destination.pending:
+                    destination.append(
+                        session,
+                        output[0].sampled_token_ids[row].reshape(-1),
+                        log_q[None] if log_q is not None else None,
+                    )
+            elif log_q is not None and not extra.get("dt_gpu_output", False):
+                self.probabilities[session].append(log_q)
         self.sampler.proposal_logits = None
         return output
 
@@ -194,23 +267,31 @@ class DraftModelRunner(model_runner.GPUModelRunner):
         with replace_binding(model_runner, "AsyncOutput", lambda **kwargs: kwargs):
             output = super().sample_tokens(grammar_output)
         sampler = output["sampler_output"]
-        tokens = self.req_states.draft_tokens[batch.idx_mapping].clone()
+        tokens = self.req_states.draft_tokens[batch.idx_mapping]
         complete = (
             batch.num_computed_tokens_np + batch.num_scheduled_tokens
             >= batch.prefill_len_np
         )
         for row, request_id in enumerate(batch.req_ids):
+            if not complete[row]:
+                continue
             params = self.turn_inputs[request_id].sampling_params
             extra = params.extra_args
-            if complete[row] and extra["dt_capture_q"]:
+            session = extra["dt_session"]
+            log_q = None
+            if extra["dt_capture_q"]:
                 slot = int(batch.idx_mapping_np[row])
                 logits = self.speculator.draft_logits[slot, : params.max_tokens].float()
                 temperature = self.sampler.sampling_states.temperature.gpu[
                     slot
                 ].clamp_min(1e-20)
-                self.probabilities[extra["dt_session"]] = list(
-                    (logits / temperature).log_softmax(dim=-1).unbind(dim=0)
-                )
+                log_q = (logits / temperature).log_softmax(dim=-1)
+            destination = self.outputs.get(session)
+            if destination is not None:
+                if session in destination.pending:
+                    destination.append(session, tokens[row, : params.max_tokens], log_q)
+            elif log_q is not None and not extra.get("dt_gpu_output", False):
+                self.probabilities[session] = list(log_q.unbind(dim=0))
         sampler.sampled_token_ids = tokens
         sampler.num_sampled = sampler.num_sampled * self.num_speculative_steps
         output["num_sampled_tokens"] = sampler.num_sampled
