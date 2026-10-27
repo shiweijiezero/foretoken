@@ -75,7 +75,7 @@ deploy/release-artifacts build --registry "$REGISTRY" \
   --components control-plane,frontend,model-server,chart
 ```
 
-Use the same component selection when pushing. When model-server variants are selected, the packaged Chart references only those variants; a Chart build without a model-server selection retains both runtime references.
+Use the same component selection when pushing. Selecting either model-server variant also builds and publishes the shared CPU model-preparation image. The packaged Chart references only the selected runtime variants; a Chart build without a model-server selection retains both runtime references.
 
 To export the application archive without rebuilding environments:
 

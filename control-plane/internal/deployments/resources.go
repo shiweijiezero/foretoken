@@ -149,7 +149,7 @@ func (r *Reconciler) configureController(ctx context.Context, deployment *api.In
 		if err := json.Unmarshal([]byte(controllerArgument(container, "application-files")), &files); err != nil {
 			return fmt.Errorf("decode controller application tools: %w", err)
 		}
-		image, err := files.ResolveImage(ctx, "control-plane", revision, container.Image)
+		image, preparationImage, err := files.ResolveControllerImages(ctx, revision, container.Image, controllerArgument(container, "model-preparation-image"))
 		if err != nil {
 			return err
 		}
@@ -160,6 +160,9 @@ func (r *Reconciler) configureController(ctx context.Context, deployment *api.In
 		reference := files.Ref("control-plane", revision)
 		files.Configure(pod, container, reference, "manager")
 		setControllerArgument(container, "video-worker-image", image)
+		if preparationImage != "" {
+			setControllerArgument(container, "model-preparation-image", preparationImage)
+		}
 		setControllerArgument(container, "video-worker-application-url", reference)
 	}
 	return nil

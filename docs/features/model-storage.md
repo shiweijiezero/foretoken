@@ -120,6 +120,8 @@ Profiling results stay in the instance's private data area; use [Profiling](../.
 
 `foretoken install` automatically prepares or reuses shared model downloads. Models with persistent storage reuse cached files first. For anonymously accessible models on the official Hugging Face and ModelScope services, preparation uses node peers when the shared download service is available. Otherwise, files come directly from the model provider. Authenticated downloads and custom model endpoints use their provider directly.
 
+For a single-node replica with `ReadWriteMany` storage and one eligible serving node, model downloads run alongside cold inference-image preparation. When the node reports the image as cached, preparation uses a single task. Accelerator Pods start after preparation finishes.
+
 Compatible replicas automatically reuse loaded weights when their runtime has the required CUDA and RDMA support. When weight sharing is unavailable, they load the prepared model files.
 
 `foretoken uninstall` removes managed download services once no workloads or controllers use them; independently installed services are retained.

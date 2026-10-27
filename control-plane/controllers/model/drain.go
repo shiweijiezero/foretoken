@@ -197,6 +197,7 @@ func (reconciler *GroupReconciler) groupWorkloads(ctx context.Context, group *in
 	objects := []client.Object{
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: group.Namespace, Name: group.Name}},
 		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: group.Namespace, Name: "prepare-" + string(group.UID)}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: group.Namespace, Name: runtimePreparationName(group)}},
 	}
 	if reconciler.LeaderWorkerSets {
 		objects = append(objects, &lwsv1.LeaderWorkerSet{ObjectMeta: metav1.ObjectMeta{Namespace: group.Namespace, Name: workload.ModelGroupLeaderWorkerSetName(group)}})

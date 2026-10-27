@@ -14,6 +14,9 @@
 {{- $_ := set $frontend "applicationURL" (index $applications "frontend") }}
 {{- $_ := set $frontend "gateway" (dict "create" false "controllerName" .Values.frontend.gateway.controllerName "name" (include "foretoken.frontendGatewayName" .) "namespace" (include "foretoken.frontendGatewayNamespace" .) "sectionName" (include "foretoken.frontendGatewaySectionName" .)) }}
 {{- $runtime := deepCopy .Values.runtime }}
+{{- with $runtime.preparationImage }}
+{{- $_ := set $runtime "preparationImage" (include "foretoken.imageWithRegistry" (dict "registry" $.Values.global.imageRegistry "image" .)) }}
+{{- end }}
 {{- $_ := set $runtime.vllm "image" (include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" (include "foretoken.runtimeVllmImage" .))) }}
 {{- with $runtime.vllmOmni.image }}
 {{- $_ := set $runtime.vllmOmni "image" (include "foretoken.imageWithRegistry" (dict "registry" $.Values.global.imageRegistry "image" .)) }}

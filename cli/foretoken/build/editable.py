@@ -701,6 +701,10 @@ class EditableDeployment:
                     sources=build_sources(snapshot, component),
                     image=self.state["runtime"][_APPLICATION_IMAGE_KEYS[component]],
                     parts=bundle.get("parts"),
+                    model_preparation_image=(
+                        self.state["build"]["images"].get("environment-model-preparation")
+                        if component == "control-plane" else None
+                    ),
                 ))
             published = origin.publish_batch(
                 builder, publications, references, timeout=timeout,

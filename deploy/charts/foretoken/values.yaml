@@ -163,6 +163,8 @@ observability:
 
 # Runtime images provide engine dependencies; applicationURL selects Foretoken executables.
 runtime:
+  # Published and source installations provide the CPU model-preparation environment.
+  preparationImage: ""
   # Optional image built from a vLLM-Omni base and the Foretoken Omni adapter.
   vllmOmni:
     image: ""

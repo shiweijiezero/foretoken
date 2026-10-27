@@ -50,6 +50,7 @@ type GroupReconciler struct {
 	ModelDistribution     runtimeconfig.ModelDistributionProfile
 	LeaderWorkerSets      bool
 	ApplicationFiles      runtimeconfig.ApplicationFiles
+	PreparationImage      string
 }
 
 type modelGroupConditionState struct {
@@ -125,7 +126,8 @@ func (reconciler *GroupReconciler) Reconcile(ctx context.Context, request ctrl.R
 		return ctrl.Result{}, errors.Join(err, reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(err)))
 	}
 	if !prepared {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupPreparationState())
+		// Node availability can change without a preparation Pod status update.
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, reconciler.updateStatus(ctx, group, modelGroupPreparationState())
 	}
 
 	executionWorkload, err := reconciler.reconcileWorkload(ctx, group, deployment)

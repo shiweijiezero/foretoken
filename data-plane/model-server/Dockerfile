@@ -13,6 +13,7 @@ ARG FORETOKEN_VLLM_PYTHON
 ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.12.22
 ARG GO_IMAGE=${BASE_IMAGE_REGISTRY}/library/golang:1.25.10-bookworm
 ARG UV_DEFAULT_INDEX=https://pypi.org/simple
+ARG PREPARATION_BASE_IMAGE=${BASE_IMAGE_REGISTRY}/library/python:3.12-slim-bookworm
 
 FROM ${UV_IMAGE} AS uv
 
@@ -70,6 +71,21 @@ FROM scratch AS source-export
 COPY --from=builder /out/ /
 COPY data-plane/model-server/python/ /python/
 
+# CPU preparation runs the same published model-server application without accelerator libraries.
+FROM ${PREPARATION_BASE_IMAGE} AS preparation-environment
+ARG UV_DEFAULT_INDEX
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    --mount=type=bind,source=data-plane/model-server/provider-requirements.txt,target=/tmp/provider-requirements.txt \
+    uv pip install --system --no-cache --compile-bytecode --default-index "${UV_DEFAULT_INDEX}" \
+      -r /tmp/provider-requirements.txt 'huggingface_hub>=1.30' httpx requests
+ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
+ARG OCI_REVISION
+LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
+      org.opencontainers.image.revision="${OCI_REVISION}"
+
 # The Omni image supplies Python, model plugins, and provider SDKs.
 # Add shared preparation and the lifecycle adapter without applying standard vLLM patches.
 FROM ${INFERENCE_ENGINE_IMAGE} AS omni-runtime
@@ -108,13 +124,14 @@ ARG UV_DEFAULT_INDEX
 RUN --mount=type=secret,id=foretoken-build-jobs,env=BUILD_JOBS \
     --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     --mount=from=runtime-patches,source=/patches,target=/tmp/vllm-patches \
+    --mount=type=bind,source=data-plane/model-server/provider-requirements.txt,target=/tmp/provider-requirements.txt \
     python_path=$("${FORETOKEN_VLLM_PYTHON:-python3}" -c \
       'import sys; print(sys.executable)') \
     && PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python_path" -c \
       'from vllm_patches import repair_installed_dependencies; repair_installed_dependencies()' \
     && backend=$("$python_path" -c \
       'import torch; print("maca" if getattr(torch.version, "maca", None) else "cuda" if torch.version.cuda else "other")') \
-    && set -- modelscope==1.35.3 tzdata \
+    && set -- -r /tmp/provider-requirements.txt \
     && case "$backend" in cuda) set -- "$@" bitsandbytes==0.49.2 modelexpress==0.6.0 nixl==1.4.1 ;; esac \
     && PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python_path" -c \
       'from vllm_patches import runtime_constraints; print("\n".join(f"{name}==={version}" for name, version in sorted(runtime_constraints(set()).items())))' > /tmp/foretoken-engine-constraints.txt \

@@ -61,6 +61,7 @@ type servingOptions struct {
 	frontendImage                         string
 	frontendApplicationURL                string
 	modelServerApplicationURL             string
+	modelPreparationImage                 string
 	videoWorkerImage                      string
 	videoWorkerApplicationURL             string
 	applicationFilesJSON                  string
@@ -117,6 +118,7 @@ type servingConfiguration struct {
 	frontendImage                         string
 	frontendApplicationURL                string
 	modelServerApplicationURL             string
+	modelPreparationImage                 string
 	videoWorkerImage                      string
 	videoWorkerApplicationURL             string
 	frontendPort                          int
@@ -162,6 +164,7 @@ func parseServingOptions() servingOptions {
 	flag.StringVar(&options.frontendImage, "frontend-image", "", "Frontend runtime image.")
 	flag.StringVar(&options.frontendApplicationURL, "frontend-application-url", "", "Trusted platform frontend publication selected on deployment.")
 	flag.StringVar(&options.modelServerApplicationURL, "model-server-application-url", "", "Trusted platform model-server publication selected on deployment.")
+	flag.StringVar(&options.modelPreparationImage, "model-preparation-image", "", "CPU environment for published model preparation applications.")
 	flag.StringVar(&options.videoWorkerImage, "video-worker-image", "", "Platform runtime image for video workers.")
 	flag.StringVar(&options.videoWorkerApplicationURL, "video-worker-application-url", "", "Published application directory containing the video worker.")
 	flag.StringVar(&options.applicationFilesJSON, "application-files", "{}", "JSON configuration for platform application download tools.")
@@ -398,6 +401,7 @@ func resolveServingConfiguration(options servingOptions) servingConfiguration {
 		frontendImage:                         options.frontendImage,
 		frontendApplicationURL:                options.frontendApplicationURL,
 		modelServerApplicationURL:             options.modelServerApplicationURL,
+		modelPreparationImage:                 options.modelPreparationImage,
 		videoWorkerImage:                      options.videoWorkerImage,
 		videoWorkerApplicationURL:             options.videoWorkerApplicationURL,
 		frontendPort:                          options.frontendPort,
@@ -601,7 +605,7 @@ func registerServingControllers(manager ctrl.Manager, configuration servingConfi
 		ctrl.Log.Error(err, "unable to register ModelPool controller")
 		os.Exit(1)
 	}
-	if err := (&model.GroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: configuration.controlPlaneNamespace, ImagePullSecrets: configuration.workloadImagePullSecrets, ModelDistribution: configuration.modelDistributionProfile, ApplicationFiles: configuration.applicationFiles}).SetupWithManager(manager); err != nil {
+	if err := (&model.GroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: configuration.controlPlaneNamespace, ImagePullSecrets: configuration.workloadImagePullSecrets, ModelDistribution: configuration.modelDistributionProfile, ApplicationFiles: configuration.applicationFiles, PreparationImage: configuration.modelPreparationImage}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelGroup controller")
 		os.Exit(1)
 	}
