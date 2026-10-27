@@ -108,6 +108,8 @@ foretoken install --prometheus monitoring/prometheus
 
 所选 Prometheus 需要选中 `foretoken-platform` 中的抓取配置（ServiceMonitor）和记录规则。启用服务告警时，`ruleNamespaceSelector` 还需包含工作负载的命名空间。GPU exporter 需覆盖 GPU 节点，并提供 Pod 和命名空间标签，以关联模型工作负载。
 
+CLI 托管的 DCGM 会沿用覆盖 GPU 节点的 NVIDIA device plugin 中显式填写的可见 GPU 范围，支持自定义 DaemonSet 和容器名称。修改插件的 GPU 选择后，重新执行原安装命令即可更新 exporter。
+
 需要 Grafana 自动加载配置时，分别发现 `foretoken-platform` 中带有 `grafana_dashboard=1` 标签的看板 ConfigMap，以及带有 `grafana_datasource=1` 标签的数据源 ConfigMap。手工导入中文看板时，导出已安装的版本：
 
 ```bash
