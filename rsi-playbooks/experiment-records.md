@@ -81,6 +81,8 @@ Code stays in its assigned checkout or worktree. The proposal names its owner, h
 
 Follow the [team's communication guidance](../.agents/skills/rsi/roles/common.md#share-findings-and-keep-working): brief coordination uses messages, while long explanations and material for several readers go in shared files. Send the summary and exact path, then describe later changes without repeating all the background. Discuss open choices directly with the person responsible, record decisions in the notes, and continue other work while waiting for replies. Each document has one writer; save substantial reviews or alternative proposals in the author's own files.
 
+For example, a throughput improvement points to the reference and candidate `metrics.json` files and the compared fields. An error points to the log file and relevant lines or time range; a code finding identifies the revision, file and function. Findings about agent decisions or tool calls point to the session record and message or time range. Send the finding with these source locations so recipients can read the relevant portions first, expanding the context when needed.
+
 Supporting research, scripts, preparation logs and cleanup records also belong under the iteration's `notes/`, organized as needed. Filenames such as `plan.md` and `analysis.md` are examples. Benchmark commands create missing iteration notes without replacing existing content; members maintain the report and additional files. Keep original run artifacts under `runs/`. Before deleting a referenced checkout, preserve its required code and update the links; retain cited evidence.
 
 ## Keep team and session records
