@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -I \"$(git rev-parse --show-toplevel)/.agents/skills/rsi/scripts/continuation.py\" hook --harness codex"
+            "command": "rsi_script=\"$(git rev-parse --show-toplevel)/.agents/skills/rsi/scripts/continuation.py\"; if [ -f \"$rsi_script\" ]; then python -I \"$rsi_script\" hook --harness codex; fi"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -I \"$(git rev-parse --show-toplevel)/.agents/skills/rsi/scripts/continuation.py\" hook --harness codex"
+            "command": "rsi_script=\"$(git rev-parse --show-toplevel)/.agents/skills/rsi/scripts/continuation.py\"; if [ -f \"$rsi_script\" ]; then python -I \"$rsi_script\" hook --harness codex; fi"
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -I \"$(git rev-parse --show-toplevel)/.agents/skills/rsi/scripts/continuation.py\" hook --harness codex"
+            "command": "rsi_script=\"$(git rev-parse --show-toplevel)/.agents/skills/rsi/scripts/continuation.py\"; if [ -f \"$rsi_script\" ]; then python -I \"$rsi_script\" hook --harness codex; fi"
           }
         ]
       }
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -I \"$(git rev-parse --show-toplevel)/.agents/skills/rsi/scripts/continuation.py\" hook --harness codex"
+            "command": "rsi_script=\"$(git rev-parse --show-toplevel)/.agents/skills/rsi/scripts/continuation.py\"; if [ -f \"$rsi_script\" ]; then python -I \"$rsi_script\" hook --harness codex; fi"
           }
         ]
       }
