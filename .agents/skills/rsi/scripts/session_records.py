@@ -113,6 +113,16 @@ class SessionRecords:
             return
         if kind == "response_item":
             self._codex_response(record, payload, line)
+        elif kind == "event_msg" and payload.get("type") in {"task_started", "task_complete", "turn_aborted"}:
+            # Forks retain second-precision start times even when outer timestamps are rewritten.
+            started = payload.get("started_at")
+            created = self.metadata.get("timestamp")
+            inherited = None
+            if started is not None and created:
+                created_second = int(timestamp(created).timestamp())
+                if started != created_second:
+                    inherited = started < created_second
+            self._append(record, line, "lifecycle", payload, name=payload["type"], inherited=inherited)
         elif kind == "event_msg" and payload.get("type") == "item_completed":
             item = payload.get("item", {})
             item_kind = item.get("type", "")

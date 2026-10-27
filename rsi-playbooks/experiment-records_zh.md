@@ -104,7 +104,7 @@ results/decode/parallelism/
 python -I .agents/skills/rsi/scripts/session_records.py index "$RSI_SESSION" --since "$RSI_SINCE"
 ```
 
-索引默认省略已识别的继承记录并显示数量；需要这些背景时，加上 `--include-inherited`。后续页用 `--after-line` 传入返回的 `next_after_line`。选择源文件行号，设置 `RSI_LINE` 后读取证据：
+索引包含 Codex 的开始、完成和中断事件，用于核对成员随时间变化的工作状态。默认省略已识别的继承记录并显示数量；需要这些背景时，加上 `--include-inherited`。后续页用 `--after-line` 传入返回的 `next_after_line`。选择源文件行号，设置 `RSI_LINE` 后读取证据：
 
 ```bash
 python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RSI_LINE"

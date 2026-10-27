@@ -35,7 +35,7 @@ python -I .agents/skills/rsi/scripts/continuation.py queue \
   --agent "$RSI_AGENT" --role "$RSI_ROLE" --next-step "$RSI_NEXT_STEP"
 ```
 
-Claude 队友也可使用明确的 teammate name。身份取自运行环境或原始会话元数据，不能用界面显示名称代替。Observer 和一次性审查成员不登记，完成后正常结束。
+使用运行环境返回的成员原生 ID。如果 Codex 只返回任务名，成员可在首次进度更新中附上自己的 `CODEX_THREAD_ID`。登记该成员时，`RSI_SESSION` 仍使用主 Agent 的 ID。Claude 队友也可使用明确的 teammate name。Observer 和一次性审查成员不登记，完成后正常结束。
 
 `SubagentStop` 发生时，hook 取出已登记的下一步，让同一成员继续；Claude 的 `TeammateIdle` 使用同一份待办。每条指令只交付一次，之后结束时不会重复。已登记的成员完成后没有下一步时，主 Agent 在下一次 `Stop` 收到一次提醒，核对角色目标并通过原生工具接续工作。
 

@@ -66,7 +66,7 @@ Use the [resource arrangements](common.md#coordinate-resources-and-environments)
 | ID | Check | What to look for |
 | --- | --- | --- |
 | 14 | GPUs | Idle time has a preparation, build or loading explanation; ready experiments do not wait despite free GPUs, and parallel runs use separate devices where possible. |
-| 15 | Agents | Compare current active roles with task targets and harness capacity. For idle or completed members, check the next assignment, real dependency or decision to end the direction; distinguish current staffing from historical activity. |
+| 15 | Agents | Give each role's target, current working count, member IDs and observation time. Use native start, finish and resume records to identify understaffed intervals since the previous check. Record waiting or finished owners and harness limits separately; explain each gap's assignment decision or genuine dependency. |
 | 16 | Deployment reuse | Compatible images, environments and caches are reused, code updates are incremental, and repeated builds or restarts are justified. |
 | 17 | Resource release | Jobs are handled and unused GPUs released when no experiment follows, at pause or at deadline, while reusable environments are retained as required. |
 

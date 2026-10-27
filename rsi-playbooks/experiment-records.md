@@ -104,7 +104,7 @@ For original JSONL files, the [session reader](../.agents/skills/rsi/scripts/ses
 python -I .agents/skills/rsi/scripts/session_records.py index "$RSI_SESSION" --since "$RSI_SINCE"
 ```
 
-The index omits identifiable inherited records and reports their count; add `--include-inherited` when that background is needed. Continue with `--after-line` and its returned `next_after_line`. Choose a source line, set `RSI_LINE`, and read the evidence:
+The index includes Codex start, completion and interruption events for checking member activity over time. It omits identifiable inherited records and reports their count; add `--include-inherited` when that background is needed. Continue with `--after-line` and its returned `next_after_line`. Choose a source line, set `RSI_LINE`, and read the evidence:
 
 ```bash
 python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RSI_LINE"

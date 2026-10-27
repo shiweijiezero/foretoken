@@ -35,7 +35,7 @@ python -I .agents/skills/rsi/scripts/continuation.py queue \
   --agent "$RSI_AGENT" --role "$RSI_ROLE" --next-step "$RSI_NEXT_STEP"
 ```
 
-Claude teammates may use their explicit teammate name. Use identities returned by the harness or its session metadata, not a display label. Observers and one-time review agents remain unregistered and end normally.
+Use the member's native ID returned by the harness. If Codex returns only a task name, the member can include its own `CODEX_THREAD_ID` in its first progress update. Keep `RSI_SESSION` set to the lead's ID when registering that member. Claude teammates may use their explicit teammate name. Observers and one-time review agents remain unregistered and end normally.
 
 At `SubagentStop`, the hook consumes the registered step and asks the same member to continue. Claude's `TeammateIdle` uses the same pending work. A step is delivered once; another stop does not repeat it. When a registered member finishes without another step, the lead receives one reminder at its next `Stop` to check role targets and arrange work through the native agent tools.
 
