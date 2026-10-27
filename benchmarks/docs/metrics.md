@@ -26,7 +26,7 @@ Results include aggregate metrics and per-request records.
 | Output tok/s / user | Output throughput divided by `--max-concurrency`; with `--max-concurrency -1`, uses measured average active requests |
 | Output token throughput per GPU (tokens/s) | Output throughput divided by the model's declared GPU capacity |
 | Mean reported cached input tokens | Mean `usage.prompt_tokens_details.cached_tokens` among successful requests that report it |
-| Benchmark duration (s) | HTTP scheduling window through completion of admitted requests, excluding warmup and the final recording drain |
+| Benchmark duration (s) | Elapsed time from starting the workload until all sent requests complete |
 
 A failed conversation turn skips the remaining turns without replacement. `not_executed_reasons` distinguishes these skips (`failed_predecessor`) from requests excluded by the time limit (`duration`). `failure_reasons` groups recorded failures by HTTP status and error message.
 
