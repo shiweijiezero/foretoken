@@ -19,7 +19,7 @@ Observer check interval: 1h
 Maximum parallel experiments: at most 3 two-GPU service candidates; smaller focused experiments share the six-GPU budget
 Parallel scheduling: reserve capacity for platform services, builds, and benchmark clients, then schedule experiments by their actual resource requests and record the achieved parallelism
 Evaluation workloads: measure concurrency 1 and 16 separately per service using random-length workloads and StudyChat conversations; see the full commands under "Evaluation commands" below
-Accuracy evaluation: run foretoken eval as needed for changes that may affect accuracy, at most once per 20 completed performance iterations
+Accuracy evaluation: run foretoken eval as needed for changes that may affect answer quality. Prioritize candidates being considered for retention, reuse results while their conditions still apply, and avoid repeating quality scoring after every performance measurement.
 Allowed changes: implementation and configuration at any layer, within the precision and resource constraints above
 Measurement budget per iteration: default to 10 minutes of perf/eval measurement to keep iterations fast; adjust the measurement budget and request count to the actual workload, recording the reason and time spent
 Work duration: a total budget of 24 hours from the start of task execution
