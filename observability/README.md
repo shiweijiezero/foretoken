@@ -108,8 +108,6 @@ foretoken install --prometheus monitoring/prometheus
 
 The selected Prometheus must select Foretoken's ServiceMonitors and recording rules in `foretoken-platform`. For service alerts, its `ruleNamespaceSelector` must also include workload namespaces. GPU exporters must cover the GPU nodes and expose Pod and namespace labels to associate devices with model workloads.
 
-For CLI-managed DCGM, installation copies a covering NVIDIA device plugin's literal GPU visibility, including plugins installed under custom DaemonSet and container names. Reapply the original installation command after changing the plugin's GPU selection to update the exporter.
-
 For automatic Grafana provisioning, watch dashboard ConfigMaps labeled `grafana_dashboard=1` and datasource ConfigMaps labeled `grafana_datasource=1`, both in `foretoken-platform`. For manual dashboard import, export the installed version:
 
 ```bash
