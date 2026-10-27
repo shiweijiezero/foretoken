@@ -7,29 +7,25 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](observer_zh.md)
 
-An Observer periodically reads work and session records to assess progress, research depth and resource use, then suggests adjustments to the lead. The lead is also in scope; research, experiments and candidate reviews remain with their assigned roles.
+An Observer checks progress, research depth and resource use from work and session records, including the lead's decisions. It recommends corrections while assigned members continue research, experiments and candidate reviews.
 
 ## Start each check with a new agent
 
-The lead [creates new Observers](../SKILL.md#arrange-periodic-team-checks) at the task's count and interval. Each round uses new identities, without inheriting the main conversation, resuming an earlier Observer or loading saved context. Repository instructions and task requirements still apply.
+The lead [creates new Observers](../SKILL.md#arrange-periodic-team-checks) at the task's count and interval, providing only the task file, role instructions and working directory. Each check uses a new identity without inheriting or resuming a conversation or loading saved context. Follow the repository and task requirements, and find the [work and session records](../../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records) independently.
 
-Provide only the task file, role instructions and working directory. The Observer finds [work and session records](../../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records) itself; the lead need not find paths or prepare a progress briefing.
+The first check covers work since task start; later checks cover changes since the previous round and revisit its open findings. Reuse unchanged background evidence, reading earlier records when needed to judge the current period.
 
 ## Read the work without interrupting it
 
-Use project paths, timestamps, session IDs and parent/child relationships to find this task's lead and member sessions. Compare messages, tool calls and results with assignments, research notes, code changes, experiment results and resource observations. Record the source locations.
+Use project paths, timestamps, session IDs and parent/child relationships to identify the lead and member sessions. Follow the [session-reading workflow](../../../../rsi-playbooks/experiment-records.md#read-session-evidence), pairing tool inputs with results and opening the cited code, data and resource observations. Record the source locations.
 
-The first check covers work since task start; later checks focus on changes since the previous round, reading earlier records when needed. Reuse original evidence and notes for unchanged background, but judge the current period afresh. Carry unresolved findings forward by linking their first note and comparing the previous decision and expected result with what actually changed. Include time spent waiting, the remaining dependency, and the owner of the next action or decision.
+A completion message locates evidence: verify execution against its command and result, and implementation or measurement claims against the delivered code or data. State what you checked directly and what you reuse from an independent review whose conditions still apply. Unread, incomplete or truncated evidence leaves the judgment unresolved; inspecting saved evidence does not require repeating the experiment.
 
-Read session files or use a read-only interface without asking members for status. Identify missing or unreadable records; summaries are not full transcripts, and missing records do not prove inactivity. Leave other members' files unchanged and experiments and resources with their owners.
-
-Use the [session-reading workflow](../../../../rsi-playbooks/experiment-records.md#read-session-evidence) to read tool inputs together with their results. A member's completion message points to evidence: check the command and its result for execution claims, and open the cited data or code for measurement and implementation claims. State what you checked directly and what you reuse from an independent review whose conditions still apply. If necessary evidence is unread, incomplete or truncated, the judgment remains unresolved. Repeating an experiment is not required to inspect its saved evidence.
+Read files or use a read-only interface without asking members for status. Identify missing records and partial summaries; missing evidence does not prove inactivity. Keep other members' files read-only, leaving experiments and resources with their owners.
 
 ## Work through the checklist
 
-Check every item in order: find the requirement and actual records, write the object, evidence and judgment, then continue. Report every item rather than sampling or giving only an overall conclusion. Add checks for task-specific requirements.
-
-Give different members, objects and independent requirements separate rows. Where a role has no dedicated member, check whoever carries its responsibilities.
+Check every item in order against the task and actual records, including task-specific requirements. Give different members, objects and independent requirements separate rows; check the person carrying a role's responsibilities when it has no dedicated member.
 
 ### 1. Task and evidence
 
@@ -97,13 +93,13 @@ Research takes time, and a sound experiment may fail. Judge the actual work, not
 
 ## Return useful corrections, then finish
 
-Save the note under `<output-dir>/team/observations/`, with the date and agent identity in its filename. Start with the period, a brief conclusion and important findings, then give the complete table in the six groups. Keep every item even when no issues are found.
+Save a dated note under `<output-dir>/team/observations/`, with the agent identity in its filename. State the period and most important findings, then complete every checklist item in the six groups.
 
 | ID and check | Object | Requirement and evidence location | Facts and judgment | Status | Suggested next step |
 | --- | --- | --- | --- | --- | --- |
 
-Name the task, role instruction or checklist requirement, and locate evidence by session time, file line, run record or field. Use "passed," "issue found," "unresolved" or "not applicable": a pass identifies the fact verified and its supporting evidence; an issue explains its effect and remedy; unresolved identifies the missing evidence or decision; non-applicability explains why the requirement does not apply. A delivery announcement alone does not verify its claimed execution or result. Write "no change needed" when no action is needed.
+Name each requirement and locate evidence by session time, file line, run or field. Use "passed" for a verified fact with supporting evidence, "issue found" for a problem with its effect and remedy, "unresolved" for missing evidence or a pending decision, and "not applicable" with the reason. Write "no change needed" when appropriate.
 
-Before delivery, reconcile the IDs, members and added task requirements so every item has a judgment. Send the lead a brief summary and file path; alert it promptly to urgent issues with evidence. The lead decides the action and owner, or explains why a suggestion is declined. Other members continue without waiting for approval from the Observer.
+Link recurring findings to their first note. Compare the prior decision and expected result with actual changes, elapsed waiting and remaining dependencies. Keep the next action or decision with an owner until its outcome is verified or the lead explains a changed decision.
 
-Finish after delivery. The lead creates the next round's new Observers to check follow-through.
+Before delivery, reconcile the checklist IDs and members. Send the lead the key findings and note path, raising urgent issues promptly with evidence. The lead records actions and owners or reasons for declining suggestions. Finish the check; the team continues while the next fresh Observer checks follow-through.

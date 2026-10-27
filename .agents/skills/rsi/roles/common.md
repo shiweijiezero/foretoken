@@ -9,15 +9,11 @@ English | [简体中文](common_zh.md)
 
 A Worker turns an idea into a code or configuration change and hands that candidate to an Experimenter. The Experimenter evaluates it in an assigned environment and returns the results so the Worker can explain and improve the approach. Explorers continue exploring mechanisms and methods, while the lead uses the team's findings to adjust research priorities and resources.
 
-Related research and execution work should stay with members who already understand it. This lets them build on earlier findings instead of reconstructing the same background for every iteration. [Observers](observer.md) are the exception: the lead creates new agents for each team check.
-
 ## Learn the framework first
 
-Every role, including the Observer, starts by learning how Foretoken is designed and used. Begin with the [project README](../../../../README.md), then use architecture guidance, relevant component documentation and maintained examples to understand how the control plane, data plane, inference engines and benchmark tools work together. This includes how services are deployed, requests are executed, and evaluations and results are produced.
+Every role, including the Observer, starts with the [project README](../../../../README.md), architecture guidance, relevant component documentation and maintained examples. Learn how the control plane, data plane, inference engines and benchmark tools work together to deploy services, execute requests and produce results.
 
-With that shared understanding, each member studies the source, configuration and earlier experiments relevant to their question. They identify capabilities the framework already provides and the parts their work could affect. The lead supplies the source locations, and members read the originals and check them against the implementation. When versions or task scope change, refresh the affected parts of that understanding.
-
-During an ongoing assignment, reuse established context and evidence references. Reopen changed sections or the specific material needed for a new judgment. Each new Observer still reads the task and role instructions independently.
+Then study the source, configuration and earlier experiments for the assigned question to identify reusable facilities and affected call paths. Use locations supplied by the lead and check originals against the implementation. Keep related work with members who understand it; they reuse established context and evidence, reading changed material or what a new judgment needs. Refresh affected knowledge when versions or scope change. [Observers](observer.md) use new agents each round and learn their task and role independently.
 
 ## Assign complete questions
 
@@ -45,13 +41,11 @@ The Worker prepares the version to test, and the Experimenter runs it; record th
 
 The delivered checkout and execution environment stay unchanged while the candidate waits, builds or runs. Reuse the checkout after evaluation; create a separate development or evaluation copy only when further implementation needs to overlap those stages.
 
-Keep the same Experimenter with a research direction where possible. In the team's shared task records, that Experimenter shows which approaches are still being prepared, which are ready to test and which are running, with links to completed results. The lead uses these records to arrange priorities and resources. If too many candidates are waiting, drop redundant comparisons while Workers continue research and analysis.
+Give each candidate one Experimenter, keeping the same member with a research direction where possible. That owner records candidates being prepared, ready or running, plus the group's job, service, collector and resource state in existing task tools or iteration notes, linking completed results. If a shared resource record needs one writer, assign an Experimenter when one is staffed; other executors send it their changes. Transfer record ownership with the work. The lead uses these records for priorities, budgets and cross-group decisions.
 
 For example, five Workers can prepare approaches even when only two GPUs are available. The Experimenter runs two one-GPU experiments or one two-GPU experiment according to priority and available resources, while the other Workers continue. Record what is missing for work that cannot run yet. Arrange a measurement window for higher-priority multi-GPU work as devices become free. When GPUs are idle, check the records before asking Workers for missing versions or delivery estimates; involve the lead when the research schedule needs to change.
 
-Give each candidate to one Experimenter so it is not run twice. If experiments need the same GPUs, or one needs GPUs from several groups, have one Experimenter arrange the order of use for those devices. Other groups continue independently. Agree who takes over before changing the executor. Keep this information in existing task tools, or in the iteration notes when no task tools are available.
-
-The assigned Experimenter also maintains the group's job, service, collector and resource state. If a shared resource record needs one writer, assign that responsibility to an Experimenter when one is staffed; other executors send it their changes. The lead uses those records for priorities, budgets and cross-group decisions. Transfer record ownership explicitly with the work.
+When experiments share GPUs or combine devices from several groups, one Experimenter arranges their order while other groups continue. Agree on the handoff before changing executors. If candidates accumulate, drop redundant comparisons while Workers continue research and analysis.
 
 ## Coordinate resources and environments
 

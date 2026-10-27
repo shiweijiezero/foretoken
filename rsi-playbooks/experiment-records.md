@@ -87,36 +87,32 @@ Supporting research, scripts, preparation logs and cleanup records also belong u
 
 ## Keep team and session records
 
-The Observer finds research notes, results and resource observations from the task and experiment directory, then locates the lead's and members' session files. The lead need not prepare an index or find files for it.
-
-Use the runtime's saved session files. Common locations are:
-
-- Claude Code: JSONL under `~/.claude/projects/`, including a session's `subagents/` files. See [session records](https://code.claude.com/docs/en/sub-agents#resume-subagents).
-- Codex: rollout JSONL under `$CODEX_HOME/sessions/`; `CODEX_HOME` defaults to `~/.codex`. See [state locations](https://learn.chatgpt.com/docs/config-file/config-advanced#config-and-state-locations).
-
-Paths vary with configuration and version. The Observer identifies this task's files from working directories, timestamps, session IDs and parent/child metadata, then records the actual paths.
-
-Use an available read-only runtime history interface with full items and tool output, such as [Codex's paginated thread history](https://learn.chatgpt.com/docs/app-server) or [Claude's session interfaces](https://code.claude.com/docs/en/agent-sdk/sessions). For original JSONL files, use the reader below. Label summaries and partial records rather than treating them as full transcripts. Inspect only this task's records, preserve the originals and use existing task access for remote hosts. Do not ask members for status or explanations of their work.
-
-The lead records the task link, check interval, next check time and reminder identity in `<output-dir>/team/README.md`. Observers save dated notes under `team/observations/`, reporting every [checklist item](../.agents/skills/rsi/roles/observer.md#work-through-the-checklist), including passed, not-applicable and unresolved items. The lead links each note and records the decision, owner and expected result for each action, or the reason for deferring or declining it. Keep each unresolved finding linked to its first note and record actual follow-through. Existing task records own the current action state; observation notes preserve each check's evidence, and the report links those records instead of maintaining another current-state copy.
+The lead keeps the check schedule in `<output-dir>/team/README.md` and links each Observer note under `team/observations/`. Existing task records hold action owners, decisions and expected results. Keep unresolved findings linked to their first note, update their progress there, and have the report link to this current state. Each observation preserves the evidence and judgment from that check.
 
 ### Read session evidence
 
-The [session reader](../.agents/skills/rsi/scripts/session_records.py) requires Python 3.11+ and uses only the standard library. It indexes work messages, tool calls and results, and native command execution records from Codex or Claude Code JSONL files. It keeps source line numbers and call identifiers so an input can be read with its corresponding result.
+Start from the task and experiment directory to find the lead and member sessions. Use working directories, times, session IDs and parent/child relationships to identify the relevant records. The Observer finds these itself and reads them without asking members to report progress.
 
-Set `RSI_SESSION` to the original session file and `RSI_SINCE` to the start of the review window as an ISO timestamp with a UTC offset. From the checkout root, list the first page:
+Use a read-only history interface with full items and tool output when available: [Codex thread history](https://learn.chatgpt.com/docs/app-server) or [Claude session interfaces](https://code.claude.com/docs/en/agent-sdk/sessions). Original files are commonly stored in:
+
+- Claude Code: `~/.claude/projects/`, including session `subagents/` directories.
+- Codex: `$CODEX_HOME/sessions/`, with `CODEX_HOME` defaulting to `~/.codex`.
+
+For original JSONL files, the [session reader](../.agents/skills/rsi/scripts/session_records.py) provides a paged index and reads related evidence together. It requires Python 3.11+ with no additional packages. Set `RSI_SESSION` to the file and `RSI_SINCE` to an ISO start time with a UTC offset, then run from the checkout root:
 
 ```bash
 python -I .agents/skills/rsi/scripts/session_records.py index "$RSI_SESSION" --since "$RSI_SINCE"
 ```
 
-Continue with `--after-line` using the returned cursor. The index is a navigation aid; read the records supporting each judgment. Set `RSI_LINE` to an indexed source line, then read its content:
+The index omits identifiable inherited records and reports their count; add `--include-inherited` when that background is needed. Continue with `--after-line` and its returned `next_after_line`. Choose a source line, set `RSI_LINE`, and read the evidence:
 
 ```bash
 python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RSI_LINE"
 ```
 
-Long records are returned in character ranges; continue with `--offset` until the needed content is read. Follow the linked call/result lines and inspect native command records for command text, exit status and output. A missing counterpart may still be in flight. Inherited history, unsupported record kinds and an incomplete final line remain explicit; they are not evidence of newly completed work. If the stored output itself was truncated, follow its saved-output or artifact path, or leave the affected fact unresolved.
+`show` includes the selected record, its paired tool input and result, and command records within that interval. Each keeps its source location; interval membership alone does not establish which call caused a command. For long output, pass `next_offset` to `--offset` until the relevant evidence is read.
+
+The reader marks identifiable inherited history, missing results, unavailable content and stored truncation markers. Read saved-output or artifact files when the session lacks the needed detail; otherwise leave the fact unresolved. Index previews locate evidence but do not replace it.
 
 ## Analyze results
 

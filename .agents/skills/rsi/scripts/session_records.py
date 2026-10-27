@@ -218,35 +218,71 @@ class SessionRecords:
     def index(self, args: argparse.Namespace) -> dict[str, Any]:
         """Return a bounded page with source cursors; filtering never changes the transcript."""
         selected = []
+        omitted_inherited = 0
         for record in self.records:
             if record["line"] <= args.after_line:
                 continue
             at = timestamp(record["timestamp"]) if record["timestamp"] else None
             if at is not None and ((args.since and at < args.since) or (args.until and at > args.until)):
                 continue
+            if record["inherited"] is True and not args.include_inherited:
+                omitted_inherited += 1
+                continue
             selected.append(record)
         page = selected[:args.limit]
         records = []
         for record in page:
             text = content_text(record["content"])
-            records.append({**self.details(record), "total_chars": len(text),
+            details = {key: value for key, value in self.details(record).items()
+                       if key not in {"source", "recorded_at"}}
+            records.append({**details, "total_chars": len(text),
                             "preview": text[:160], "preview_truncated": len(text) > 160})
         return {"source": str(self.path), "session": self.metadata,
-                "history": "physical JSONL records; inherited history is labeled when identifiable",
+                "history": "physical JSONL records; identifiable inherited history is omitted unless requested",
+                "omitted_inherited_records": omitted_inherited,
                 "unsupported_work_kinds": dict(self.unsupported), "incomplete_final_line": self.partial_line,
                 "records": records, "more": len(selected) > len(page),
                 "next_after_line": page[-1]["line"] if len(selected) > len(page) else None}
 
+    def evidence_bundle(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Return native call pairs and labeled intervening executions for one selected record."""
+        pairs = self.details(record)["calls"]
+        paired_lines = {line for pair in pairs.values() for key in ("calls", "results") for line in pair[key]}
+        intervals = [(min(pair["calls"]), max(pair["results"])) for pair in pairs.values()
+                     if pair["calls"] and pair["results"]]
+        selected = [
+            item for item in self.records
+            if item["line"] == record["line"] or item["line"] in paired_lines
+            or item["kind"] == "execution" and any(start < item["line"] < end for start, end in intervals)
+        ]
+        return {
+            "selected_line": record["line"],
+            "pairing_complete": all(pair["status"] == "paired" for pair in pairs.values()) if pairs else None,
+            "unavailable_content": any(item["unavailable_content"] for item in selected),
+            "truncation_marker": any(item["truncation_marker"] for item in selected),
+            "interval_execution_meaning": "Recorded between a paired call and result; causation is not inferred.",
+            "records": [
+                {**self.details(item), "relationship": (
+                    "selected" if item["line"] == record["line"] else
+                    "paired" if item["line"] in paired_lines else "interval_execution"
+                ), "content": item["content"]}
+                for item in selected
+            ],
+        }
+
     def show(self, args: argparse.Namespace) -> dict[str, Any]:
-        """Read an exact visible record in character chunks without silently truncating it."""
+        """Read one evidence bundle in character chunks without silently truncating it."""
         record = next((item for item in self.records if item["line"] == args.line), None)
         if record is None:
             raise ValueError(f"{self.path}:{args.line}: no visible work record")
-        text = content_text(record["content"])
+        bundle = self.evidence_bundle(record)
+        text = content_text(bundle)
         if args.offset > len(text):
-            raise ValueError(f"Offset exceeds the record's {len(text)} characters")
+            raise ValueError(f"Offset exceeds the evidence bundle's {len(text)} characters")
         end = min(args.offset + args.length, len(text))
-        return {**self.details(record), "offset": args.offset, "end": end,
+        return {**self.details(record), **{key: bundle[key] for key in (
+                    "pairing_complete", "unavailable_content", "truncation_marker",
+                )}, "offset": args.offset, "end": end,
                 "total_chars": len(text), "content": text[args.offset:end],
                 "more": end < len(text), "next_offset": end if end < len(text) else None,
                 "incomplete_final_line": self.partial_line}
@@ -278,6 +314,7 @@ def main() -> None:
     index.add_argument("--until", type=timestamp)
     index.add_argument("--after-line", type=nonnegative, default=0)
     index.add_argument("--limit", type=positive, default=20)
+    index.add_argument("--include-inherited", action="store_true", help="Include identifiable copied parent history")
     show = commands.add_parser("show", help="Read one work record using character offsets")
     show.add_argument("file", type=Path)
     show.add_argument("line", type=positive)

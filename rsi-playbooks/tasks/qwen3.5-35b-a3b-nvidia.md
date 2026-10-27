@@ -52,7 +52,7 @@ Run from the repository root and authenticate with `wandb login` before using W&
 
 Each performance loop measures concurrency 1 and 16 in sequence using the same inputs: 80 measured requests for random workloads and 200 for StudyChat, with four additional warmup requests per group. StudyChat's request count includes individual turns across conversations. Run it for the final retained approach and as needed during intermediate iterations. See [benchmark examples](../../benchmarks/docs/recipes.md) for other workloads.
 
-GSM8K sends up to 64 concurrent requests, which the engine schedules within its sequence limit. To use all remaining context for output, including reasoning, the command requests `max_gen_toks=262144`, using [Qwen3.5's native total context limit](https://huggingface.co/Qwen/Qwen3.5-35B-A3B#model-overview) as the ceiling. Foretoken limits the actual output budget to the deployed context limit minus the input length. With the starting deployment, that is 36,864 tokens minus the rendered prompt.
+GSM8K uses up to 64 concurrent requests. Its output budget includes reasoning and is capped by Foretoken at the deployed context limit minus the rendered input length: `36864 - input_tokens` for the starting deployment. The command requests `max_gen_toks=262144`, using [Qwen3.5's native total context size](https://huggingface.co/Qwen/Qwen3.5-35B-A3B#model-overview) as the ceiling.
 
 ```bash
 # Every performance iteration: random lengths at concurrency 1 and 16.

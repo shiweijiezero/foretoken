@@ -52,7 +52,7 @@ foretoken deploy examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi -e . --timeou
 
 两个性能评测循环依次测量并发 1 和 16，使用相同输入：随机负载每组 80 条正式请求，StudyChat 每组 200 条，每组另加 4 条预热请求。StudyChat 按对话中的各轮请求计数。最终保留方案需完成 StudyChat，中间迭代按需执行。其他负载见[评测示例](../../benchmarks/docs/recipes_zh.md)。
 
-GSM8K 最多并发发送 64 个请求，引擎按自身序列数上限调度。为将输入后的剩余上下文用于输出（含思考内容），命令以 [Qwen3.5 的原生总上下文上限](https://huggingface.co/Qwen/Qwen3.5-35B-A3B#model-overview) 为请求预算，设置 `max_gen_toks=262144`。Foretoken 会将实际输出预算限制为部署上下文上限减去输入长度；起始部署下即 36,864 tokens 减去套用聊天模板后的输入长度。
+GSM8K 最多并发 64 个请求。输出预算包含思考内容，由 Foretoken 限制为部署上下文上限减去套用聊天模板后的输入长度；起始部署下即 `36864 - input_tokens`。命令以 [Qwen3.5 的原生总上下文大小](https://huggingface.co/Qwen/Qwen3.5-35B-A3B#model-overview)为请求上界，设置 `max_gen_toks=262144`。
 
 ```bash
 # 每轮速度迭代：随机长度负载，分别测量并发 1 和 16

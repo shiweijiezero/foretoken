@@ -87,36 +87,32 @@ results/decode/parallelism/
 
 ## 保存团队与会话记录
 
-Observer 从任务文件和实验目录找到调研笔记、结果和资源采样，再自行查找主 Agent 与成员的会话文件，无需主 Agent 整理索引或代找文件。
-
-直接使用运行环境保存的会话文件，常见位置如下：
-
-- Claude Code：`~/.claude/projects/` 下的 JSONL，包括会话目录中的 `subagents/` 文件，见[会话记录说明](https://code.claude.com/docs/en/sub-agents#resume-subagents)。
-- Codex：`$CODEX_HOME/sessions/` 下的 rollout JSONL；`CODEX_HOME` 默认是 `~/.codex`，见[状态目录说明](https://learn.chatgpt.com/docs/config-file/config-advanced#config-and-state-locations)。
-
-具体路径随配置和版本变化。Observer 根据工作目录、时间、session ID 和父子关系识别本任务的文件，将实际路径记入巡查笔记。
-
-运行环境提供只读历史接口时，读取完整条目和工具输出，例如 [Codex 的分页会话历史](https://learn.chatgpt.com/docs/app-server)或 [Claude 的会话接口](https://code.claude.com/docs/en/agent-sdk/sessions)。直接读取原始 JSONL 时，使用下述工具。摘要或部分内容要标明，不能当作完整会话。只检查本任务的记录，保留原文件，远端访问沿用任务已有信息，不向成员询问或要求复述。
-
-主 Agent 在 `<output-dir>/team/README.md` 记录任务链接、巡查间隔、下次时间和提醒标识。Observer 在 `team/observations/` 下保存带日期的笔记，按[清单](../.agents/skills/rsi/roles/observer_zh.md#按清单逐项检查)逐项报告，保留通过、不适用和待核实的项目。主 Agent 链接笔记，为每项行动写明决定、负责人和预期结果，延期或不采纳时说明原因。未解决的问题始终链接首次记录，并补充实际落实情况。当前行动状态由已有任务记录维护，巡查笔记保留每轮依据，报告链接这些记录，避免另行维护一份当前状态。
+主 Agent 在 `<output-dir>/team/README.md` 维护巡查安排，链接 `team/observations/` 下的每轮笔记。行动的负责人、决定和预期结果保存在已有任务记录中；未解决的问题持续链接首次记录，并在原处更新进展，报告引用这份当前状态。巡查笔记保留各次检查的依据和判断。
 
 ### 读取会话证据
 
-[会话读取工具](../.agents/skills/rsi/scripts/session_records.py)需要 Python 3.11+，只使用标准库。它为 Codex 或 Claude Code 的 JSONL 文件建立工作消息、工具调用与结果、原生命令执行记录的索引，保留源文件行号和调用标识，便于对照输入及其回执。
+从任务文件和实验目录查找主 Agent 与成员会话，结合工作目录、时间、session ID 和父子关系确认记录范围。Observer 自行定位并只读检查，无需成员重新汇报进度。
 
-将 `RSI_SESSION` 设为原始会话文件路径，`RSI_SINCE` 设为检查时段的起始时间，使用带 UTC 偏移的 ISO 时间格式。在仓库根目录读取第一页：
+有只读历史接口时，读取完整条目和工具输出，例如 [Codex 会话历史](https://learn.chatgpt.com/docs/app-server)或 [Claude 会话接口](https://code.claude.com/docs/en/agent-sdk/sessions)。原始文件通常位于：
+
+- Claude Code：`~/.claude/projects/`，包括会话的 `subagents/` 目录。
+- Codex：`$CODEX_HOME/sessions/`，`CODEX_HOME` 默认是 `~/.codex`。
+
+直接读取 JSONL 时，[会话读取工具](../.agents/skills/rsi/scripts/session_records.py)提供分页索引，并将关联证据一起返回。它需要 Python 3.11+，无需额外安装包。将 `RSI_SESSION` 设为文件路径，`RSI_SINCE` 设为带 UTC 偏移的 ISO 起始时间，在仓库根目录执行：
 
 ```bash
 python -I .agents/skills/rsi/scripts/session_records.py index "$RSI_SESSION" --since "$RSI_SINCE"
 ```
 
-后续页用 `--after-line` 传入返回的游标。索引用于定位，作出判断前仍要读取对应记录。将 `RSI_LINE` 设为索引中的源文件行号，再查看内容：
+索引默认省略已识别的继承记录并显示数量；需要这些背景时，加上 `--include-inherited`。后续页用 `--after-line` 传入返回的 `next_after_line`。选择源文件行号，设置 `RSI_LINE` 后读取证据：
 
 ```bash
 python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RSI_LINE"
 ```
 
-长记录按字符范围返回，使用 `--offset` 继续读取所需部分。沿关联行号对照调用与结果，从原生命令记录检查命令、退出状态和输出。没有对应回执的调用可能仍在执行。继承历史、不支持的记录类型和末尾尚未写完的一行会明确标出，不能当作本成员新完成的工作。原始输出本身已截断时，沿其保存路径或产物路径补读，否则将受影响的事实保留为待核实。
+`show` 一起返回选中记录、配对的工具输入与结果，以及这段区间内的命令记录，每条都保留来源位置。同一区间内出现并不证明命令由该调用触发。输出较长时，将 `next_offset` 传给 `--offset`，继续读完判断所需的内容。
+
+工具会标明可识别的继承历史、缺失回执、不可读内容和已有截断标记。会话缺少必要细节时，继续读取保存的输出或产物文件，否则将事实保留为待核实。索引预览用于定位，不能替代证据本身。
 
 ## 分析结果
 
