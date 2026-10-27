@@ -75,7 +75,7 @@ deploy/release-artifacts build --registry "$REGISTRY" \
   --components control-plane,frontend,model-server,chart
 ```
 
-推送时沿用相同的组件选择。选择任一模型服务变体时，也会构建并发布共用的 CPU 模型准备镜像。打包的 Chart 只引用选中的推理运行环境；构建 Chart 时若没有选择模型服务变体，则保留两种运行环境的引用。
+推送时沿用相同的组件选择。指定模型服务变体后，打包的 Chart 只引用选中的运行环境；构建 Chart 时若没有选择模型服务变体，则保留两种运行环境的引用。
 
 只导出应用文件、不重建运行环境时，执行：
 
