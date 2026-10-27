@@ -13,7 +13,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 使用 Python 3.11+ 和工作区中的 hook 配置。Codex 读取 `.codex/hooks.json`，需要通过 `/hooks` 审阅并信任其中的定义；Claude Code 读取项目的 `.claude/settings.json`。两者都无需在用户全局配置中安装 hook，具体机制见 [Codex](https://learn.chatgpt.com/docs/hooks) 和 [Claude Code](https://code.claude.com/docs/en/hooks) 官方说明。
 
-使用 Codex 关联 worktree 时，hook 定义来自主 checkout。主 checkout 需有 hook 配置，各任务工作区需有接续脚本，再通过 `/hooks` 确认实际加载的定义。Codex 0.162.1 不会发现仅添加在关联 worktree 中的 hook 文件。
+使用 Codex 关联 worktree 时，将 hook 配置放在主 checkout，各任务工作区保留接续脚本，并通过 `/hooks` 确认实际加载的定义。
 
 主 Agent 确定任务和原始截止时间后启用接续。将 `RSI_HARNESS` 设为 `codex` 或 `claude`，`RSI_SESSION` 设为原生主会话 ID，`RSI_TASK` 设为任务文件路径，`RSI_DEADLINE` 设为带 UTC 偏移的 ISO 截止时间，在任务工作区执行：
 
