@@ -50,15 +50,6 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 
 #### Codex
 
-如果 Codex 因 Agent 数量上限无法创建所需团队，在用户配置 `~/.codex/config.toml`（设置了 `CODEX_HOME` 时为 `$CODEX_HOME/config.toml`）中调整上限，例如：
-
-```toml
-[agents]
-max_concurrent_threads_per_session = 16
-```
-
-按同时工作的 Explorer、Worker、Experimenter 总数，加上一轮 Observer 所需人数预留名额。此上限不含主 Agent；未设置时使用 Codex 默认值。修改后新建会话并确认实际可用容量；实际团队人数仍由任务分工决定。详见官方 [Codex 子 Agent 设置](https://learn.chatgpt.com/docs/agent-configuration/subagents#global-settings)。
-
 在 Codex 桌面应用中打开仓库，通过“设置 → Hooks”审阅并信任 Foretoken 项目的 hook。使用终端 CLI 时，在仓库目录运行 `codex`，再输入：
 
 ```text
@@ -70,6 +61,15 @@ max_concurrent_threads_per_session = 16
 ```text
 /goal 使用 RSI skill，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia_zh.md 中的优化任务。
 ```
+
+如果 Codex 因 Agent 数量上限无法创建所需团队，在用户配置 `~/.codex/config.toml`（设置了 `CODEX_HOME` 时为 `$CODEX_HOME/config.toml`）中调整上限，例如：
+
+```toml
+[agents]
+max_concurrent_threads_per_session = 16
+```
+
+按同时工作的 Explorer、Worker、Experimenter 总数，加上一轮 Observer 所需人数预留名额。此上限不含主 Agent；未设置时使用 Codex 默认值。修改后新建会话并确认实际可用容量；实际团队人数仍由任务分工决定。详见官方 [Codex 子 Agent 设置](https://learn.chatgpt.com/docs/agent-configuration/subagents#global-settings)。
 
 ## 查看进展
 
