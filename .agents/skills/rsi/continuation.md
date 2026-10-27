@@ -11,7 +11,9 @@ Project hooks help members finish the next part of an assigned research question
 
 ## Enable the task
 
-Use Python 3.11+ and the hooks shipped in the checkout. Codex discovers `.codex/hooks.json`; review and trust these definitions through `/hooks`. Claude Code loads `.claude/settings.json` for the project. Neither setup requires changing global settings. See the native [Codex](https://learn.chatgpt.com/docs/hooks) and [Claude Code](https://code.claude.com/docs/en/hooks) hook instructions.
+Use Python 3.11+ and the hooks shipped in the checkout. Codex discovers `.codex/hooks.json`; review and trust these definitions through `/hooks`. Claude Code loads `.claude/settings.json` for the project. Neither setup installs hooks globally. See the native [Codex](https://learn.chatgpt.com/docs/hooks) and [Claude Code](https://code.claude.com/docs/en/hooks) hook instructions.
+
+For Codex linked worktrees, hook definitions come from the primary checkout. Keep the hook configuration there and the continuation script in each task checkout, then use `/hooks` to confirm which definitions are loaded. A hook file added only in a linked worktree is not discovered by Codex 0.162.1.
 
 The lead activates continuation after establishing the task and its original deadline. Set `RSI_HARNESS` to `codex` or `claude`, `RSI_SESSION` to the native root session ID, and `RSI_TASK` to the task file. Set `RSI_DEADLINE` to the task's ISO deadline with a UTC offset, then run from a task checkout:
 
