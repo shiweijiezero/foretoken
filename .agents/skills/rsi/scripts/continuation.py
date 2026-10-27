@@ -105,13 +105,13 @@ class Continuation:
             (args.harness, args.session, str(task), args.deadline),
         )
 
-    def assign(self, args: argparse.Namespace) -> None:
-        """Register one native member and a concrete next step within its assigned role."""
+    def queue(self, args: argparse.Namespace) -> None:
+        """Queue later work for a running member without dispatching its current assignment."""
         task = self.session(args.harness, args.session)
         if not args.next_step.strip():
             raise ValueError("The next step must describe concrete authorized work")
         if task["state"] != "active":
-            raise ValueError("Resume the RSI session before assigning work")
+            raise ValueError("Resume the RSI session before queueing work")
         if task["deadline"] is not None and task["deadline"] <= datetime.now(UTC).timestamp():
             raise ValueError("The task deadline has passed")
         self.db.execute(
@@ -253,14 +253,14 @@ def main() -> None:
     """Manage explicit RSI bindings and adapt native stop events without spawning agents."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("activate", "assign", "release", "status"):
+    for name in ("activate", "queue", "release", "status"):
         command = commands.add_parser(name)
         command.add_argument("--harness", choices=("codex", "claude"), required=True)
         command.add_argument("--session", type=nonempty, required=name != "activate", help="Native root session ID; activation may use the harness session environment")
         if name == "activate":
             command.add_argument("--task", type=Path, required=True)
             command.add_argument("--deadline", type=absolute_time)
-        elif name == "assign":
+        elif name == "queue":
             command.add_argument("--agent", type=nonempty, required=True, help="Native member ID")
             command.add_argument("--role", choices=("explorer", "worker", "experimenter"), required=True)
             command.add_argument("--next-step", required=True, help="Concrete work authorized after this stage")

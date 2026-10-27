@@ -110,7 +110,7 @@ The index omits identifiable inherited records and reports their count; add `--i
 python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RSI_LINE"
 ```
 
-`show` includes the selected record, its paired tool input and result, and command records within that interval. Each keeps its source location; interval membership alone does not establish which call caused a command. For long output, pass `next_offset` to `--offset` until the relevant evidence is read.
+`show` includes the selected record, its paired tool input and result, and command records within that interval. Each keeps its source location; interval membership alone does not establish which call caused a command. For long output, pass `next_offset` to `--offset` and keep the first response's `through_line` in `--through-line` on every subsequent page. This keeps the evidence range stable while the session grows. Start a new read without these options to include newer records.
 
 The reader marks identifiable inherited history, missing results, unavailable content and stored truncation markers. Read saved-output or artifact files when the session lacks the needed detail; otherwise leave the fact unresolved. Index previews locate evidence but do not replace it.
 

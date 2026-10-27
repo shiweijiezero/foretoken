@@ -58,18 +58,26 @@ def has_encrypted_content(value: Any) -> bool:
 class SessionRecords:
     """Own one read-only transcript snapshot, its work records and native call links."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, through_line: int | None = None):
+        """Read complete source lines, reusing a prior boundary for stable character paging."""
         self.path = path.resolve()
         self.metadata: dict[str, Any] = {}
         self.records: list[dict[str, Any]] = []
         self.unsupported: Counter[str] = Counter()
         self.partial_line: int | None = None
+        self.through_line = 0
         self.calls: dict[str, dict[str, list[int]]] = defaultdict(
             lambda: {"calls": [], "results": []}
         )
         with self.path.open(encoding="utf-8") as stream:
             for line, raw in enumerate(stream, 1):
+                if through_line is not None and line > through_line:
+                    break
                 if not raw.strip():
+                    if not raw.endswith("\n"):
+                        self.partial_line = line
+                        break
+                    self.through_line = line
                     continue
                 try:
                     record = json.loads(raw)
@@ -83,6 +91,12 @@ class SessionRecords:
                         f"{self.path}:{line}: expected a JSON object"
                     )
                 self._read(record, line)
+                self.through_line = line
+        if through_line is not None and through_line > self.through_line:
+            raise ValueError(
+                f"{self.path}: requested through line {through_line}, "
+                f"but only {self.through_line} complete lines are available"
+            )
 
     def _read(self, record: dict[str, Any], line: int) -> None:
         """Decode the two transcript layouts without counting native views as tool calls."""
@@ -241,6 +255,7 @@ class SessionRecords:
                 "history": "physical JSONL records; identifiable inherited history is omitted unless requested",
                 "omitted_inherited_records": omitted_inherited,
                 "unsupported_work_kinds": dict(self.unsupported), "incomplete_final_line": self.partial_line,
+                "through_line": self.through_line,
                 "records": records, "more": len(selected) > len(page),
                 "next_after_line": page[-1]["line"] if len(selected) > len(page) else None}
 
@@ -285,6 +300,7 @@ class SessionRecords:
                 )}, "offset": args.offset, "end": end,
                 "total_chars": len(text), "content": text[args.offset:end],
                 "more": end < len(text), "next_offset": end if end < len(text) else None,
+                "through_line": self.through_line,
                 "incomplete_final_line": self.partial_line}
 
 
@@ -320,11 +336,14 @@ def main() -> None:
     show.add_argument("line", type=positive)
     show.add_argument("--offset", type=nonnegative, default=0)
     show.add_argument("--length", type=positive, default=6000)
+    show.add_argument("--through-line", type=positive, help="Source boundary returned by the first page")
     args = parser.parse_args()
     try:
         if args.command == "index" and args.since and args.until and args.since > args.until:
             raise ValueError("--since must not be later than --until")
-        session = SessionRecords(args.file)
+        if args.command == "show" and args.offset and args.through_line is None:
+            raise ValueError("Continue with --through-line from the first page alongside --offset")
+        session = SessionRecords(args.file, getattr(args, "through_line", None))
         result = session.index(args) if args.command == "index" else session.show(args)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     except (OSError, ValueError) as error:

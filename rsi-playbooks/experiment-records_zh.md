@@ -110,7 +110,7 @@ python -I .agents/skills/rsi/scripts/session_records.py index "$RSI_SESSION" --s
 python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RSI_LINE"
 ```
 
-`show` 一起返回选中记录、配对的工具输入与结果，以及这段区间内的命令记录，每条都保留来源位置。同一区间内出现并不证明命令由该调用触发。输出较长时，将 `next_offset` 传给 `--offset`，继续读完判断所需的内容。
+`show` 一起返回选中记录、配对的工具输入与结果，以及这段区间内的命令记录，每条都保留来源位置。同一区间内出现并不证明命令由该调用触发。输出较长时，将 `next_offset` 传给 `--offset`，并在各续页中通过 `--through-line` 保持首次返回的 `through_line`，避免会话追加内容导致分页错位。需要新记录时，不带这些选项开始一次新的读取。
 
 工具会标明可识别的继承历史、缺失回执、不可读内容和已有截断标记。会话缺少必要细节时，继续读取保存的输出或产物文件，否则将事实保留为待核实。索引预览用于定位，不能替代证据本身。
 
