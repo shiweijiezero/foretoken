@@ -50,7 +50,9 @@ foretoken deploy examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi -e . --timeou
 
 在仓库根目录执行，使用 W&B 前先运行 `wandb login`。结果保存到 `results/qwen3.5-35b-a3b-muxi/`，初始方案名为 `baseline`；新方案使用新名称，补测沿用原方案名。对照其他候选时，同时替换部署目录、`--name` 和 `--iteration`。
 
-两个性能评测循环依次测量并发 1 和 16，每组使用相同输入、80 条正式请求和 4 条预热请求。最终保留方案需完成 StudyChat，中间迭代按需执行。GSM8K 最多并发发送 64 个请求，引擎按自身序列数上限调度。其他负载见[评测示例](../../benchmarks/docs/recipes_zh.md)。
+两个性能评测循环依次测量并发 1 和 16，使用相同输入：随机负载每组 80 条正式请求，StudyChat 每组 200 条，每组另加 4 条预热请求。StudyChat 按对话中的各轮请求计数。最终保留方案需完成 StudyChat，中间迭代按需执行。其他负载见[评测示例](../../benchmarks/docs/recipes_zh.md)。
+
+GSM8K 最多并发发送 64 个请求，引擎按自身序列数上限调度。为将输入后的剩余上下文用于输出（含思考内容），命令以 [Qwen3.5 的原生总上下文上限](https://huggingface.co/Qwen/Qwen3.5-35B-A3B#model-overview) 为请求预算，设置 `max_gen_toks=262144`。Foretoken 会将实际输出预算限制为部署上下文上限减去输入长度；起始部署下即 36,864 tokens 减去套用聊天模板后的输入长度。
 
 ```bash
 # 每轮速度迭代：随机长度负载，分别测量并发 1 和 16
@@ -67,7 +69,7 @@ done
 for concurrency in 1 16; do
   foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi \
     --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
-    --max-concurrency "$concurrency" --num-prompts 80 --max-tokens 2048 \
+    --max-concurrency "$concurrency" --num-prompts 200 --max-tokens 2048 \
     --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb \
     --output-dir results/qwen3.5-35b-a3b-muxi --iteration baseline
 done
@@ -75,6 +77,6 @@ done
 # 按需精度评测，最多并发 64 个请求
 foretoken eval examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi \
   --evaluator lm-eval --tasks gsm8k --num_fewshot 0 --limit 20 \
-  --model_args num_concurrent=64 --output experiment,plot,wandb \
+  --model_args num_concurrent=64,max_gen_toks=262144 --output experiment,plot,wandb \
   --output-dir results/qwen3.5-35b-a3b-muxi --iteration baseline
 ```

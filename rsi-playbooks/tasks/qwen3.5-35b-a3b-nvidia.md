@@ -50,7 +50,9 @@ The command returns when the model and frontend are ready. Together they request
 
 Run from the repository root and authenticate with `wandb login` before using W&B. Results go to `results/qwen3.5-35b-a3b-nvidia/`. Use `baseline` for the initial approach, a new name for each new approach, and the same name for repeat measurements. To compare another candidate, replace its deployment directory, `--name` and `--iteration` together.
 
-Each performance loop measures concurrency 1 and 16 in sequence, with the same inputs, 80 measured requests and four warmup requests per group. Run StudyChat for the final retained approach and as needed during intermediate iterations. GSM8K sends up to 64 concurrent requests, which the engine schedules within its sequence limit. See [benchmark examples](../../benchmarks/docs/recipes.md) for other workloads.
+Each performance loop measures concurrency 1 and 16 in sequence using the same inputs: 80 measured requests for random workloads and 200 for StudyChat, with four additional warmup requests per group. StudyChat's request count includes individual turns across conversations. Run it for the final retained approach and as needed during intermediate iterations. See [benchmark examples](../../benchmarks/docs/recipes.md) for other workloads.
+
+GSM8K sends up to 64 concurrent requests, which the engine schedules within its sequence limit. To use all remaining context for output, including reasoning, the command requests `max_gen_toks=262144`, using [Qwen3.5's native total context limit](https://huggingface.co/Qwen/Qwen3.5-35B-A3B#model-overview) as the ceiling. Foretoken limits the actual output budget to the deployed context limit minus the input length. With the starting deployment, that is 36,864 tokens minus the rendered prompt.
 
 ```bash
 # Every performance iteration: random lengths at concurrency 1 and 16.
@@ -67,7 +69,7 @@ done
 for concurrency in 1 16; do
   foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-nvidia \
     --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
-    --max-concurrency "$concurrency" --num-prompts 80 --max-tokens 2048 \
+    --max-concurrency "$concurrency" --num-prompts 200 --max-tokens 2048 \
     --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb \
     --output-dir results/qwen3.5-35b-a3b-nvidia --iteration baseline
 done
@@ -75,6 +77,6 @@ done
 # Accuracy evaluation as needed, with up to 64 concurrent requests.
 foretoken eval examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-nvidia \
   --evaluator lm-eval --tasks gsm8k --num_fewshot 0 --limit 20 \
-  --model_args num_concurrent=64 --output experiment,plot,wandb \
+  --model_args num_concurrent=64,max_gen_toks=262144 --output experiment,plot,wandb \
   --output-dir results/qwen3.5-35b-a3b-nvidia --iteration baseline
 ```
