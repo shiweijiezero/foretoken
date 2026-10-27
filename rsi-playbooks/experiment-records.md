@@ -96,9 +96,27 @@ Use the runtime's saved session files. Common locations are:
 
 Paths vary with configuration and version. The Observer identifies this task's files from working directories, timestamps, session IDs and parent/child metadata, then records the actual paths.
 
-Prefer original files, or use the runtime's read-only interface or export and identify the source. Label summaries and partial records rather than treating them as full transcripts. Inspect only this task's records, preserve the originals and use existing task access for remote hosts. Do not ask members for status or explanations of their work.
+Use an available read-only runtime history interface with full items and tool output, such as [Codex's paginated thread history](https://learn.chatgpt.com/docs/app-server) or [Claude's session interfaces](https://code.claude.com/docs/en/agent-sdk/sessions). For original JSONL files, use the reader below. Label summaries and partial records rather than treating them as full transcripts. Inspect only this task's records, preserve the originals and use existing task access for remote hosts. Do not ask members for status or explanations of their work.
 
-The lead records the task link, check interval, next check time and reminder identity in `<output-dir>/team/README.md`. Observers save dated notes under `team/observations/`, reporting every [checklist item](../.agents/skills/rsi/roles/observer.md#work-through-the-checklist), including passed, not-applicable and unresolved items. The lead links each note and records actions, owners or reasons for declining suggestions for the next check. Link existing task records rather than creating another queue. The overall report can link team notes separately from performance measurements.
+The lead records the task link, check interval, next check time and reminder identity in `<output-dir>/team/README.md`. Observers save dated notes under `team/observations/`, reporting every [checklist item](../.agents/skills/rsi/roles/observer.md#work-through-the-checklist), including passed, not-applicable and unresolved items. The lead links each note and records the decision, owner and expected result for each action, or the reason for deferring or declining it. Keep each unresolved finding linked to its first note and record actual follow-through. Existing task records own the current action state; observation notes preserve each check's evidence, and the report links those records instead of maintaining another current-state copy.
+
+### Read session evidence
+
+The [session reader](../.agents/skills/rsi/scripts/session_records.py) requires Python 3.11+ and uses only the standard library. It indexes work messages, tool calls and results, and native command execution records from Codex or Claude Code JSONL files. It keeps source line numbers and call identifiers so an input can be read with its corresponding result.
+
+Set `RSI_SESSION` to the original session file and `RSI_SINCE` to the start of the review window as an ISO timestamp with a UTC offset. From the checkout root, list the first page:
+
+```bash
+python -I .agents/skills/rsi/scripts/session_records.py index "$RSI_SESSION" --since "$RSI_SINCE"
+```
+
+Continue with `--after-line` using the returned cursor. The index is a navigation aid; read the records supporting each judgment. Set `RSI_LINE` to an indexed source line, then read its content:
+
+```bash
+python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RSI_LINE"
+```
+
+Long records are returned in character ranges; continue with `--offset` until the needed content is read. Follow the linked call/result lines and inspect native command records for command text, exit status and output. A missing counterpart may still be in flight. Inherited history, unsupported record kinds and an incomplete final line remain explicit; they are not evidence of newly completed work. If the stored output itself was truncated, follow its saved-output or artifact path, or leave the affected fact unresolved.
 
 ## Analyze results
 

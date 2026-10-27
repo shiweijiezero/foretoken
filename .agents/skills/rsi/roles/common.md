@@ -17,6 +17,8 @@ Every role, including the Observer, starts by learning how Foretoken is designed
 
 With that shared understanding, each member studies the source, configuration and earlier experiments relevant to their question. They identify capabilities the framework already provides and the parts their work could affect. The lead supplies the source locations, and members read the originals and check them against the implementation. When versions or task scope change, refresh the affected parts of that understanding.
 
+During an ongoing assignment, reuse established context and evidence references. Reopen changed sections or the specific material needed for a new judgment. Each new Observer still reads the task and role instructions independently.
+
 ## Assign complete questions
 
 The lead gives each research question an owner, explains what is already known and what needs to be learned, and provides the relevant code, references, configuration and experiment records. That owner follows the question through investigation, implementation and analysis. Assign environment preparation separately so Explorers and Workers can proceed with source analysis, implementation and checks that do not need that environment.
@@ -48,6 +50,8 @@ Keep the same Experimenter with a research direction where possible. In the team
 For example, five Workers can prepare approaches even when only two GPUs are available. The Experimenter runs two one-GPU experiments or one two-GPU experiment according to priority and available resources, while the other Workers continue. Record what is missing for work that cannot run yet. Arrange a measurement window for higher-priority multi-GPU work as devices become free. When GPUs are idle, check the records before asking Workers for missing versions or delivery estimates; involve the lead when the research schedule needs to change.
 
 Give each candidate to one Experimenter so it is not run twice. If experiments need the same GPUs, or one needs GPUs from several groups, have one Experimenter arrange the order of use for those devices. Other groups continue independently. Agree who takes over before changing the executor. Keep this information in existing task tools, or in the iteration notes when no task tools are available.
+
+The assigned Experimenter also maintains the group's job, service, collector and resource state. If a shared resource record needs one writer, assign that responsibility to an Experimenter when one is staffed; other executors send it their changes. The lead uses those records for priorities, budgets and cross-group decisions. Transfer record ownership explicitly with the work.
 
 ## Coordinate resources and environments
 

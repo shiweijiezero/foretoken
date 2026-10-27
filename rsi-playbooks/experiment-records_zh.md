@@ -96,9 +96,27 @@ Observer 从任务文件和实验目录找到调研笔记、结果和资源采�
 
 具体路径随配置和版本变化。Observer 根据工作目录、时间、session ID 和父子关系识别本任务的文件，将实际路径记入巡查笔记。
 
-优先读原文件，也可使用运行环境的只读接口或导出，并注明来源。摘要或部分内容要标明，不能当作完整会话。只检查本任务的记录，保留原文件，远端访问沿用任务已有信息，不向成员询问或要求复述。
+运行环境提供只读历史接口时，读取完整条目和工具输出，例如 [Codex 的分页会话历史](https://learn.chatgpt.com/docs/app-server)或 [Claude 的会话接口](https://code.claude.com/docs/en/agent-sdk/sessions)。直接读取原始 JSONL 时，使用下述工具。摘要或部分内容要标明，不能当作完整会话。只检查本任务的记录，保留原文件，远端访问沿用任务已有信息，不向成员询问或要求复述。
 
-主 Agent 在 `<output-dir>/team/README.md` 记录任务链接、巡查间隔、下次时间和提醒标识。Observer 在 `team/observations/` 下保存带日期的笔记，按[清单](../.agents/skills/rsi/roles/observer_zh.md#按清单逐项检查)逐项报告，保留通过、不适用和待核实的项目。主 Agent 链接笔记，记录行动、负责人或不采纳的原因，供下轮核查。直接链接已有任务记录，不另建队列；整体报告可单独链接团队笔记，不与性能测量混写。
+主 Agent 在 `<output-dir>/team/README.md` 记录任务链接、巡查间隔、下次时间和提醒标识。Observer 在 `team/observations/` 下保存带日期的笔记，按[清单](../.agents/skills/rsi/roles/observer_zh.md#按清单逐项检查)逐项报告，保留通过、不适用和待核实的项目。主 Agent 链接笔记，为每项行动写明决定、负责人和预期结果，延期或不采纳时说明原因。未解决的问题始终链接首次记录，并补充实际落实情况。当前行动状态由已有任务记录维护，巡查笔记保留每轮依据，报告链接这些记录，避免另行维护一份当前状态。
+
+### 读取会话证据
+
+[会话读取工具](../.agents/skills/rsi/scripts/session_records.py)需要 Python 3.11+，只使用标准库。它为 Codex 或 Claude Code 的 JSONL 文件建立工作消息、工具调用与结果、原生命令执行记录的索引，保留源文件行号和调用标识，便于对照输入及其回执。
+
+将 `RSI_SESSION` 设为原始会话文件路径，`RSI_SINCE` 设为检查时段的起始时间，使用带 UTC 偏移的 ISO 时间格式。在仓库根目录读取第一页：
+
+```bash
+python -I .agents/skills/rsi/scripts/session_records.py index "$RSI_SESSION" --since "$RSI_SINCE"
+```
+
+后续页用 `--after-line` 传入返回的游标。索引用于定位，作出判断前仍要读取对应记录。将 `RSI_LINE` 设为索引中的源文件行号，再查看内容：
+
+```bash
+python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RSI_LINE"
+```
+
+长记录按字符范围返回，使用 `--offset` 继续读取所需部分。沿关联行号对照调用与结果，从原生命令记录检查命令、退出状态和输出。没有对应回执的调用可能仍在执行。继承历史、不支持的记录类型和末尾尚未写完的一行会明确标出，不能当作本成员新完成的工作。原始输出本身已截断时，沿其保存路径或产物路径补读，否则将受影响的事实保留为待核实。
 
 ## 分析结果
 

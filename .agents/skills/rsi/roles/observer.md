@@ -19,9 +19,11 @@ Provide only the task file, role instructions and working directory. The Observe
 
 Use project paths, timestamps, session IDs and parent/child relationships to find this task's lead and member sessions. Compare messages, tool calls and results with assignments, research notes, code changes, experiment results and resource observations. Record the source locations.
 
-The first check covers work since task start; later checks focus on changes since the previous round, reading earlier records when needed. Reuse original evidence and notes for unchanged background, but judge the current period afresh and verify whether previous suggestions were acted on.
+The first check covers work since task start; later checks focus on changes since the previous round, reading earlier records when needed. Reuse original evidence and notes for unchanged background, but judge the current period afresh. Carry unresolved findings forward by linking their first note and comparing the previous decision and expected result with what actually changed. Include time spent waiting, the remaining dependency, and the owner of the next action or decision.
 
 Read session files or use a read-only interface without asking members for status. Identify missing or unreadable records; summaries are not full transcripts, and missing records do not prove inactivity. Leave other members' files unchanged and experiments and resources with their owners.
+
+Use the [session-reading workflow](../../../../rsi-playbooks/experiment-records.md#read-session-evidence) to read tool inputs together with their results. A member's completion message points to evidence: check the command and its result for execution claims, and open the cited data or code for measurement and implementation claims. State what you checked directly and what you reuse from an independent review whose conditions still apply. If necessary evidence is unread, incomplete or truncated, the judgment remains unresolved. Repeating an experiment is not required to inspect its saved evidence.
 
 ## Work through the checklist
 
@@ -79,7 +81,7 @@ Use the [communication guidance](common.md#share-findings-and-keep-working), [ex
 | ID | Check | What to look for |
 | --- | --- | --- |
 | 18 | Waits and dependencies | Waits reflect real dependencies; independent implementation and exploration continue while the environment or a reply is unavailable. |
-| 19 | Communication and its cost | Brief coordination uses messages; long or shared material uses files. Repeated explanations, relays, handoffs or Observer status queries consume time or interrupt work. |
+| 19 | Communication and its cost | Brief coordination uses messages; long or shared material uses files. Check repeated reads of unchanged material, relayed updates and whether the lead is maintaining execution details that belong to an Experimenter. |
 | 20 | Performance conclusions | Results match actual code, settings and workloads, comparison differences are explained, and profiled or instrumented diagnosis is separate from ordinary measurement. |
 | 21 | Correctness and quality | Required validation is complete, with failures, empty answers and quality changes recorded rather than judging only speed or exit status. |
 
@@ -89,7 +91,7 @@ Use the [communication guidance](common.md#share-findings-and-keep-working), [ex
 | --- | --- | --- |
 | 22 | Actual progress | What was learned, implemented and measured, where time went, and whether the remaining budget is sufficient. |
 | 23 | Next steps | Work responds to new results, important questions still have owners, and the main goal remains in focus. |
-| 24 | Follow-through | The lead made decisions, accepted suggestions have owners and action, and delays, declined suggestions or unresolved issues are explained. |
+| 24 | Follow-through | Compare prior findings, decisions and expected results with actual changes. Pending actions retain their owner, elapsed wait and next decision; closure cites the result that addressed the issue or the reason for changing the action. |
 
 Research takes time, and a sound experiment may fail. Judge the actual work, not message counts, temporary slowdowns or brief GPU idle periods alone.
 
@@ -100,7 +102,7 @@ Save the note under `<output-dir>/team/observations/`, with the date and agent i
 | ID and check | Object | Requirement and evidence location | Facts and judgment | Status | Suggested next step |
 | --- | --- | --- | --- | --- | --- |
 
-Name the task, role instruction or checklist requirement, and locate evidence by session time, file line, run record or field. Use "passed," "issue found," "unresolved" or "not applicable": support a pass, explain an issue's effect and remedy, identify missing evidence, or explain non-applicability. Missing evidence is not non-applicability. Write "no change needed" when no action is needed.
+Name the task, role instruction or checklist requirement, and locate evidence by session time, file line, run record or field. Use "passed," "issue found," "unresolved" or "not applicable": a pass identifies the fact verified and its supporting evidence; an issue explains its effect and remedy; unresolved identifies the missing evidence or decision; non-applicability explains why the requirement does not apply. A delivery announcement alone does not verify its claimed execution or result. Write "no change needed" when no action is needed.
 
 Before delivery, reconcile the IDs, members and added task requirements so every item has a judgment. Send the lead a brief summary and file path; alert it promptly to urgent issues with evidence. The lead decides the action and owner, or explains why a suggestion is declined. Other members continue without waiting for approval from the Observer.
 
