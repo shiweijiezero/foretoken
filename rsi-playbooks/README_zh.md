@@ -69,7 +69,7 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 max_concurrent_threads_per_session = 16
 ```
 
-按同时工作的 Explorer、Worker、Experimenter 总数，加上一轮 Observer 所需人数预留名额。此上限不含主 Agent；未设置时使用 Codex 默认值。修改后新建会话并确认实际可用容量；实际团队人数仍由任务分工决定。详见官方 [Codex 子 Agent 设置](https://learn.chatgpt.com/docs/agent-configuration/subagents#global-settings)。
+按同时工作的 Explorer、Worker、Experimenter 总数，加上一轮 Observer 所需人数预留名额。
 
 ## 查看进展
 

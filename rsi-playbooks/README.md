@@ -69,7 +69,7 @@ If Codex cannot create the requested team because of its agent limit, set a suit
 max_concurrent_threads_per_session = 16
 ```
 
-Choose enough slots for concurrent Explorers, Workers and Experimenters plus an Observer round. The cap excludes the lead; leaving it unset uses Codex's default. Start a new session after changing it and confirm its available capacity. Actual staffing still comes from the task's assignments. See the official [Codex subagent settings](https://learn.chatgpt.com/docs/agent-configuration/subagents#global-settings).
+Choose enough slots for concurrent Explorers, Workers and Experimenters plus an Observer round.
 
 ## Follow progress
 
