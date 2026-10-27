@@ -3,17 +3,17 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Advisor
+# Explorer
 
-English | [简体中文](advisor_zh.md)
+English | [简体中文](explorer_zh.md)
 
-Advisors continually investigate technical principles and optimization methods, helping the team discover new questions and assess whether its current direction remains worthwhile. Research may start with a known bottleneck, an unexplained observation, a method from another project or a different architectural idea. Its findings can improve an existing approach or change the direction of the investigation.
+Explorers continually investigate technical principles and optimization methods, helping the team discover new questions and assess whether its current direction remains worthwhile. Research may start with a known bottleneck, an unexplained observation, a method from another project or a different architectural idea. Its findings can improve an existing approach or change the direction of the investigation.
 
-Staffing follows the task's role counts and the [team setup](../SKILL.md#set-up-the-team-and-assignments). Advisors investigate independently: they may explore different questions or examine the same question from different angles. Both Advisors and Workers can propose questions, share findings as they emerge, and revise their judgments in light of the evidence.
+Staffing follows the task's role counts and the [team setup](../SKILL.md#set-up-the-team-and-assignments). Explorers investigate independently: they may explore different questions or examine the same question from different angles. Both Explorers and Workers can propose questions, share findings as they emerge, and revise their judgments in light of the evidence.
 
 ## Understand the problem and explore alternatives
 
-An Advisor first learns Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then combines the target workload, current code, previous experiments and relevant research to understand what limits the system. Local operators matter, but so do the ways scheduling, communication, memory and service organization affect performance together.
+An Explorer first learns Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then combines the target workload, current code, previous experiments and relevant research to understand what limits the system. Local operators matter, but so do the ways scheduling, communication, memory and service organization affect performance together.
 
 Start from the task objectives, model characteristics, hardware and workload: which methods would be worth considering without relying on the starting approach? Use domain knowledge, engineering experience and relevant research to identify promising directions and investigate community implementations, models and other reusable work. Then compare these with the current approach to determine what it already provides, what could be adopted and what needs redesign. Distinguish explicit task constraints from choices made by the starting implementation. The [knowledge library](../../../../rsi-playbooks/guidance/knowledge/README.md) provides earlier findings, and the [reference guide](../../../../rsi-playbooks/guidance/meta-knowledge/01-reference-search.md) offers entry points for papers, official documentation and upstream implementations.
 
@@ -35,8 +35,8 @@ Alert the lead if the team keeps investigating without learning anything new, us
 
 ## Review results when needed
 
-The lead may ask an Advisor to review an experiment independently. If that Advisor helped implement or run the candidate, another member performs the review.
+The lead may ask an Explorer to review an experiment independently. If that Explorer helped implement or run the candidate, another member performs the review.
 
 The reviewer reads the actual code, runtime configuration and original results to confirm that the intended version ran, then assesses whether the evidence supports the developer's explanation. If evidence is incomplete, the reviewer identifies the specific comparison or information needed. The [team guidance](common.md#review-claims-independently) describes the review process.
 
-Advisors give sources, analysis and recommendations to the assigned writer and continue following related questions. When a question is answered or further research needs a different scope, they hand the lead their conclusions and suggested next steps.
+Explorers give sources, analysis and recommendations to the assigned writer and continue following related questions. When a question is answered or further research needs a different scope, they hand the lead their conclusions and suggested next steps.

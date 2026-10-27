@@ -18,7 +18,7 @@ Before starting, every role [learns how Foretoken works](roles/common.md#learn-t
 
 The team starts experiments only when the user requests execution or resumption. A new task records its start and deadline; a resumed task first checks existing jobs and results and keeps the original time budget. A supplied configuration is a starting point that can evolve with evidence. If none is supplied, the team records an initial approach for comparison. The team builds on existing findings and continues until the task's end conditions are met.
 
-Start research and implementation alongside environment preparation. The Experimenter prepares the runtime and initial measurements, Advisors search and analyze sources, and Workers develop key changes and run available local checks. While the environment is unavailable, prioritize implementation and exploration that can proceed independently; complete environment-dependent validation when it is ready.
+Start research and implementation alongside environment preparation. The Experimenter prepares the runtime and initial measurements, Explorers search and analyze sources, and Workers develop key changes and run available local checks. While the environment is unavailable, prioritize implementation and exploration that can proceed independently; complete environment-dependent validation when it is ready.
 
 Before allocating resources, the lead checks the task's nodes, current users and available GPU windows, following the [resource coordination guidance](roles/common.md#coordinate-resources-and-environments). If a node cannot be used, the lead records the reason and addresses problems that can be resolved.
 
@@ -30,11 +30,11 @@ The lead establishes the user-facing `report.md` and its writer at task start, f
 
 The lead chooses which questions to pursue, gives each one time and resources, and keeps an owner following it. Ideas that need an implementation before their benefits can be judged may receive a trial; measurements determine whether to keep them. The Experimenter tests ready approaches within these arrangements. Members continue within the agreed scope without waiting for instructions at every step. See the [team guidance](roles/common.md) for assignments and handoffs.
 
-Use the task's separate Advisor, Worker, Experimenter and Observer counts; none includes the lead. Advisor, Worker and Experimenter counts describe concurrent members. For these three roles, the lead chooses unspecified counts and assigns any unstaffed responsibilities to itself or another member; this does not create another member or establish independent review. Observer count means new agents per check and defaults to 1 when omitted or blank. Respect explicit counts, including 0, which disables Observer checks rather than replacing them with the lead's self-review.
+Use the task's separate Explorer, Worker, Experimenter and Observer counts; none includes the lead. Explorer, Worker and Experimenter counts describe concurrent members. For these three roles, the lead chooses unspecified counts and assigns any unstaffed responsibilities to itself or another member; this does not create another member or establish independent review. Observer count means new agents per check and defaults to 1 when omitted or blank. Respect explicit counts, including 0, which disables Observer checks rather than replacing them with the lead's self-review.
 
 The harness's actual concurrency limit still applies, including any slot used by the lead. If it cannot accommodate the requested team, prioritize and stagger assignments within that limit, recording the requested and actual staffing and the reason for the difference. Count each member under one assigned role at a time.
 
-[Advisors](roles/advisor.md) continually explore mechanisms, methods and new research questions, and help the team reassess its current direction. They investigate independently and may explore different questions or examine the same question from different angles, sharing findings as their research progresses.
+[Explorers](roles/explorer.md) continually explore mechanisms, methods and new research questions, and help the team reassess its current direction. They investigate independently and may explore different questions or examine the same question from different angles, sharing findings as their research progresses.
 
 [Workers](roles/worker.md) investigate specific questions and implement candidates, then improve them using experimental results. The implementation owner follows the end-to-end execution path to connect local changes with service behavior.
 
@@ -74,7 +74,7 @@ The Worker gives a runnable, reproducible version to the assigned Experimenter. 
 
 Before retaining or integrating a change, the lead reads the implementation and relevant call paths and reviews the independent assessment. The combined approach is still validated under the task's workload.
 
-The lead continually adjusts directions and resources as research and experiments advance. When an Advisor flags stalled or misdirected work, the lead revisits the task objectives, current understanding and available results, explains whether to continue, change or stop the direction, and assigns the next action and owner. The responsible member fixes recurring execution problems and checks the affected workflow before the team relies on the fix.
+The lead continually adjusts directions and resources as research and experiments advance. When an Explorer flags stalled or misdirected work, the lead revisits the task objectives, current understanding and available results, explains whether to continue, change or stop the direction, and assigns the next action and owner. The responsible member fixes recurring execution problems and checks the affected workflow before the team relies on the fix.
 
 When stopping a direction, state what the evidence ruled out and what remains unimplemented or unmeasured. An unavailable upstream option is an implementation constraint, not a performance result. Validation of the current best candidate can proceed while independent research continues within the remaining budget.
 

@@ -28,7 +28,7 @@ Confirm the following settings. Leave choices to the agents where you do not nee
 | Final deployment budget | Resources allowed for the final service, separate from the total experiment resources. |
 | Evaluation and constraints | Workloads, concurrency, precision, quality requirements and the code or configuration that may change. |
 | Time and delivery | Duration or completion conditions, prior experiments, and where to save reports and results. |
-| Agent settings | Concurrent Advisor, Worker and Experimenter counts; Observers per check and the check interval. |
+| Agent settings | Concurrent Explorer, Worker and Experimenter counts; Observers per check and the check interval. |
 
 ### 3. Start the agents
 
@@ -69,7 +69,7 @@ The task file expresses user requirements. The RSI skill and role instructions o
 | Role | Main responsibility |
 | --- | --- |
 | Lead | Choose research directions, allocate resources, make decisions and organize delivery. |
-| Advisor | Search local or online sources, study mechanisms, and propose methods and questions. |
+| Explorer | Search local or online sources, study mechanisms, and propose methods and questions. |
 | Worker | Implement approaches, analyze results and improve the code or configuration. |
 | Experimenter | Prepare environments, deploy and run experiments, save results and release resources. |
 | Observer | Use a new agent each round to read records independently, check progress, research depth and resource use item by item, and suggest adjustments. |

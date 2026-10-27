@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](common_zh.md)
 
-A Worker turns an idea into a code or configuration change and hands that candidate to an Experimenter. The Experimenter evaluates it in an assigned environment and returns the results so the Worker can explain and improve the approach. Advisors continue exploring mechanisms and methods, while the lead uses the team's findings to adjust research priorities and resources.
+A Worker turns an idea into a code or configuration change and hands that candidate to an Experimenter. The Experimenter evaluates it in an assigned environment and returns the results so the Worker can explain and improve the approach. Explorers continue exploring mechanisms and methods, while the lead uses the team's findings to adjust research priorities and resources.
 
 Related research and execution work should stay with members who already understand it. This lets them build on earlier findings instead of reconstructing the same background for every iteration. [Observers](observer.md) are the exception: the lead creates new agents for each team check.
 
@@ -19,7 +19,7 @@ With that shared understanding, each member studies the source, configuration an
 
 ## Assign complete questions
 
-The lead gives each research question an owner, explains what is already known and what needs to be learned, and provides the relevant code, references, configuration and experiment records. That owner follows the question through investigation, implementation and analysis. Assign environment preparation separately so Advisors and Workers can proceed with source analysis, implementation and checks that do not need that environment.
+The lead gives each research question an owner, explains what is already known and what needs to be learned, and provides the relevant code, references, configuration and experiment records. That owner follows the question through investigation, implementation and analysis. Assign environment preparation separately so Explorers and Workers can proceed with source analysis, implementation and checks that do not need that environment.
 
 Each assignment explains what may change, which workloads and generation settings must stay the same, and how much time and compute are available. Research tests uncertain benefits; a speedup need not be proven before implementation begins. Also name who will run the experiment, which checkout and environment to use, and where to save results. Members work independently within these agreements and ask the lead to coordinate changes to priorities, resource budgets, shared environments or comparison conditions.
 
@@ -27,7 +27,7 @@ Keep the complete proposal in `<output-dir>/iterations/<name>/notes/`, where `<o
 
 ## Share findings and keep working
 
-For example, an Advisor who finds a potentially faster method can send the findings and sources directly to the Worker studying that question. When the code is ready, the Worker asks the assigned Experimenter to test it. Reviewers also send specific issues to the person who can fix the code or run the missing comparison, without routing every exchange through the lead.
+For example, an Explorer who finds a potentially faster method can send the findings and sources directly to the Worker studying that question. When the code is ready, the Worker asks the assigned Experimenter to test it. Reviewers also send specific issues to the person who can fix the code or run the missing comparison, without routing every exchange through the lead.
 
 Use messages for short findings, questions and coordination. Put long explanations, full evidence or anything several people need to read in a shared file, then send a brief summary and its exact path. Give the background once and describe later changes without copying the whole document into messages. The [records guide](../../../../rsi-playbooks/experiment-records.md#share-documents-and-code) explains where files live and who writes them. Notify everyone when a change affects the whole team, and alert the executor immediately if an ongoing experiment will produce invalid results.
 
@@ -81,4 +81,4 @@ When an assignment ends, the member reports the conclusion, result locations, op
 
 On a user pause, stop or deadline, the lead stops scheduling new experiments. Each owner stops or hands over their jobs and preserves the results. A GPU collector's deadline controls only that collector, so other jobs need their own stop action.
 
-Count Workers, Experimenters, Advisors and Observers while they are actually doing assigned work, once per member. Observers count only during a check, not between rounds. Exclude the lead and members who are waiting, blocked or finished. Mark intervals with insufficient evidence as unknown.
+Count Workers, Experimenters, Explorers and Observers while they are actually doing assigned work, once per member. Observers count only during a check, not between rounds. Exclude the lead and members who are waiting, blocked or finished. Mark intervals with insufficient evidence as unknown.

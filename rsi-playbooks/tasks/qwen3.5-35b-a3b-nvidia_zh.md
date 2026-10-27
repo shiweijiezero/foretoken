@@ -11,7 +11,7 @@
 最终部署预算：单机 2 张 NVIDIA A100 80GB GPU；模型与 frontend 工作负载合计不超过 32 核 CPU、250G 主机内存
 实验规模：服务候选遵守最终预算；算子、编译或正确性等局部实验按需使用更少资源，包括单卡
 可用资源：实验合计最多使用 6 张 NVIDIA A100 80GB GPU；按实际主机容量安排 CPU、内存和存储
-Advisor 数量：2
+Explorer 数量：2
 Worker 数量：4
 Experimenter 数量：3
 Observer 数量：1

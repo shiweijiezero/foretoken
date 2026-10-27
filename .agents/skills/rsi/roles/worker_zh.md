@@ -11,7 +11,7 @@ Worker 负责一项具体的优化研究，从阅读资料、实现方案到解�
 
 ## 理解问题并实现方案
 
-Worker 先按[共同准备说明](common_zh.md#先熟悉框架)熟悉 Foretoken，再阅读本次任务、参考配置、相关代码和已有结果，了解当前实现为什么采用这种方式。结合[优化指导](../../../../rsi-playbooks/guidance/README_zh.md)，还需要追踪改动在完整执行流程中的影响，判断 Foretoken 或上游是否已经提供可复用的实现。研究过程中可以直接与 Advisor 和其他 Worker 讨论，不必等待别人先提出方案。
+Worker 先按[共同准备说明](common_zh.md#先熟悉框架)熟悉 Foretoken，再阅读本次任务、参考配置、相关代码和已有结果，了解当前实现为什么采用这种方式。结合[优化指导](../../../../rsi-playbooks/guidance/README_zh.md)，还需要追踪改动在完整执行流程中的影响，判断 Foretoken 或上游是否已经提供可复用的实现。研究过程中可以直接与 Explorer 和其他 Worker 讨论，不必等待别人先提出方案。
 
 结合实际执行路径阅读相关论文、官方文档和其他实现，说明哪些调度、计算、通信或内存机制可能影响目标负载，需要哪些适用条件，与当前方案有何区别。没有配置开关或公开接口时，应继续追踪底层能力与可能的扩展位置，再判断这条方向是否可行。
 
@@ -27,7 +27,7 @@ Experimenter 准备环境时，Worker 优先推进关键实现、可做的本地
 
 结果返回后，Worker 需要结合日志、指标和 profile 分析变化，再决定下一步怎样修改。失败结果也应保留，因为它们可以帮助排除错误解释。对于有依据但暂时变慢的新实现，可以按[探索与决策](../../../../rsi-playbooks/guidance/meta-knowledge/03-exploration-and-decision_zh.md)中的方法继续验证。
 
-Worker 应及时回答 Experimenter 的实现问题，并向主 Agent 和 Advisor 交流会影响后续工作的发现。如果下一步需要增加资源或改变研究范围，应先由主 Agent 协调。
+Worker 应及时回答 Experimenter 的实现问题，并向主 Agent 和 Explorer 交流会影响后续工作的发现。如果下一步需要增加资源或改变研究范围，应先由主 Agent 协调。
 
 ## 完成集成与交接
 

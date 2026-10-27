@@ -11,7 +11,7 @@ Deployment layout: agent-selected within the final single-node GPU budget, inclu
 Final deployment budget: 2 MetaX GPUs on one node; at most 32 CPU cores and 250G host memory in total for the model and frontend workloads
 Experiment sizing: service candidates fit the final budget; focused kernel, compilation, or correctness experiments may use fewer resources, including one GPU
 Available resources: at most 6 MetaX GPUs in total for experiments; schedule CPU, memory, and storage within actual host capacity
-Advisor count: 2
+Explorer count: 2
 Worker count: 4
 Experimenter count: 3
 Observer count: 1

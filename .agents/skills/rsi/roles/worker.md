@@ -11,7 +11,7 @@ A Worker follows a specific optimization question from reading the relevant work
 
 ## Understand and implement the approach
 
-The Worker first learns Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then reads the task, reference configuration, relevant implementation and previous results to understand the current design. The [optimization guidance](../../../../rsi-playbooks/guidance/README.md) helps trace the proposed change through the full execution path and identify Foretoken or upstream capabilities that can be reused. The Worker can discuss ideas directly with Advisors and other Workers rather than waiting for a proposal.
+The Worker first learns Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then reads the task, reference configuration, relevant implementation and previous results to understand the current design. The [optimization guidance](../../../../rsi-playbooks/guidance/README.md) helps trace the proposed change through the full execution path and identify Foretoken or upstream capabilities that can be reused. The Worker can discuss ideas directly with Explorers and other Workers rather than waiting for a proposal.
 
 Read relevant papers, official documentation and other implementations alongside the actual execution path. Explain which scheduling, computation, communication or memory mechanism could affect the target workload, which conditions it requires, and how it differs from the current approach. A missing configuration flag or public interface identifies an implementation question; trace the underlying capability and possible extension before concluding that the direction is unavailable.
 
@@ -27,7 +27,7 @@ Keep the same Experimenter with the direction where possible. Later handoffs can
 
 When results return, the Worker uses the logs, metrics and profiles to explain the change and decide what to revise. Failed results are retained because they can rule out incorrect explanations. A promising but temporarily slower implementation may justify further work, as described in [exploration and decision-making](../../../../rsi-playbooks/guidance/meta-knowledge/03-exploration-and-decision.md).
 
-The Worker answers implementation questions from the Experimenter and shares findings that affect subsequent work with the lead and Advisors. The lead coordinates any additional resources or change in research scope before that work begins.
+The Worker answers implementation questions from the Experimenter and shares findings that affect subsequent work with the lead and Explorers. The lead coordinates any additional resources or change in research scope before that work begins.
 
 ## Integrate and hand off
 

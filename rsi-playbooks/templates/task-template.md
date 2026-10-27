@@ -18,7 +18,7 @@ Precision: <for example, fixed BF16, a comparison of BF16 and FP8, or unrestrict
 Deployment layout: <for example, colocated serving, prefill/decode disaggregation, or unrestricted>
 Final deployment budget: <node placement and total GPU, CPU, and memory limits for the retained service; specify which workloads are included, or leave agent-selected>
 Available resources: <node count and available GPUs, CPU cores and memory per node; for example, 2*8 C500 GPUs with 64 CPU cores and 512 GiB memory per node>
-Advisor count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank for the lead to choose>
+Explorer count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank for the lead to choose>
 Worker count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank for the lead to choose>
 Experimenter count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank for the lead to choose>
 Observer count: 1

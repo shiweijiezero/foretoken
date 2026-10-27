@@ -45,7 +45,7 @@ Use the [team assignments](common.md) and each member's task.
 | ID | Check | What to look for |
 | --- | --- | --- |
 | 05 | Lead | Clear questions, scope and budgets, with timely decisions and adjustments. |
-| 06 | Advisor | Active research using local or online sources, reading original material, mechanism analysis, and useful findings or new directions. |
+| 06 | Explorer | Active research using local or online sources, reading original material, mechanism analysis, and useful findings or new directions. |
 | 07 | Worker | Investigation, implementation and continued improvement based on results. |
 | 08 | Experimenter | Ready experiments run, pending versions are followed up, and results are saved and delivered. |
 | 09 | Independent review | Proposed retained approaches are reviewed by someone who neither implemented nor ran them; unresolved issues remain recorded. |
