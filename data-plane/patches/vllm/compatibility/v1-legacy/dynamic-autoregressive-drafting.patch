@@ -1,0 +1,225 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+--- a/vllm/v1/worker/gpu/cudagraph_utils.py
++++ b/vllm/v1/worker/gpu/cudagraph_utils.py
+@@ -3,7 +3,7 @@
+ from collections import defaultdict
+ from collections.abc import Callable
+ from dataclasses import dataclass
+-from itertools import product
++from itertools import groupby, product
+ from typing import Any, NamedTuple, Protocol
+ 
+ import torch
+@@ -29,6 +29,7 @@
+ from vllm.sequence import IntermediateTensors
+ from vllm.utils.math_utils import round_up
+ from vllm.v1.kv_cache_interface import KVCacheConfig
++from vllm.v1.spec_decode.dynamic.utils import build_dynamic_sd_schedule_lookup
+ from vllm.v1.worker.gpu.attn_utils import build_slot_mappings_by_layer
+ from vllm.v1.worker.gpu.block_table import BlockTables
+ from vllm.v1.worker.gpu.cp_utils import prepare_dcp_local_seq_lens
+@@ -117,6 +118,7 @@
+         cudagraph_mode: CUDAGraphMode,
+         decode_query_len: int,
+         lora_capture_cases: list[int] | None = None,
++        decode_query_lens: tuple[int, ...] | None = None,
+     ):
+         self.vllm_config = vllm_config
+         self.device = device
+@@ -125,6 +127,7 @@
+         assert self.compilation_config is not None
+         self.cudagraph_mode = cudagraph_mode
+         self.decode_query_len = decode_query_len
++        self.decode_query_lens = decode_query_lens
+ 
+         self.dp_size = vllm_config.parallel_config.data_parallel_size
+         self.tp_size = vllm_config.parallel_config.tensor_parallel_size
+@@ -191,9 +194,6 @@
+         separate_decode_routine = self.cudagraph_mode.separate_routine()
+         max_cg_capture_size = self.compilation_config.max_cudagraph_capture_size
+ 
+-        descs_by_token_lora: dict[tuple[int, int], list[BatchExecutionDescriptor]] = (
+-            defaultdict(list)
+-        )
+         descs_by_mode: defaultdict[CUDAGraphMode, list[BatchExecutionDescriptor]] = (
+             defaultdict(list)
+         )
+@@ -202,7 +202,9 @@
+         # draft tokens. The scheduler might use a smaller number so we need
+         # to capture graphs for all possible values during decode.
+         speculative_config = self.vllm_config.speculative_config
+-        if (
++        if self.decode_query_lens is not None:
++            decode_query_lens = self.decode_query_lens
++        elif (
+             speculative_config
+             and speculative_config.uses_dynamic_speculative_decoding()
+         ):
+@@ -217,10 +219,17 @@
+             num_new_sampled_tokens_per_step = (
+                 self.decode_query_len - self.vllm_config.num_speculative_tokens
+             )
+-            # Each entry is (range_start, range_end, num_speculative_tokens).
+-            decode_query_lens = [
+-                x[2] + num_new_sampled_tokens_per_step for x in num_spec_per_batch_size
+-            ]
++            dense_schedule = build_dynamic_sd_schedule_lookup(
++                num_spec_per_batch_size,
++                vllm_max_batch_size=self.max_num_reqs,
++                vllm_num_speculative_tokens=self.vllm_config.num_speculative_tokens,
++            )
++            decode_query_lens = sorted(
++                {
++                    depth + num_new_sampled_tokens_per_step
++                    for depth in dense_schedule[1:]
++                }
++            )
+         else:
+             decode_query_lens = [self.decode_query_len]
+ 
+@@ -252,9 +261,6 @@
+                     # avoid duplicate graphs
+                     if desc not in descs_by_mode[decode_mode]:
+                         descs_by_mode[decode_mode].append(desc)
+-                        descs_by_token_lora[
+-                            (rounded_num_tokens, num_active_loras)
+-                        ].append(desc)
+ 
+             if mixed_mode:
+                 # for PIECEWISE graphs there is no limit on requests when replaying
+@@ -272,22 +278,32 @@
+                     num_active_loras=num_active_loras,
+                 )
+                 descs_by_mode[mixed_mode].append(desc)
+-                descs_by_token_lora[(num_tokens, num_active_loras)].append(desc)
+-
+-        if not descs_by_token_lora:
+-            return
+-
+-        all_token_counts = sorted({k[0] for k in descs_by_token_lora})
+-        current_range_start = 0
+-        for token_cg_size in all_token_counts:
+-            for i in range(current_range_start, token_cg_size + 1):
+-                for num_active_loras in self.lora_capture_cases:
+-                    staging_key = (token_cg_size, num_active_loras)
+-                    if staging_key in descs_by_token_lora:
+-                        self._candidates[(i, num_active_loras)] = descs_by_token_lora[
+-                            staging_key
+-                        ]
+-            current_range_start = token_cg_size + 1
++
++        # Each query width needs its own nearest compatible capture. Keep
++        # FULL graphs ahead of PIECEWISE fallbacks for every request shape.
++        for mode in (CUDAGraphMode.FULL, CUDAGraphMode.PIECEWISE):
++            mode_descs = sorted(
++                descs_by_mode.get(mode, ()), key=lambda d: d.num_tokens
++            )
++            for num_active_loras in self.lora_capture_cases:
++                lora_descs = [
++                    d for d in mode_descs if d.num_active_loras == num_active_loras
++                ]
++                for query_width in dict.fromkeys(
++                    d.uniform_token_count for d in lora_descs
++                ):
++                    layout_descs = [
++                        d for d in lora_descs if d.uniform_token_count == query_width
++                    ]
++                    current_range_start = 0
++                    for num_tokens, group in groupby(
++                        layout_descs, lambda d: d.num_tokens
++                    ):
++                        matching = list(group)
++                        for i in range(current_range_start, num_tokens + 1):
++                            key = (i, num_active_loras)
++                            self._candidates.setdefault(key, []).extend(matching)
++                        current_range_start = num_tokens + 1
+ 
+         for mode, descs in descs_by_mode.items():
+             descs.sort(key=lambda d: d.num_tokens, reverse=True)
+--- a/vllm/v1/worker/gpu/input_batch.py
++++ b/vllm/v1/worker/gpu/input_batch.py
+@@ -98,6 +98,9 @@
+ 
+     # [num_reqs] per-request prompt length, only populated for R-SWA.
+     prompt_lens: torch.Tensor | None
++
++    # Scheduler-selected depth for the proposal produced after this batch.
++    num_spec_tokens_to_schedule: int | None = None
+ 
+     @classmethod
+     def make_dummy(
+--- a/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py
++++ b/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py
+@@ -80,6 +80,7 @@
+             self.vllm_config,
+             self.device,
+             cudagraph_mode,
++            decode_query_lens=(1,),
+             decode_query_len=1,
+         )
+ 
+@@ -151,12 +152,17 @@
+         mm_inputs: tuple[list[torch.Tensor], torch.Tensor] | None = None,
+         is_profile: bool = False,
+     ) -> torch.Tensor:
++        num_draft_steps = self.num_speculative_steps
++        # DP ranks keep the same drafting collectives; single-DP execution
++        # follows this batch's next-proposal decision, not its verification width.
++        if self.dp_size == 1 and input_batch.num_spec_tokens_to_schedule is not None:
++            num_draft_steps = input_batch.num_spec_tokens_to_schedule
+         num_tokens = input_batch.num_tokens_after_padding
+         num_reqs = input_batch.num_reqs
+         max_query_len = input_batch.num_scheduled_tokens.max()
+         max_seq_len = input_batch.seq_lens_cpu_upper_bound[:num_reqs].max().item()
+         self.draft_max_seq_len = min(
+-            max_seq_len + self.num_speculative_steps, self.max_model_len
++            max_seq_len + num_draft_steps, self.max_model_len
+         )
+ 
+         # NOTE(woosuk): To avoid CPU-GPU synchronization without CPU knowing the
+@@ -233,9 +239,10 @@
+                 mm_inputs=mm_inputs,
+             )
+ 
+-        if self.num_speculative_steps == 1:
+-            # Early exit.
+-            return self.draft_tokens[:num_reqs, :1]
++        # Zero-depth proposals still consume target states in draft prefill,
++        # preserving the draft KV history for later nonzero depths.
++        if num_draft_steps <= 1:
++            return self.draft_tokens[:num_reqs, :num_draft_steps]
+ 
+         # Prepare the inputs for the decode steps.
+         prepare_decode_inputs(
+@@ -266,9 +273,10 @@
+             dummy_run and skip_attn_for_dummy_run,
+             decode_batch_desc,
+             num_tokens_across_dp,
+-        )
+-
+-        return self.draft_tokens[:num_reqs]
++            num_draft_steps,
++        )
++
++        return self.draft_tokens[:num_reqs, :num_draft_steps]
+ 
+     @torch.inference_mode()
+     def _run_model(
+@@ -374,6 +382,7 @@
+         skip_attn: bool,
+         batch_desc: BatchExecutionDescriptor,
+         num_tokens_across_dp: torch.Tensor | None,
++        num_draft_steps: int,
+     ) -> None:
+         positions = self.input_buffers.positions[:num_reqs]
+         query_start_loc = self.input_buffers.query_start_loc[: num_reqs + 1]
+@@ -381,7 +390,7 @@
+ 
+         attn_metadata = None
+         slot_mappings_by_layer = None
+-        for step in range(1, self.num_speculative_steps):
++        for step in range(1, num_draft_steps):
+             # Rebuild every step when positions advance, or just once
+             # on the first step when positions are constant (Gemma4 MTP).
+             if not skip_attn and (self.advance_draft_positions or step == 1):

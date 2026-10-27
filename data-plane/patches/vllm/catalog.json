@@ -390,6 +390,38 @@
       "rust": true
     },
     {
+      "path": "compatibility/v1-legacy/dynamic-autoregressive-drafting.patch",
+      "python": {
+        "versions": ">=0.25.0,<0.27.0.dev0"
+      }
+    },
+    {
+      "path": "compatibility/v1-020/dynamic-autoregressive-runner.patch",
+      "python": {
+        "profiles": [
+          "v1-020",
+          "v1-legacy-backport"
+        ],
+        "versions": ">=0.25.0"
+      }
+    },
+    {
+      "path": "compatibility/v1-legacy/dynamic-autoregressive-runner.patch",
+      "python": {
+        "profiles": [
+          "v1-legacy"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-metax/dynamic-autoregressive-drafting.patch",
+      "python": {
+        "profiles": [
+          "v1-metax"
+        ]
+      }
+    },
+    {
       "path": "compatibility/v1-031/dynamic-autoregressive-drafting.patch",
       "python": {
         "versions": "==0.31.0"
