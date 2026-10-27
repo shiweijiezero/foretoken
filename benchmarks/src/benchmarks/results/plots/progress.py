@@ -275,8 +275,11 @@ def _plot_search(
     ratios = [_gain(point["value"], data) for point in valid]
     xs = [point["x"] for point in valid]
     best, peak = [1.0], 1.0
-    for ratio in ratios:
-        peak = max(peak, ratio)
+    peak_source = data["baseline"]["source"]
+    for point, ratio in zip(valid, ratios):
+        if ratio >= peak:
+            peak = ratio
+            peak_source = point["source"]
         best.append(peak)
     axis.step([0, *xs, last_x], [*best, best[-1]], where="post",
               color=color, lw=1.6, label="Best so far", zorder=4)
@@ -289,13 +292,14 @@ def _plot_search(
         endpoint_label = valid[-1].get("label") if xs[-1] == last_x and ratios[-1] == peak else None
         axis.annotate(f"Foretoken {_ratio_label(peak)}", (last_x, peak), xytext=(-2, 22 if endpoint_label else 7),
                       textcoords="offset points", ha="right", va="bottom", color=color,
-                      fontsize=9, fontfamily="DejaVu Sans", weight="bold")
+                      fontsize=9, fontfamily="DejaVu Sans", weight="bold", url=peak_source)
         if endpoint_label:
             axis.annotate(endpoint_label, (last_x, peak), xytext=(-2, 7), textcoords="offset points",
-                          ha="right", va="bottom", color="#666c78", fontsize=8)
+                          ha="right", va="bottom", color="#666c78", fontsize=8, url=valid[-1]["source"])
             labeled = valid[:-1]
     axis.annotate(f"{data['baseline']['label']} 1×", (last_x, 1), xytext=(-2, -5),
-                  textcoords="offset points", ha="right", va="top", color="#8c909b", fontsize=8)
+                  textcoords="offset points", ha="right", va="top", color="#8c909b", fontsize=8,
+                  url=data["baseline"]["source"])
     palette = ("#9c9da8", "#b0a8dd", "#8792c9", "#b9bbc3")
     for index, reference in enumerate(data.get("references", [])):
         reference_color = palette[index % len(palette)]
