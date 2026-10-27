@@ -26,7 +26,7 @@
 | `Output tok/s / user` | 输出吞吐量除以 `--max-concurrency`；`--max-concurrency -1` 时使用实测平均活跃请求数 |
 | Output token throughput per GPU (tokens/s) | 输出吞吐量除以模型声明的 GPU 容量 |
 | Mean reported cached input tokens | 成功请求中已报告的 `usage.prompt_tokens_details.cached_tokens` 平均值 |
-| Benchmark duration (s) | 整次评测的持续时间 |
+| Benchmark duration (s) | HTTP 调度窗口到已接纳请求结束的时长，不含预热和最后等待记录写完的耗时 |
 
 多轮对话中，某轮失败后会跳过剩余轮次，不再补发。`not_executed_reasons` 区分前序请求失败（`failed_predecessor`）和达到时长限制（`duration`）；`failure_reasons` 按 HTTP 状态和错误信息汇总已记录的失败请求。
 

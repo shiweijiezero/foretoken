@@ -80,10 +80,12 @@ foretoken eval examples/quickstart/qwen3-0.6b \
 | `run.log` | 排查准备、执行过程及错误 |
 | `wandb-sync.log`，启用在线 W&B 时生成 | 查看后台上传进度、运行链接和恢复命令 |
 | `environment.json`、`sources/` | 查看保存在本地的服务配置与可用源码归档 |
-| `raw_output.jsonl`（HTTP）、`raw_results.jsonl`（视频） | 逐条查看已完成请求，中断后也可用于排查 |
+| `raw_output.jsonl`（HTTP）、`raw_results.jsonl`（视频） | 查看已持久化的请求结果，中断后也可用于排查 |
 | `responses.jsonl`，需选择 `--output local,raw` | 查看 HTTP 请求输入和响应内容，包括 reasoning 和工具调用 |
 
 普通模式和 quiet 模式均记录日志；`quiet` 关闭评测进度和汇总输出，仍显示错误、W&B 结果目录和上传日志位置。预热记录使用 `warmup_` 文件名前缀。质量评分、框架报告和性能剖析产物见下方专项指南。
+
+HTTP 和视频请求的统计记录由后台提交，调度不再等待每条记录落盘后才释放并发名额或继续对话。每个阶段在发布结果前等待已接收的记录写完；HTTP 吞吐量不计入这段收尾耗时。正常中断也会等待已接收的记录写完，强制结束进程则可能丢失仍在队列中的记录。记录失败会使本次运行失败。
 
 使用 `experiment` 将评测归入命名迭代，在包含代码改动的源码目录执行：
 

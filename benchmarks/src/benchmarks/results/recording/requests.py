@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -27,10 +27,13 @@ class RequestRecordWriter:
         records.start_requests(self.channel)
         self.file = path.open("w", encoding="utf-8", buffering=1)
         self._executor: ThreadPoolExecutor | None = None
+        self._pending: Future[None] | None = None
         self._failure: BaseException | None = None
 
     def write(self, record: dict[str, Any]) -> None:
         """Persist a completion from synchronous evaluator progress or the owned I/O worker."""
+        if self._failure is not None:
+            raise self._failure
         try:
             self.file.write(self.records.append_request(self.channel, record) + "\n")
             self.file.flush()
@@ -38,15 +41,33 @@ class RequestRecordWriter:
             self._failure = error
             raise
 
-    async def awrite(self, record: dict[str, Any]) -> None:
-        """Await durable recording without blocking HTTP/video token delivery on filesystem I/O."""
+    def submit(self, record: dict[str, Any]) -> None:
+        """Accept an HTTP/video completion; flush or close joins its ordered persistence."""
+        if self._failure is not None:
+            raise self._failure
         if self._executor is None:
             self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="benchmark-records")
-        pending = asyncio.wrap_future(self._executor.submit(self.write, record))
-        # Cancellation leaves the accepted write owned by close(). Its error must
-        # still surface there if the request no longer awaits the future.
-        pending.add_done_callback(lambda future: None if future.cancelled() else future.exception())
-        await asyncio.shield(pending)
+        self._pending = self._executor.submit(self.write, record)
+
+    def flush(self) -> None:
+        """Finish accepted writes before ResultOutputs checkpoints or reads this channel."""
+        # One worker preserves submission order, so the latest future covers all
+        # accepted records without retaining a separate queue of futures.
+        if self._pending is not None:
+            self._pending.result()
+        if self._failure is not None:
+            raise self._failure
+
+    async def drain(self) -> None:
+        """Join phase recordings without blocking HTTP/video observers or transport cleanup."""
+        if self._pending is not None:
+            pending = asyncio.wrap_future(self._pending)
+            # Cancellation transfers the accepted writes to close(); retrieve a
+            # later failure even when this coroutine no longer awaits it.
+            pending.add_done_callback(lambda future: None if future.cancelled() else future.exception())
+            await asyncio.shield(pending)
+        if self._failure is not None:
+            raise self._failure
 
     def close(self) -> None:
         """Join accepted writes before closing the journal or returning database ownership to ResultOutputs."""

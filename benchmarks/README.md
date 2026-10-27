@@ -80,10 +80,12 @@ Local results use a separate directory under `results/` for each run; `--output-
 | `run.log` | Inspect preparation, execution, and errors |
 | `wandb-sync.log`, with online W&B output | Inspect background upload progress, run links, and recovery instructions |
 | `environment.json`, `sources/` | Inspect the service configuration and available source archives, saved locally |
-| `raw_output.jsonl` (HTTP), `raw_results.jsonl` (video) | Inspect requests as they complete, including records retained after interruption |
+| `raw_output.jsonl` (HTTP), `raw_results.jsonl` (video) | Inspect persisted request completions, including records retained after interruption |
 | `responses.jsonl`, with `--output local,raw` | Inspect HTTP inputs and response content, including reasoning and tool calls |
 
 Logs are recorded in both normal and quiet modes. `quiet` suppresses benchmark progress and summaries; errors and W&B result and upload-log locations remain visible. Warmup records use the `warmup_` filename prefix. Quality scores, framework reports, and profiling captures are described in the linked guides below.
+
+HTTP and video completed-request records are queued without holding request admission slots or waiting before the next conversation turn. Each phase drains accepted records before publishing results; HTTP throughput excludes this final drain. Controlled interruption also drains accepted records, while forced process termination can lose records still queued. A recording failure fails the run.
 
 Use `experiment` to group measurements under a named iteration. Run from the checkout containing the code changes:
 
