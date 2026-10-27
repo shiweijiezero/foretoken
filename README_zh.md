@@ -149,16 +149,18 @@ Agent 可以围绕指定模型、负载和资源预算，研究优化方法、�
 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude \
   '/goal 使用 RSI skill 和 Agent Team，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia_zh.md 中的优化任务。'
 
-# Codex
+# Codex CLI
 codex
 ```
 
-在 Codex 会话中逐条输入以下命令，先审阅并信任项目 hook，再启动目标：
+在终端的 Codex CLI 中逐条输入以下命令，先审阅并信任项目 hook，再启动目标：
 
 ```text
 /hooks
 /goal 使用 RSI skill，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia_zh.md 中的优化任务。
 ```
+
+使用桌面应用时，在“设置 → Hooks”中审阅并信任 Foretoken 项目的 hook，再在聊天框输入上面的 `/goal` 命令。
 
 暂停时，Claude Code 使用 `/goal clear`，Codex 使用 `/goal pause`，并要求 Agent 停止本任务的实验和采集进程。更详细的目标和约束可写入[任务模板](rsi-playbooks/templates/task-template_zh.md)，在提示词中引用任务文件；完整流程见 [RSI 手册](rsi-playbooks/README_zh.md)。
 

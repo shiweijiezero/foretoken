@@ -50,10 +50,15 @@ Enter in the session:
 
 #### Codex
 
-Open Codex in the repository and enter these commands separately. In `/hooks`, review and trust the project hooks before starting the goal:
+In the Codex desktop app, open the repository and review the Foretoken project hooks under Settings → Hooks. If using the terminal CLI, run `codex` from the repository and review the hooks with:
 
 ```text
 /hooks
+```
+
+After trusting the project hooks, start the goal in the Codex session:
+
+```text
 /goal Use the RSI skill to complete rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia.md.
 ```
 

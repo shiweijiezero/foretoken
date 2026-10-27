@@ -50,10 +50,15 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 
 #### Codex
 
-在仓库目录打开 Codex，逐条输入以下命令。先在 `/hooks` 中审阅并信任项目 hook，再启动目标：
+在 Codex 桌面应用中打开仓库，通过“设置 → Hooks”审阅并信任 Foretoken 项目的 hook。使用终端 CLI 时，在仓库目录运行 `codex`，再输入：
 
 ```text
 /hooks
+```
+
+信任项目 hook 后，在 Codex 会话中启动目标：
+
+```text
 /goal 使用 RSI skill，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia_zh.md 中的优化任务。
 ```
 
