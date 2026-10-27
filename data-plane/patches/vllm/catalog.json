@@ -388,6 +388,12 @@
     {
       "path": "rust/chat-token-metadata.patch",
       "rust": true
+    },
+    {
+      "path": "compatibility/v1-031/dynamic-autoregressive-drafting.patch",
+      "python": {
+        "versions": "==0.31.0"
+      }
     }
   ]
 }

@@ -1,0 +1,334 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+--- a/vllm/v1/worker/gpu/cudagraph_utils.py
++++ b/vllm/v1/worker/gpu/cudagraph_utils.py
+@@ -149,6 +149,7 @@
+         lora_capture_cases: list[int] | None = None,
+         varlen_decode: bool = False,
+         ubatch_runner: "UBatchRunner | None" = None,
++        decode_query_lens: tuple[int, ...] | None = None,
+     ):
+         self.vllm_config = vllm_config
+         self.device = device
+@@ -157,6 +158,7 @@
+         assert self.compilation_config is not None
+         self.cudagraph_mode = cudagraph_mode
+         self.decode_query_len = decode_query_len
++        self.decode_query_lens = decode_query_lens
+         self.varlen_decode = varlen_decode
+         # DBO supports FULL CUDA graphs only.
+         self.ubatch_runner = ubatch_runner
+@@ -267,7 +269,9 @@
+         # draft tokens. The scheduler might use a smaller number so we need
+         # to capture graphs for all possible values during decode.
+         speculative_config = self.vllm_config.speculative_config
+-        if (
++        if self.decode_query_lens is not None:
++            decode_query_lens = self.decode_query_lens
++        elif (
+             speculative_config
+             and speculative_config.uses_dynamic_speculative_decoding()
+         ):
+@@ -375,15 +379,27 @@
+                 lora_descs = [
+                     d for d in mode_descs if d.num_active_loras == num_active_loras
+                 ]
+-                current_range_start = 0
+-                # Dynamic speculative decoding can produce multiple graphs with the same
+-                # num_tokens. Group them so each graph covers the same candidate range.
+-                for num_tokens, group in groupby(lora_descs, lambda d: d.num_tokens):
+-                    matching = list(group)
+-                    for i in range(current_range_start, num_tokens + 1):
+-                        key = (i, num_active_loras)
+-                        self._candidates.setdefault(key, []).extend(matching)
+-                    current_range_start = num_tokens + 1
++                # Each query width and microbatch layout needs its own nearest
++                # capture. A smaller incompatible width must not hide a graph.
++                geometries = dict.fromkeys(
++                    (d.uniform_token_count, d.max_query_len, d.num_ubatches)
++                    for d in lora_descs
++                )
++                for geometry in geometries:
++                    layout_descs = [
++                        d for d in lora_descs
++                        if (d.uniform_token_count, d.max_query_len, d.num_ubatches)
++                        == geometry
++                    ]
++                    current_range_start = 0
++                    for num_tokens, group in groupby(
++                        layout_descs, lambda d: d.num_tokens
++                    ):
++                        matching = list(group)
++                        for i in range(current_range_start, num_tokens + 1):
++                            key = (i, num_active_loras)
++                            self._candidates.setdefault(key, []).extend(matching)
++                        current_range_start = num_tokens + 1
+ 
+     def needs_capture(self) -> bool:
+         return len(self._capture_descs) > 0
+--- a/vllm/v1/worker/gpu/input_batch.py
++++ b/vllm/v1/worker/gpu/input_batch.py
+@@ -122,6 +122,8 @@
+     # drafts) over existing context and so compute exactly like decodes.
+     # None if there are no prefills.
+     prefill_runs_as_decode_np: np.ndarray | None = None
++    # Scheduler-selected depth for the proposal produced after this batch.
++    num_spec_tokens_to_schedule: int | None = None
+ 
+     @classmethod
+     def make_dummy(
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -1522,6 +1522,7 @@
+             logits_indices=logits_indices,
+             cu_num_logits=cu_num_logits,
+             cu_num_logits_np=cu_num_logits_np,
++            num_spec_tokens_to_schedule=scheduler_output.num_spec_tokens_to_schedule,
+             has_structured_output_reqs=scheduler_output.has_structured_output_requests,
+             prompt_lens=prompt_lens,
+             fast_prefill=fast_prefill,
+@@ -2250,7 +2251,9 @@
+             if self.spec_decode_timing is not None:
+                 assert self.spec_decode_timing_collector is not None
+                 self.spec_decode_timing_collector.end_draft(self.spec_decode_timing)
+-            self.req_states.draft_tokens[input_batch.idx_mapping] = draft_tokens
++            self.req_states.draft_tokens[
++                input_batch.idx_mapping, : draft_tokens.shape[1]
++            ] = draft_tokens
+             if self.adaptive_verification is not None:
+                 self.adaptive_verification.record_confidences(
+                     self.speculator.draft_token_confidence_probs, input_batch
+@@ -2261,7 +2264,9 @@
+             # not have a speculator (i.e. self.speculator is None)
+             self.draft_tokens_handler.set_draft_tokens(
+                 input_batch,
+-                self.req_states.draft_tokens[input_batch.idx_mapping],
++                self.req_states.draft_tokens[
++                    input_batch.idx_mapping, : input_batch.num_spec_tokens_to_schedule
++                ],
+             )
+             if self.pp_handler is not None:
+                 self.pp_handler.broadcast_drafts(
+--- a/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py
++++ b/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py
+@@ -1,5 +1,6 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++from functools import partial
+ from typing import Any
+ 
+ import torch
+@@ -11,6 +12,7 @@
+ from vllm.logger import init_logger
+ from vllm.triton_utils import tl, triton
+ from vllm.v1.kv_cache_interface import KVCacheConfig
++from vllm.v1.spec_decode.dynamic.utils import build_dynamic_sd_schedule_lookup
+ from vllm.v1.worker.gpu.attn_utils import build_slot_mappings_by_layer
+ from vllm.v1.worker.gpu.block_table import BlockTables
+ from vllm.v1.worker.gpu.cudagraph_utils import BatchExecutionDescriptor
+@@ -44,7 +46,9 @@
+         self.inputs_embeds: torch.Tensor | None = None
+ 
+         self.prefill_cudagraph_manager: SpeculatorCudaGraphManager | None = None
+-        self.decode_cudagraph_manager: SpeculatorCudaGraphManager | None = None
++        self.decode_cudagraph_managers: dict[int, SpeculatorCudaGraphManager] = {}
++        # Allocation uses the configured maximum; execution follows each batch.
++        self.num_draft_steps = self.num_speculative_steps
+         self.use_fused_multi_step_decode = False
+ 
+     def load_model(self, target_model: nn.Module) -> None:
+@@ -135,10 +139,27 @@
+         else:
+             cudagraph_mode = CUDAGraphMode.NONE
+ 
+-        # Initialize cudagraph manager for draft decodes (draft positions > 0).
+-        self.decode_cudagraph_manager = SpeculatorCudaGraphManager(
+-            self.vllm_config, self.device, cudagraph_mode, decode_query_len=1
+-        )
++        # Each fused graph has a fixed loop depth but one token per request.
++        draft_depths = {self.num_speculative_steps}
++        schedule = self.speculative_config.num_speculative_tokens_per_batch_size
++        if schedule is not None and self.dp_size == 1:
++            draft_depths.update(
++                build_dynamic_sd_schedule_lookup(
++                    schedule,
++                    vllm_max_batch_size=self.max_num_reqs,
++                    vllm_num_speculative_tokens=self.num_speculative_steps,
++                )[1:]
++            )
++        for depth in sorted(draft_depths):
++            if depth <= 1:
++                continue
++            self.decode_cudagraph_managers[depth] = SpeculatorCudaGraphManager(
++                self.vllm_config,
++                self.device,
++                cudagraph_mode,
++                decode_query_len=1,
++                decode_query_lens=(1,),
++            )
+ 
+     def capture(self) -> None:
+         logger.info("Capturing model for speculator...")
+@@ -175,22 +196,22 @@
+             return
+ 
+         self.on_multi_step_decode_begin(self.max_num_reqs)
+-        # Capture either the fused decode loop or one decode step per graph.
+-        assert self.decode_cudagraph_manager is not None
+-        decode_fn = (
+-            self._generate_fused_drafts
+-            if self.use_fused_multi_step_decode
+-            else self._generate_draft
+-        )
+-        self.decode_cudagraph_manager.capture(
+-            decode_fn,
+-            self.model_state,
+-            self.input_buffers,
+-            self.block_tables,
+-            self.attn_groups,
+-            self.kv_cache_config,
+-            progress_bar_desc="Capturing decode CUDA graphs",
+-        )
++        # Capture the configured loop depth into each fused drafting graph.
++        for depth, manager in self.decode_cudagraph_managers.items():
++            decode_fn = (
++                partial(self._generate_fused_drafts, num_draft_steps=depth)
++                if self.use_fused_multi_step_decode
++                else self._generate_draft
++            )
++            manager.capture(
++                decode_fn,
++                self.model_state,
++                self.input_buffers,
++                self.block_tables,
++                self.attn_groups,
++                self.kv_cache_config,
++                progress_bar_desc=f"Capturing decode CUDA graphs (K={depth})",
++            )
+         self.on_multi_step_decode_end(self.max_num_reqs)
+ 
+     @torch.inference_mode()
+@@ -221,13 +242,20 @@
+         mm_inputs: tuple[list[torch.Tensor], torch.Tensor] | None = None,
+         is_profile: bool = False,
+     ) -> torch.Tensor:
++        # This is the scheduler's next-proposal decision, not the width being
++        # verified by this batch. Keeping it on InputBatch preserves async order.
++        self.num_draft_steps = self.num_speculative_steps
++        # DP ranks must enter the same number of drafting collectives. Retain
++        # maximum-depth drafting there until the proposal depth is synchronized.
++        if self.dp_size == 1 and input_batch.num_spec_tokens_to_schedule is not None:
++            self.num_draft_steps = input_batch.num_spec_tokens_to_schedule
+         num_tokens = input_batch.num_tokens
+         num_tokens_padded = input_batch.num_tokens_after_padding
+         num_reqs = input_batch.num_reqs
+         max_query_len = input_batch.num_scheduled_tokens.max()
+         max_seq_len = input_batch.seq_lens_cpu_upper_bound[:num_reqs].max().item()
+         self.draft_max_seq_len = min(
+-            max_seq_len + self.num_speculative_steps, self.max_model_len
++            max_seq_len + self.num_draft_steps, self.max_model_len
+         )
+ 
+         # NOTE(woosuk): To avoid CPU-GPU synchronization without CPU knowing the
+@@ -322,9 +350,10 @@
+             )
+         self.on_prefill_end(num_reqs)
+ 
+-        if self.num_speculative_steps == 1:
+-            # Early exit.
+-            return self.draft_tokens[:num_reqs, :1]
++        # Even a zero-depth proposal consumes target states in draft prefill,
++        # so a later nonzero depth sees a complete draft KV history.
++        if self.num_draft_steps <= 1:
++            return self.draft_tokens[:num_reqs, : self.num_draft_steps]
+ 
+         if self.pcp_manager is not None and not dummy_run:
+             self.block_tables.gather_block_tables(
+@@ -350,8 +379,9 @@
+         )
+         # Each request produces exactly 1 token per draft generation step,
+         # enabling FULL graph replay.
++        # Startup memory profiling runs before graph managers are initialized.
+         decode_batch_desc, decode_batch_sync = dispatch_cg_and_sync_dp(
+-            self.decode_cudagraph_manager,
++            self.decode_cudagraph_managers.get(self.num_draft_steps),
+             num_reqs,
+             num_batch_tokens,
+             uniform_token_count=1,
+@@ -382,7 +412,7 @@
+         )
+         self.on_multi_step_decode_end(num_reqs)
+ 
+-        return self.draft_tokens[:num_reqs]
++        return self.draft_tokens[:num_reqs, : self.num_draft_steps]
+ 
+     @torch.inference_mode()
+     def _run_model(
+@@ -512,7 +542,7 @@
+ 
+         attn_metadata = None
+         slot_mappings_by_layer = None
+-        for step in range(1, self.num_speculative_steps):
++        for step in range(1, self.num_draft_steps):
+             # Rebuild every step when positions advance, or just once
+             # on the first step when positions are constant (Gemma4 MTP).
+             if not skip_attn and (self.advance_draft_positions or step == 1):
+@@ -536,8 +566,9 @@
+             self.current_draft_step.fill_(step)
+ 
+             if batch_desc.cg_mode == CUDAGraphMode.FULL:
+-                assert self.decode_cudagraph_manager is not None
+-                self.decode_cudagraph_manager.run_fullgraph(batch_desc)
++                self.decode_cudagraph_managers[self.num_draft_steps].run_fullgraph(
++                    batch_desc
++                )
+             else:
+                 self._generate_draft(
+                     num_reqs,
+@@ -582,8 +613,9 @@
+             )
+ 
+         if batch_desc.cg_mode == CUDAGraphMode.FULL:
+-            assert self.decode_cudagraph_manager is not None
+-            self.decode_cudagraph_manager.run_fullgraph(batch_desc)
++            self.decode_cudagraph_managers[self.num_draft_steps].run_fullgraph(
++                batch_desc
++            )
+             return
+ 
+         self._generate_fused_drafts(
+@@ -593,6 +625,7 @@
+             slot_mappings_by_layer,
+             num_tokens_across_dp,
+             batch_desc.cg_mode,
++            num_draft_steps=self.num_draft_steps,
+         )
+ 
+     def _generate_fused_drafts(
+@@ -603,6 +636,8 @@
+         slot_mappings: dict[str, torch.Tensor] | None,
+         num_tokens_across_dp: torch.Tensor | None,
+         cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
++        *,
++        num_draft_steps: int,
+     ) -> None:
+         idx_mapping = self.idx_mapping[:num_reqs]
+         positions = self.input_buffers.positions[:num_reqs]
+@@ -613,7 +648,7 @@
+             else []
+         )
+ 
+-        for step in range(1, self.num_speculative_steps):
++        for step in range(1, num_draft_steps):
+             self.current_draft_step.fill_(step)
+             self._generate_draft(
+                 num_reqs,
+@@ -624,7 +659,7 @@
+                 cudagraph_runtime_mode,
+             )
+             if (
+-                step < self.num_speculative_steps - 1
++                step < num_draft_steps - 1
+                 and attn_metadata is not None
+                 and self.advance_draft_positions
+             ):
