@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](observer_zh.md)
 
-An Observer checks progress, research depth and resource use from work and session records, including the lead's decisions. It recommends corrections while assigned members continue research, experiments and candidate reviews.
+An Observer checks progress, research depth and resource use from work and session records, including the lead's decisions. It assesses current evidence and alerts the lead to decisions that need attention; the lead chooses future work, owners and budgets.
 
 ## Start each check with a new agent
 
@@ -90,7 +90,7 @@ Use the [communication guidance](common.md#share-findings-and-keep-working), [ex
 | 22 | Actual progress | What was learned, implemented and measured, where time went, and whether the remaining budget is sufficient. |
 | 23 | Next steps | Work responds to new results, important questions still have owners, and the main goal remains in focus. |
 | 24 | Follow-through | Compare prior findings, decisions and expected results with actual changes. Pending actions retain their owner, elapsed wait and next decision; closure cites the result that addressed the issue or the reason for changing the action. |
-| 25 | Strategy reflection | When several recent candidates produce only local, small or mixed gains, flag the pattern, say whether parameter search should stop, and identify the next mechanism-level question or decision owner. |
+| 25 | Strategy reflection | Compare time and resources spent with measured gains, information learned and unresolved assumptions. Identify patterns such as marginal gains or persistent environment work and the questions the lead needs to reconsider. |
 
 Research takes time, and a sound experiment may fail. Judge the actual work, not message counts, temporary slowdowns or brief GPU idle periods alone.
 
@@ -98,11 +98,13 @@ Research takes time, and a sound experiment may fail. Judge the actual work, not
 
 Save a dated note under `<output-dir>/team/observations/`, with the agent identity in its filename. State the period and most important findings, then complete every checklist item in the six groups.
 
-| ID and check | Object | Requirement and evidence location | Facts and judgment | Status | Concrete action, owner, expected evidence and timing |
+| ID and check | Object | Requirement and evidence location | Facts and judgment | Status | Impact and question for the lead |
 | --- | --- | --- | --- | --- | --- |
 
 Name each requirement and locate evidence by session time, file line, run or field. Use "passed" for a verified fact with supporting evidence, "issue found" for a problem with its effect and remedy, "unresolved" for missing evidence or a pending decision, and "not applicable" with the reason. Write "no change needed" when appropriate.
 
-Link recurring findings to their first note. Compare the prior decision and expected result with actual changes, elapsed waiting and remaining dependencies. Write each unresolved action as: triggering fact; one owner; exact action and evidence path; expected observable result; and deadline or next Observer check. For example, replace “continue quality analysis” with “Worker-02 reads the saved candidate summary, writes the first-divergence analysis at the iteration note path, and the reviewer checks it before the next Observer round; if no mechanism is found, the lead stops that candidate.” Keep the action with its owner until its outcome is verified or the lead explains a changed decision.
+Link recurring findings to their first note. Compare the lead's previous decision and expected result with actual changes, elapsed time and remaining dependencies. State the observed problem, its impact, the supporting artifacts and the unresolved decision. Existing owners and deadlines are evidence to inspect, not new assignments for the Observer to make.
 
-Before delivery, reconcile the checklist IDs and members. Send the lead the key findings and note path, raising urgent issues promptly with evidence. Link a concrete correction to its existing owner so the lead can route it without another investigation; use direct delivery when the assignment already permits it. The owner records the resulting change in the existing work record. The lead handles changes to priorities, resources and assignments, or explains why a suggestion is declined. Finish the check; the next fresh Observer checks the resulting evidence rather than treating a sent message as closure.
+For example: “The last three candidates changed service throughput by less than the observed run-to-run range, while setup consumed most of this period. The notes do not yet bound the savings available in the targeted component. The lead needs to reassess whether this direction still justifies its share of the remaining budget.” The Observer reports this assessment without choosing another algorithm, assigning a Worker or ordering a run.
+
+Before delivery, reconcile the checklist IDs and members. Send findings and the note path only to the lead, raising urgent issues promptly with evidence. The lead records its reflection and next decisions in the existing team records. Finish the check; the next fresh Observer verifies the resulting evidence against those decisions rather than treating an acknowledgement or sent message as closure.
