@@ -107,7 +107,7 @@ func nativeDraftProfile(targetModel, draftModel string, args api.EngineArguments
 	return apiextensionsv1.JSON{Raw: raw}, err
 }
 
-// buildDTPlan projects resolved native inputs; Python owns the platform's transport default.
+// buildDTPlan projects the controller-selected common transport and native proposal inputs.
 func buildDTPlan(group api.ModelGroupSpec) (*LaunchDTPlan, error) {
 	if group.SpeculationRole == "" {
 		return nil, nil
@@ -119,16 +119,16 @@ func buildDTPlan(group api.ModelGroupSpec) (*LaunchDTPlan, error) {
 	if err != nil {
 		return nil, err
 	}
-	plan := &LaunchDTPlan{Role: group.SpeculationRole, DraftArtifacts: draft}
+	if group.DTProtocol != "tcp" && group.DTProtocol != "rdma" && group.DTProtocol != "nccl" {
+		return nil, fmt.Errorf("speculation requires a resolved DT transport")
+	}
+	plan := &LaunchDTPlan{Role: group.SpeculationRole, DraftArtifacts: draft, Protocol: group.DTProtocol}
 	if group.SpeculationRole == api.SpeculationRoleTarget {
 		binding := group.SelectedDraftGroup()
 		if binding == nil {
 			return nil, fmt.Errorf("Target launch requires a prepared Draft Group binding")
 		}
 		plan.DraftEndpoint = binding.Endpoint
-	}
-	if group.RDMA != nil {
-		plan.Protocol = "rdma"
 	}
 	return plan, nil
 }

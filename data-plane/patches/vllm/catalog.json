@@ -433,6 +433,14 @@
           "v1-031"
         ]
       }
+    },
+    {
+      "path": "compatibility/v1-031/external-inputs.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
     }
   ]
 }

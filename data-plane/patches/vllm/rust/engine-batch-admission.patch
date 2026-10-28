@@ -27,7 +27,7 @@
  pub(crate) mod imp;
  mod state;
  mod stream;
-@@ -554,8 +556,93 @@
+@@ -554,8 +556,145 @@
              completion,
          ))
      }
@@ -43,6 +43,65 @@
 +    where
 +        A: serde::Serialize + std::fmt::Debug,
 +    {
++        let (streams, batches) = self.prepare_request_batch(requests)?;
++        let calls: Vec<_> = batches
++            .into_iter()
++            .map(|(engine, batch)| (engine, (batch, worker_rpc.as_ref())))
++            .collect();
++        // Registered streams stay owned until submission completes. On a send or
++        // admission error their ordinary drop path aborts any accepted requests.
++        self.call_utilities::<(), _>("add_requests", &calls).await?;
++        Ok(streams)
++    }
++
++    /// Atomically prepare and admit a batch routed to exactly one engine.
++    /// A confirmed rejection returns None without aborting retained same-ID requests.
++    pub async fn try_call_batch<A, P>(
++        &self,
++        requests: Vec<EngineCoreRequest>,
++        worker_rpc: Option<(&str, A)>,
++        admission: (&str, P),
++    ) -> Result<Option<Vec<EngineCoreOutputStream>>>
++    where
++        A: serde::Serialize + std::fmt::Debug,
++        P: serde::Serialize + std::fmt::Debug,
++    {
++        let (mut streams, batches) = self.prepare_request_batch(requests)?;
++        if batches.len() != 1 {
++            for stream in &mut streams {
++                stream.reject_before_admission();
++                self.inner.rollback_request(stream.request_id());
++            }
++            return Err(Error::Io(std::io::Error::new(
++                std::io::ErrorKind::InvalidInput,
++                "prepared batch must route to one engine",
++            )));
++        }
++        let calls: Vec<_> = batches
++            .into_iter()
++            .map(|(engine, batch)| (engine, (batch, worker_rpc.as_ref(), Some(&admission))))
++            .collect();
++        let accepted = self.call_utilities::<bool, _>("add_requests", &calls).await?;
++        if accepted[0] {
++            Ok(Some(streams))
++        } else {
++            for stream in &mut streams {
++                stream.reject_before_admission();
++                self.inner.rollback_request(stream.request_id());
++            }
++            Ok(None)
++        }
++    }
++
++    /// Registers and encodes a batch without submitting it to the engines.
++    /// Local failures roll back registrations; returned streams own cancellation after submission.
++    fn prepare_request_batch(
++        &self,
++        requests: Vec<EngineCoreRequest>,
++    ) -> Result<(
++        Vec<EngineCoreOutputStream>,
++        BTreeMap<EngineId, Vec<Vec<OpaqueValue>>>,
++    )> {
 +        let mut registrations = Vec::with_capacity(requests.len());
 +        let mut batches: BTreeMap<EngineId, Vec<Vec<OpaqueValue>>> = BTreeMap::new();
 +        let snapshot = self.coordinator.as_ref().map(|coordinator| coordinator.snapshot());
@@ -107,21 +166,14 @@
 +                )
 +            })
 +            .collect();
-+        let calls: Vec<_> = batches
-+            .into_iter()
-+            .map(|(engine, batch)| (engine, (batch, worker_rpc.as_ref())))
-+            .collect();
-+        // Registered streams stay owned until submission completes. On a send or
-+        // admission error their ordinary drop path aborts any accepted requests.
-+        self.call_utilities::<(), _>("add_requests", &calls).await?;
-+        Ok(streams)
++        Ok((streams, batches))
 +    }
 +
      /// Abort currently in-flight requests by request ID.
      pub async fn abort(&self, ids: &[String]) -> Result<()> {
          let abortable = self.inner.abortable_request_ids(ids)?;
 
-@@ -586,22 +673,33 @@
+@@ -586,22 +725,33 @@
      where
          T: serde::de::DeserializeOwned,
          A: serde::Serialize + std::fmt::Debug,
@@ -159,7 +211,7 @@
                  Ok(pair) => pair,
                  Err(err) => {
                      self.inner.unregister_utility_calls(pending_calls.iter().map(|(id, _)| *id));
-@@ -611,9 +709,9 @@
+@@ -611,9 +761,9 @@
              let request = match EngineCoreUtilityRequest::new(
                  self.config.client_index,
                  call_id,
@@ -170,7 +222,7 @@
                  Ok(request) => request,
                  Err(err) => {
                      self.inner.unregister_utility_calls(
-@@ -622,9 +720,9 @@
+@@ -622,9 +772,9 @@
                      return Err(err);
                  }
              };
@@ -217,3 +269,19 @@
 
      async fn send_encoded_to_engine(
          &self,
+--- a/rust/src/engine-core-client/src/client/stream.rs
++++ b/rust/src/engine-core-client/src/client/stream.rs
+@@ -106,8 +106,13 @@
+
+     /// Returns the engine-origin completion handle, which may outlive this consumer stream.
+     pub fn completion(&self) -> RequestCompletion {
+         self.completion.clone()
++    }
++
++    /// Disarms cancellation only after the engine confirms no admission occurred.
++    pub(crate) fn reject_before_admission(&mut self) {
++        self.state = State::Finished;
+     }
+
+     /// Return the engine-core `request_id` bound to this stream.
+     pub fn request_id(&self) -> &str {

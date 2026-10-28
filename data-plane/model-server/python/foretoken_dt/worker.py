@@ -18,6 +18,7 @@ from vllm.v1.worker.gpu.spec_decode.autoregressive.speculator import (
 from vllm.v1.worker.gpu.spec_decode.speculator import BaseSpeculator
 
 from .context import DraftContext
+from .device_input import DeviceInputBatch, DeviceInputRow
 from .exchange import TensorExchange
 from .nccl import NcclPeer
 from .protocol import PEER_PROTOCOL_VERSION, OpenPeer, PrepareBatch, Settings
@@ -100,6 +101,7 @@ class DraftPeer:
     channel: NcclPeer | None = None
     prepared: PrepareBatch | None = None
     output: DraftOutput | None = None
+    device_inputs: DeviceInputBatch | None = None
     sessions: list[str] = field(default_factory=list)
 
 
@@ -227,8 +229,16 @@ class DraftWorker(gpu_worker.Worker):
 
     def dt_prepare(self, peer_id, payload):
         """Post native receives from announced shapes while the Target computes."""
-        state = self.dt_peers[peer_id]
         prepared = PrepareBatch.model_validate(payload)
+        state = self._begin_prepare(peer_id, prepared)
+        if state.features is not None:
+            state.channel.receive_features(
+                state.features, prepared.feature_rows, self.model_runner.main_stream
+            )
+
+    def _begin_prepare(self, peer_id, prepared):
+        """Retire the preceding peer operation before preparing its next native input."""
+        state = self.dt_peers[peer_id]
         if state.prepared is not None:
             if state.output is None or state.output.pending:
                 raise RuntimeError(
@@ -238,11 +248,13 @@ class DraftWorker(gpu_worker.Worker):
             # Retire its bindings before receiving into the shared input buffer.
             for session in state.sessions:
                 self.model_runner.outputs.pop(session, None)
+                self.model_runner.device_inputs.pop(session, None)
                 context = self.model_runner.contexts.get(session)
                 if context is not None:
                     context.current = None
             state.sessions.clear()
             state.output = None
+            state.device_inputs = None
         if (
             prepared.feature_rows > state.settings.max_tokens
             or prepared.num_requests > state.settings.max_requests
@@ -250,13 +262,75 @@ class DraftWorker(gpu_worker.Worker):
             raise ValueError("The announced batch exceeds the peer's input capacity")
         if state.channel is None:
             raise ValueError("Explicit receive preparation requires an NCCL peer")
-        state.prepared = prepared
-        if state.features is not None:
-            state.channel.receive_features(
-                state.features, prepared.feature_rows, self.model_runner.main_stream
-            )
-        elif prepared.feature_rows:
+        if state.features is None and prepared.feature_rows:
             raise ValueError("Ordinary Drafts do not receive Target features")
+        state.prepared = prepared
+        return state
+
+    def dt_execute(self, peer_id, sequence, requests):
+        """Bind a pre-admitted neural turn before Target device confirmation arrives."""
+        state = self.dt_peers[peer_id]
+        peer = state.settings
+        if state.channel is None or not peer.num_features:
+            raise ValueError("Device turns require a neural NCCL peer")
+        num_tokens = sum(count for _, count, _, _ in requests)
+        self._begin_prepare(
+            peer_id,
+            PrepareBatch(
+                sequence=sequence,
+                feature_rows=num_tokens,
+                num_requests=len(requests),
+            ),
+        )
+        packed = torch.empty(
+            2 * num_tokens + 5 * len(requests),
+            dtype=torch.int64,
+            device=self.device,
+        )
+        received = DeviceInputBatch(
+            sequence,
+            packed,
+            state.features,
+            num_tokens,
+            len(requests),
+            state.channel.input_ready,
+        )
+        rows = []
+        contexts = {}
+        bindings = {}
+        offset = 0
+        for row, (session, count, upper_bound, initial) in enumerate(requests):
+            if initial:
+                if session in self.model_runner.contexts:
+                    raise ValueError("Initial device turn already has feature history")
+                contexts[session] = DraftContext()
+                contexts[session].reserve_history(
+                    count, (peer.num_features, peer.hidden_size), state.features.dtype
+                )
+            elif session not in self.model_runner.contexts:
+                raise ValueError(
+                    "Device turn requires a retained native feature prefix"
+                )
+            bindings[session] = DeviceInputRow(
+                received, row, offset, count, upper_bound, initial
+            )
+            rows.append((session, 0, offset, count, peer.num_candidates))
+            offset += count
+        output = DraftOutput(peer, state.channel, rows)
+        # Allocation can synchronize the device. Finish it before posting a
+        # receive whose Target sender is still waiting for preparation's ACK.
+        state.channel.receive_features(
+            state.features, num_tokens, self.model_runner.main_stream
+        )
+        state.channel.receive_device_inputs(packed)
+        state.device_inputs = received
+        state.output = output
+        state.sessions = [session for session, _, _, _ in requests]
+        self.model_runner.contexts.update(contexts)
+        self.model_runner.device_inputs.update(bindings)
+        self.model_runner.outputs.update(
+            (session, state.output) for session in state.output.pending
+        )
 
     def _stage_features(self, session, peer_id, context_start, feature_offset, count):
         """Retain one received interval across native execution and KV recomputation."""
@@ -285,10 +359,15 @@ class DraftWorker(gpu_worker.Worker):
 
     def execute_model(self, scheduler_output):
         """Consume confirmed features before the native Worker executes their scheduled tokens."""
+        cached = scheduler_output.scheduled_cached_reqs
+        if (isinstance(cached, DraftCachedRequests) and cached.reserved_turns) or any(
+            (request.sampling_params.extra_args or {}).get("dt_reserved_turn")
+            for request in scheduler_output.scheduled_new_reqs
+        ):
+            return super().execute_model(scheduler_output)
         parameters = (
             request.sampling_params for request in scheduler_output.scheduled_new_reqs
         )
-        cached = scheduler_output.scheduled_cached_reqs
         if isinstance(cached, DraftCachedRequests):
             parameters = chain(
                 parameters, (turn.sampling_params for turn in cached.turns.values())
@@ -353,6 +432,7 @@ class DraftWorker(gpu_worker.Worker):
             self.model_runner.contexts.pop(session, None)
             self.model_runner.probabilities.pop(session, None)
             self.model_runner.outputs.pop(session, None)
+            self.model_runner.device_inputs.pop(session, None)
 
     def dt_close_peer(self, peer_id, abort=False):
         """Close native IO before releasing buffers retained by this control connection."""

@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-// Binds advertised devices and a common P/D transport before publishing Pool templates.
+// Binds advertised devices and common serving transports before publishing Pool templates.
 package model
 
 import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/compiler"
@@ -24,7 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// resolveModelTransports selects advertised RDMA allocations and fills omitted P/D protocols.
+// resolveModelTransports selects advertised allocations and one transport per connected execution cohort.
 // The scheduler owns device allocation and free capacity; active workload occupancy does not change this selection.
 func (reconciler *ServiceReconciler) resolveModelTransports(ctx context.Context, service *inferencev1alpha1.ModelService, pools []compiler.ModelPool, previous map[string]*inferencev1alpha1.ModelPool) error {
 	retained, err := reconciler.retainModelTransports(ctx, service, pools, previous)
@@ -89,24 +90,8 @@ func (reconciler *ServiceReconciler) resolveModelTransports(ctx context.Context,
 	// An empty attachment set only preserves the same explicit device allocation across stages.
 	protocol := "tcp"
 	if len(pdPools) > 0 {
-		for _, network := range candidates[pdPools[0]] {
-			choice := slices.Clone(selected)
-			matched := true
-			for _, index := range pdPools {
-				candidate := slices.IndexFunc(candidates[index], func(allocation *inferencev1alpha1.RDMAAllocation) bool {
-					return slices.Equal(network.Networks, allocation.Networks) &&
-						(len(network.Networks) > 0 || apiequality.Semantic.DeepEqual(network.Resources, allocation.Resources))
-				})
-				if candidate < 0 {
-					matched = false
-					break
-				}
-				choice[index] = candidates[index][candidate]
-			}
-			if matched {
-				selected, protocol = choice, "rdma"
-				break
-			}
+		if choice, matched := commonModelRDMA(pdPools, candidates, selected); matched {
+			selected, protocol = choice, "rdma"
 		}
 		if protocol != "rdma" {
 			for _, index := range pdPools {
@@ -114,6 +99,30 @@ func (reconciler *ServiceReconciler) resolveModelTransports(ctx context.Context,
 					return fmt.Errorf("P/D RDMA requires an available common network binding across all Pools")
 				}
 			}
+		}
+	}
+	for _, peers := range draftTransportPools(pools) {
+		active := make([]int, 0, len(peers))
+		for _, index := range peers {
+			if pools[index].DesiredGroups > 0 {
+				active = append(active, index)
+			}
+		}
+		transport := "tcp"
+		if strings.HasPrefix(profile.DeviceResourceName, "nvidia.com/") {
+			transport = "nccl"
+		}
+		if choice, matched := commonModelRDMA(active, candidates, selected); matched {
+			selected, transport = choice, "rdma"
+		} else {
+			for _, index := range active {
+				if pools[index].Template.Network != "" {
+					return fmt.Errorf("DT RDMA requires an available common network binding across connected Pools")
+				}
+			}
+		}
+		for _, index := range peers {
+			pools[index].Template.DTProtocol = transport
 		}
 	}
 	// Stopped Pools inherit the common protocol but acquire devices only when capacity is enabled.
@@ -128,6 +137,69 @@ func (reconciler *ServiceReconciler) resolveModelTransports(ctx context.Context,
 		template.RDMA = selected[index]
 	}
 	return nil
+}
+
+// commonModelRDMA chooses one attachment domain for all peers without changing unrelated allocations.
+// Empty attachment sets require identical device resources, matching the existing P/D contract.
+func commonModelRDMA(peers []int, candidates [][]*inferencev1alpha1.RDMAAllocation, selected []*inferencev1alpha1.RDMAAllocation) ([]*inferencev1alpha1.RDMAAllocation, bool) {
+	if len(peers) == 0 {
+		return nil, false
+	}
+	for _, network := range candidates[peers[0]] {
+		choice := slices.Clone(selected)
+		matched := true
+		for _, index := range peers {
+			candidate := slices.IndexFunc(candidates[index], func(allocation *inferencev1alpha1.RDMAAllocation) bool {
+				return slices.Equal(network.Networks, allocation.Networks) &&
+					(len(network.Networks) > 0 || apiequality.Semantic.DeepEqual(network.Resources, allocation.Resources))
+			})
+			if candidate < 0 {
+				matched = false
+				break
+			}
+			choice[index] = candidates[index][candidate]
+		}
+		if matched {
+			return choice, true
+		}
+	}
+	return nil, false
+}
+
+// draftTransportPools groups shared Draft dependencies so every possible peer uses one transport.
+// Stopped Pools remain connected and inherit the transport without acquiring devices.
+func draftTransportPools(pools []compiler.ModelPool) [][]int {
+	byName := make(map[string]int, len(pools))
+	neighbors := make([][]int, len(pools))
+	for index, pool := range pools {
+		byName[pool.Name] = index
+	}
+	for index, pool := range pools {
+		for _, name := range pool.Template.DraftPools {
+			draft := byName[name]
+			neighbors[index] = append(neighbors[index], draft)
+			neighbors[draft] = append(neighbors[draft], index)
+		}
+	}
+	visited := make([]bool, len(pools))
+	var components [][]int
+	for index, pool := range pools {
+		if pool.Template.SpeculationRole == "" || visited[index] {
+			continue
+		}
+		peers := []int{index}
+		visited[index] = true
+		for cursor := 0; cursor < len(peers); cursor++ {
+			for _, peer := range neighbors[peers[cursor]] {
+				if !visited[peer] {
+					visited[peer] = true
+					peers = append(peers, peer)
+				}
+			}
+		}
+		components = append(components, peers)
+	}
+	return components
 }
 
 // modelRDMACandidates returns complete installer bindings that can place every member of a Pool.
@@ -214,6 +286,7 @@ func (reconciler *ServiceReconciler) retainModelTransports(ctx context.Context, 
 			if !apiequality.Semantic.DeepEqual(group.Spec.Artifacts.Cache, pool.Template.RuntimeCache) {
 				return false, nil
 			}
+			selections[index].DTProtocol = group.Spec.DTProtocol
 			selections[index].RDMA = group.Spec.RDMA.Canonical()
 			if selections[index].RDMA != nil {
 				selections[index].RDMA.Networks = runtimeconfig.RDMANetworks(service.Namespace, group.Spec.RDMA, group.Spec.Network)
@@ -239,9 +312,21 @@ func (reconciler *ServiceReconciler) retainModelTransports(ctx context.Context, 
 			}
 		}
 	}
-	// Publish both P/D choices together; a partial match must not mix retained and newly selected protocols.
+	for _, peers := range draftTransportPools(pools) {
+		transport := selections[peers[0]].DTProtocol
+		if transport == "" {
+			return false, nil
+		}
+		for _, index := range peers {
+			if selections[index].DTProtocol != transport {
+				return false, nil
+			}
+		}
+	}
+	// Publish complete retained transport choices together, never a partial cohort.
 	for index := range pools {
 		pools[index].Template.RDMA = selections[index].RDMA.Canonical()
+		pools[index].Template.DTProtocol = selections[index].DTProtocol
 		if transfer := pools[index].Template.KVTransfer; transfer != nil {
 			transfer.Protocol = selections[index].KVTransfer.Protocol
 			if pools[index].DesiredGroups == 0 && protocol != "" {

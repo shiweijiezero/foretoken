@@ -180,7 +180,12 @@ impl Leader {
         // HTTP borrows the same health and execution owners; creating its future does not accept traffic.
         let shutdown = CancellationToken::new();
         let server_shutdown = shutdown.clone();
-        let mut app_state = AppState::new(backend.clone(), health.clone(), metadata);
+        let mut app_state = AppState::new(
+            backend.clone(),
+            health.clone(),
+            metadata,
+            config.launch.drain_timeout(),
+        );
         if let Some((ledger, pod_uid, epoch)) = execution_store {
             app_state = app_state.with_request_ledger(ledger, pod_uid, epoch);
         }

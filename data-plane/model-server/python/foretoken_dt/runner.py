@@ -4,17 +4,43 @@
 """Thin MRV2 Draft adapters for feature inputs and native proposal outputs."""
 
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 
 import torch
+from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.worker.gpu import model_runner
 from vllm.v1.worker.gpu.sample.output import SamplerOutput
 from vllm.v1.worker.gpu.sample.sampler import Sampler
 
 from .context import SharedTargetLoader
+from .device_input import DeviceTurnFeedback
 from .nccl import NcclPeer
 from .protocol import OpenPeer
-from .scheduler import DraftCachedRequests
+from .scheduler import ConfirmedDeviceTurn, DraftCachedRequests, ReservedDraftTurn
+
+
+@dataclass
+class DraftModelRunnerOutput(ModelRunnerOutput):
+    """Return candidates and the independently confirmed Target input to its Scheduler."""
+
+    confirmed_turns: dict[str, ConfirmedDeviceTurn] = field(default_factory=dict)
+
+
+class DeviceTurnOutput(model_runner.AsyncOutput):
+    """Retire device feedback through the native asynchronous output completion."""
+
+    def __init__(self, feedback, contexts, **kwargs):
+        self.feedback = feedback
+        self.contexts = contexts
+        super().__init__(**kwargs)
+
+    def get_output(self):
+        """Publish CPU confirmation only after native output DMA has completed."""
+        output = super().get_output()
+        output.confirmed_turns = self.feedback.settle(
+            self.contexts, ConfirmedDeviceTurn
+        )
+        return output
 
 
 @contextmanager
@@ -119,6 +145,8 @@ class DraftModelRunner(model_runner.GPUModelRunner):
         self.turn_inputs = {}
         self.probabilities = {}
         self.outputs: dict[str, DraftOutput] = {}
+        self.device_inputs = {}
+        self.device_feedback = None
         if self.neural:
             self.draft_tokens_handler = DraftTokens()
 
@@ -188,6 +216,18 @@ class DraftModelRunner(model_runner.GPUModelRunner):
     def prepare_inputs(self, scheduler_output, *args, **kwargs):
         """Stage only the scheduled confirmed features into stable native graph inputs."""
         batch = super().prepare_inputs(scheduler_output, *args, **kwargs)
+        cached = scheduler_output.scheduled_cached_reqs
+        reservations = (
+            dict(cached.reserved_turns)
+            if isinstance(cached, DraftCachedRequests)
+            else {}
+        )
+        for request in scheduler_output.scheduled_new_reqs:
+            plan = (request.sampling_params.extra_args or {}).get("dt_reserved_turn")
+            if plan is not None:
+                reservations[request.req_id] = ReservedDraftTurn(**plan)
+        if reservations:
+            return self._prepare_device_inputs(batch, reservations)
         if self.neural and not self.warming_up:
             for row, request_id in enumerate(batch.req_ids):
                 session = self.turn_inputs[request_id].sampling_params.extra_args[
@@ -203,6 +243,46 @@ class DraftModelRunner(model_runner.GPUModelRunner):
                 batch.num_tokens : batch.num_tokens_after_padding
             ].zero_()
         return batch
+
+    def _prepare_device_inputs(self, batch, reservations):
+        """Bind logical Target tensors to native Draft slots and physical block tables."""
+        if set(batch.req_ids) != set(reservations):
+            raise RuntimeError(
+                "Reserved device turns must occupy one complete native batch"
+            )
+        rows = []
+        upper_bounds = []
+        anchors = []
+        for row, request_id in enumerate(batch.req_ids):
+            binding = self.device_inputs[request_id]
+            reservation = reservations[request_id]
+            if (
+                reservation.turn_sequence != binding.batch.sequence
+                or reservation.query_tokens != binding.count
+                or reservation.initial != binding.initial
+            ):
+                raise RuntimeError("Native reservation differs from its device input")
+            self.main_stream.wait_event(binding.batch.ready)
+            left, right = batch.query_start_loc_np[row : row + 2]
+            source = slice(binding.offset, binding.offset + binding.count)
+            batch.input_ids[left:right].copy_(binding.batch.input_ids[source])
+            batch.positions[left:right].copy_(binding.batch.positions[source])
+            batch.seq_lens[row].copy_(binding.batch.seq_lens[binding.row])
+            self.context_features[left:right].copy_(
+                binding.batch.features[:, source].movedim(0, 1)
+            )
+            anchors.append(binding.batch.last_sampled[binding.row])
+            upper_bounds.append(binding.seq_len_upper_bound)
+            rows.append((request_id, binding))
+        self.req_states.last_sampled_tokens[batch.idx_mapping] = torch.stack(anchors)[
+            :, None
+        ]
+        self.context_features[batch.num_tokens : batch.num_tokens_after_padding].zero_()
+        self.device_feedback = DeviceTurnFeedback(self, rows)
+        return replace(
+            batch,
+            seq_lens_cpu_upper_bound=torch.tensor(upper_bounds, dtype=torch.int32),
+        )
 
     def sample(self, hidden_states, input_batch, grammar_output):
         """Supply the confirmed anchor for neural Drafts; ordinary Drafts sample natively."""
@@ -259,6 +339,8 @@ class DraftModelRunner(model_runner.GPUModelRunner):
 
     def sample_tokens(self, grammar_output):
         """Publish native propose() candidates as this retained request's bounded output turn."""
+        if self.device_feedback is not None:
+            return self._sample_device_turn()
         if not self.neural or self.warming_up or self.execute_model_state is None:
             return super().sample_tokens(grammar_output)
         batch = self.execute_model_state.input_batch
@@ -296,3 +378,72 @@ class DraftModelRunner(model_runner.GPUModelRunner):
         sampler.num_sampled = sampler.num_sampled * self.num_speculative_steps
         output["num_sampled_tokens"] = sampler.num_sampled
         return model_runner.AsyncOutput(**output)
+
+    def _sample_device_turn(self):
+        """Execute pre-scheduled neural proposals directly from Target device confirmation."""
+        state, self.execute_model_state = self.execute_model_state, None
+        feedback, self.device_feedback = self.device_feedback, None
+        batch = state.input_batch
+        sampled = torch.stack(
+            [binding.batch.num_sampled[binding.row] for _, binding in feedback.rows]
+        ).to(torch.int32)
+        rejected = torch.stack(
+            [binding.batch.num_rejected[binding.row] for _, binding in feedback.rows]
+        ).to(torch.int32)
+        features = self.context_features[: batch.num_tokens_after_padding]
+        aux = (
+            list(features.unbind(dim=1)) if self.use_aux_hidden_state_outputs else None
+        )
+        tokens = self.speculator.propose(
+            batch,
+            state.attn_metadata,
+            state.slot_mappings_by_layer,
+            features[:, 0],
+            aux,
+            sampled,
+            rejected,
+            self.req_states.last_sampled_tokens,
+            self.req_states.next_prefill_tokens,
+            self.sampler.sampling_states.temperature.gpu,
+            self.sampler.sampling_states.seeds.gpu,
+            dp_sync=state.dp_sync,
+        ).clone()
+        for row, request_id in enumerate(batch.req_ids):
+            destination = self.outputs[request_id]
+            log_q = None
+            if destination.probabilities is not None:
+                slot = int(batch.idx_mapping_np[row])
+                logits = self.speculator.draft_logits[slot].float()
+                temperature = self.sampler.sampling_states.temperature.gpu[
+                    slot
+                ].clamp_min(1e-20)
+                log_q = (logits / temperature).log_softmax(dim=-1)
+            destination.append(request_id, tokens[row], log_q)
+        counts = torch.full(
+            (batch.num_reqs,), tokens.shape[1], dtype=torch.int32, device=self.device
+        )
+        sampler_output = SamplerOutput(
+            sampled_token_ids=tokens,
+            logprobs_tensors=None,
+            num_nans=None,
+            num_sampled=counts,
+            num_rejected=torch.zeros_like(counts),
+        )
+        output = DraftModelRunnerOutput(
+            req_ids=batch.req_ids,
+            req_id_to_index={
+                request_id: row for row, request_id in enumerate(batch.req_ids)
+            },
+            cudagraph_stats=state.cudagraph_stats,
+        )
+        return DeviceTurnOutput(
+            feedback=feedback,
+            contexts=self.contexts,
+            model_runner_output=output,
+            sampler_output=sampler_output,
+            num_sampled_tokens=counts,
+            main_stream=self.main_stream,
+            copy_stream=self.output_copy_stream,
+            check_ep_fault=self.check_ep_fault,
+            pending_aux_output=None,
+        )

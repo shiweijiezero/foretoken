@@ -331,6 +331,11 @@ type ModelGroupSpec struct {
 	// +optional
 	SpeculationRole SpeculationRole `json:"speculationRole,omitempty"`
 
+	// DTProtocol is the common transport selected for connected Draft and Target Pools.
+	// +optional
+	// +kubebuilder:validation:Enum=tcp;rdma;nccl
+	DTProtocol string `json:"dtProtocol,omitempty"`
+
 	// DraftGroups contains the prepared candidates for this immutable Target revision.
 	// SelectedDraftGroup owns the process-lifetime assignment used by runtime and lifecycle consumers.
 	// +optional

@@ -1,0 +1,53 @@
+--- a/vllm/v1/core/sched/scheduler.py
++++ b/vllm/v1/core/sched/scheduler.py
+@@ -558,8 +558,20 @@
+         if 0 < remaining < self.num_prefill_lookahead:
+             num_new_tokens -= self.num_prefill_lookahead - remaining
+         return max(num_new_tokens, 0)
+ 
++    def get_num_new_tokens(self, request: Request) -> int:
++        """Return the pending input width, including asynchronous placeholders.
++
++        Scheduler plugins may provide external device inputs while retaining
++        native allocation, admission limits and execution accounting.
++        """
++        return (
++            request.num_tokens_with_spec
++            + request.num_output_placeholders
++            - request.num_computed_tokens
++        )
++
+     def schedule(self, throttle_prefills: bool = False) -> SchedulerOutput:
+         self.current_step += 1
+         # NOTE(woosuk) on the scheduling algorithm:
+         # There's no "decoding phase" nor "prefill phase" in the scheduler.
+@@ -670,13 +682,9 @@
+             ):
+                 req_index += 1
+                 continue
+ 
+-            num_new_tokens = (
+-                request.num_tokens_with_spec
+-                + request.num_output_placeholders
+-                - request.num_computed_tokens
+-            )
++            num_new_tokens = self.get_num_new_tokens(request)
+             if 0 < long_prefill_token_threshold < num_new_tokens:
+                 num_new_tokens = long_prefill_token_threshold
+             num_new_tokens = min(
+                 num_new_tokens, token_budget, input_budget - draft_slots
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -606,8 +606,12 @@
+             for request, request_wave in requests:
+                 self.add_request(request, request_wave)
+             return True if admission is not None else None
+
++    def scheduler_rpc(self, method: str, args: tuple = ()) -> Any:
++        """Invoke a scheduler plugin operation on its owning Core thread."""
++        return getattr(self.scheduler, method)(*args)
++
+     def abort_requests(self, request_ids: list[str]):
+         """Abort requests from the scheduler."""
+         # TODO: The scheduler doesn't really need to know the
+         # specific finish reason, TBD whether we propagate that

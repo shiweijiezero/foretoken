@@ -48,7 +48,7 @@ type LaunchDTPlan struct {
 	Role           inferencev1alpha1.SpeculationRole `json:"role"`
 	DraftArtifacts *runtimeconfig.ModelArtifacts     `json:"draftArtifacts,omitempty"`
 	DraftEndpoint  string                            `json:"draftEndpoint,omitempty"`
-	Protocol       string                            `json:"protocol,omitempty"`
+	Protocol       string                            `json:"protocol"`
 }
 
 type LaunchParallelism struct {
@@ -154,9 +154,9 @@ func (config EffectiveConfig) RequiresRDMA() bool {
 }
 
 // RequestsRDMA identifies consumers before transport discovery and after protocol resolution.
-// An omitted P/D protocol permits automatic RDMA; explicit TCP keeps optional NICs unallocated.
+// Unresolved P/D and DT transports permit discovery; resolved non-RDMA transfers do not acquire optional NICs.
 func (config EffectiveConfig) RequestsRDMA(template inferencev1alpha1.NormalizedPoolTemplate, deviceResource string) bool {
-	return template.SpeculationRole != "" || template.NodeCount > 1 || config.RequiresRDMA() ||
+	return template.SpeculationRole != "" && (template.DTProtocol == "" || template.DTProtocol == "rdma") || template.NodeCount > 1 || config.RequiresRDMA() ||
 		(template.KVTransfer != nil && template.KVTransfer.Protocol != "tcp") ||
 		config.RequestsWeightSharing(template, deviceResource)
 }

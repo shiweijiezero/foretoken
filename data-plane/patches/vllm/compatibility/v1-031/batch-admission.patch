@@ -1,6 +1,6 @@
 --- a/vllm/v1/engine/core.py
 +++ b/vllm/v1/engine/core.py
-@@ -528,8 +528,20 @@
+@@ -584,8 +584,30 @@
              # Immediately abort so the connector's request_finished hook runs
              # to free any pre-admission KV-transfer resources.
              self.abort_requests([request.request_id])
@@ -9,19 +9,29 @@
 +        self,
 +        requests: list[tuple[Request, int]],
 +        worker_rpc: tuple[str, tuple] | None = None,
-+    ) -> None:
-+        """Prepare worker inputs and admit a batch before the next scheduler step."""
-+        if worker_rpc is not None:
-+            method, args = worker_rpc
-+            self.model_executor.collective_rpc(method, args=args)
-+        for request, request_wave in requests:
-+            self.add_request(request, request_wave)
++        admission: tuple[str, Any] | None = None,
++    ) -> bool | None:
++        """Scope optional scheduler preparation around worker setup and native admission."""
++        with ExitStack() as stack:
++            if admission is not None:
++                method, plan = admission
++                accepted = stack.enter_context(
++                    getattr(self.scheduler, method)(requests, plan)
++                )
++                if not accepted:
++                    return False
++            if worker_rpc is not None:
++                method, args = worker_rpc
++                self.model_executor.collective_rpc(method, args=args)
++            for request, request_wave in requests:
++                self.add_request(request, request_wave)
++            return True if admission is not None else None
 +
      def abort_requests(self, request_ids: list[str]):
          """Abort requests from the scheduler."""
          # TODO: The scheduler doesn't really need to know the
          # specific finish reason, TBD whether we propagate that
-@@ -1750,8 +1762,20 @@
+@@ -1887,8 +1909,20 @@
                  else False
              ),
          )
@@ -42,7 +52,7 @@
          self,
          input_addresses: list[str],
          coord_input_address: str | None,
-@@ -1821,22 +1845,28 @@
+@@ -1958,22 +1992,49 @@
                      # Deserialize the request data.
                      request: Any
                      if request_type == EngineCoreRequestType.ADD:
@@ -65,11 +75,32 @@
 -                        if method == FT_UTILITY_METHOD:
 +                        if method == "add_requests":
 +                            prepared = []
-+                            for frames in args[0]:
-+                                req = add_request_decoder.decode(frames)
-+                                item = self._preprocess_input_request(req)
-+                                if item is not None:
-+                                    prepared.append(item)
++                            if len(args) > 2 and args[2] is not None:
++                                try:
++                                    for frames in args[0]:
++                                        req = add_request_decoder.decode(frames)
++                                        prepared.append(
++                                            self.preprocess_add_request(req)
++                                        )
++                                except Exception as error:
++                                    self.output_queue.put_nowait(
++                                        (
++                                            client_idx,
++                                            EngineCoreOutputs(
++                                                utility_output=UtilityOutput(
++                                                    call_id,
++                                                    failure_message=f"Batch preprocessing failed: {error}",
++                                                )
++                                            ),
++                                        )
++                                    )
++                                    continue
++                            else:
++                                for frames in args[0]:
++                                    req = add_request_decoder.decode(frames)
++                                    item = self._preprocess_input_request(req)
++                                    if item is not None:
++                                        prepared.append(item)
 +                            request = (
 +                                client_idx,
 +                                call_id,

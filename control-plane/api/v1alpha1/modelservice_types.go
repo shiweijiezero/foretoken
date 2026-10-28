@@ -30,7 +30,8 @@ type InstanceAdmissionConfig struct {
 type ModelTimeouts struct {
 	// Startup bounds preparation and serving initialization separately, from each stage's first model container start.
 	Startup Duration `json:"startup"`
-	Drain   Duration `json:"drain"`
+	// Drain bounds shutdown and the grace period for confirming cancelled native execution.
+	Drain Duration `json:"drain"`
 }
 
 // ExpertParallelism defines expert-parallel execution for one ModelGroup.

@@ -3,12 +3,12 @@
 
 """Control messages for native Draft/Target tensor transfers and retained turns."""
 
+import os
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
-from vllm.platforms import current_platform
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-PEER_PROTOCOL_VERSION = 3
+PEER_PROTOCOL_VERSION = 5
 TransferProtocol = Literal["tcp", "rdma", "nccl"]
 
 
@@ -22,20 +22,27 @@ class Settings(Message):
     """Select one role and its transport from the resolved engine configuration."""
 
     role: Literal["draft", "target"]
-    endpoint: str | None = None
     protocol: TransferProtocol
+    _endpoint: str | None = PrivateAttr(default=None)
+
+    @property
+    def endpoint(self) -> str | None:
+        """Read the launcher's peer binding without including it in graph settings."""
+        return self._endpoint
 
     @classmethod
     def from_engine(cls, config):
-        """Read the controller-selected DT configuration for a native worker."""
+        """Combine graph settings with the launcher's process-local peer binding."""
         value = config.additional_config.get("foretoken_dt")
         if value is None:
             raise ValueError("the DT worker requires additional_config.foretoken_dt")
-        value = dict(value)
-        value.setdefault("protocol", "nccl" if current_platform.is_cuda() else "tcp")
         result = cls.model_validate(value)
-        if result.role == "target" and result.endpoint is None:
-            raise ValueError("the DT Target requires a Draft endpoint")
+        if result.role == "target":
+            result._endpoint = os.environ.get("FORETOKEN_DT_DRAFT_ENDPOINT")
+            if not result._endpoint:
+                raise ValueError(
+                    "the DT Target requires its launcher-provided Draft endpoint"
+                )
         return result
 
 
@@ -68,12 +75,37 @@ class OpenPeer(Message):
     nccl_ids: tuple[str, str] | None = None
 
 
+class InitialDeviceRequest(Message):
+    """Supply a complete known prompt before its first Target-produced anchor exists."""
+
+    prompt_token_ids: list[int] = Field(min_length=1)
+    cache_salt: str | None
+    temperature: float = Field(ge=0)
+    seed: int
+
+
+class DeviceRequest(Message):
+    """Offer a complete logical query for native resource reservation."""
+
+    request_id: str
+    query_tokens: int = Field(gt=0)
+    seq_len_upper_bound: int = Field(gt=0)
+    initial: InitialDeviceRequest | None = None
+
+
 class PrepareBatch(Message):
     """Announce transfer shapes before Target execution produces their contents."""
 
     sequence: int = Field(ge=0)
     feature_rows: int = Field(ge=0)
     num_requests: int = Field(gt=0)
+    requests: list[DeviceRequest] = Field(default_factory=list)
+
+
+class ExecuteBatch(Message):
+    """Join the native batch already admitted by a successful device-input reservation."""
+
+    sequence: int = Field(ge=0)
 
 
 class ProposalRequest(Message):

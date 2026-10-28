@@ -1033,7 +1033,8 @@ spec:
                 description: ModelTimeouts defines ModelService lifecycle budgets.
                 properties:
                   drain:
-                    description: Duration is a positive Go-style duration.
+                    description: Drain bounds shutdown and the grace period for confirming
+                      cancelled native execution.
                     minLength: 2
                     pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string

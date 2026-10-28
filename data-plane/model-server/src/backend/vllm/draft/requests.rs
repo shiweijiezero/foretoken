@@ -58,6 +58,54 @@ pub(super) struct PrepareBatch {
     sequence: u64,
     feature_rows: usize,
     num_requests: usize,
+    #[serde(default)]
+    requests: Vec<DeviceRequest>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct DeviceRequest {
+    request_id: String,
+    query_tokens: usize,
+    seq_len_upper_bound: usize,
+    initial: Option<InitialDeviceRequest>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct InitialDeviceRequest {
+    prompt_token_ids: Vec<u32>,
+    cache_salt: Option<String>,
+    temperature: f32,
+    seed: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ExecuteBatch {
+    sequence: u64,
+}
+
+/// Native scheduler input; the request remains the owner of its slot and KV reservation.
+#[derive(Debug)]
+struct ReservedTurn {
+    request_id: String,
+    turn_sequence: u64,
+    query_tokens: usize,
+    seq_len_upper_bound: usize,
+    feature_offset: usize,
+    peer_id: String,
+    initial: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeRequestState {
+    request_id: String,
+    confirmed_length: usize,
+    context_length: usize,
+    token_ids_delta: Vec<u32>,
+    anchor: u32,
 }
 
 #[derive(Deserialize)]
@@ -85,6 +133,7 @@ pub(super) struct FinishRequests {
 pub(super) enum PeerCommand {
     Connect,
     Prepare(PrepareBatch),
+    Execute(ExecuteBatch),
     Propose(ProposeBatch),
     Finish(FinishRequests),
     Close,
@@ -97,10 +146,19 @@ struct Session {
     context_length: usize,
 }
 
+/// Keeps an offered batch local until native admission confirms its request ownership.
+struct PreparedDeviceTurn {
+    plans: Vec<ReservedTurn>,
+    previous: Vec<(String, usize)>,
+    turns: Vec<EngineCoreRequest>,
+    initial_sessions: Vec<(String, Session)>,
+}
+
 #[derive(Default)]
 struct PeerRequests {
     sequence: u64,
     prepared: bool,
+    execution: Option<tokio::task::JoinHandle<Result<(), String>>>,
     sessions: HashMap<String, Session>,
 }
 
@@ -114,6 +172,7 @@ pub(super) struct Peer {
 }
 
 impl Peer {
+    /// Creates one connection's session owner and serializes its native operations.
     pub fn new(spec: OpenPeer) -> Self {
         Self {
             spec,
@@ -124,19 +183,346 @@ impl Peer {
         }
     }
 
+    /// Counts retained native sessions, including turns waiting for Target confirmation.
     pub fn active_sessions(&self) -> usize {
         self.requests.lock().unwrap().sessions.len()
     }
 
     /// Announces tensor shapes while Target computation is still producing their contents.
-    pub async fn prepare(&self, client: &DraftClient, batch: PrepareBatch) -> Result<(), String> {
-        if batch.sequence != self.requests.lock().unwrap().sequence {
-            return Err("DT input preparation sequence is out of order".into());
+    pub async fn prepare(
+        self: &Arc<Self>,
+        client: &DraftClient,
+        batch: PrepareBatch,
+    ) -> Result<bool, String> {
+        let prepared = self.prepare_device_turn(client, &batch)?;
+        if !prepared.plans.is_empty()
+            && self
+                .start_device_turn(client, batch.sequence, prepared)
+                .await?
+        {
+            return Ok(true);
         }
         client
             .rpc::<(), _>("dt_prepare", (&self.spec.peer_id, json!(batch)))
             .await?;
         self.requests.lock().unwrap().prepared = true;
+        Ok(false)
+    }
+
+    /// Constructs native inputs without publishing new sessions before batch acceptance.
+    fn prepare_device_turn(
+        &self,
+        client: &DraftClient,
+        batch: &PrepareBatch,
+    ) -> Result<PreparedDeviceTurn, String> {
+        let state = self.requests.lock().unwrap();
+        if batch.sequence != state.sequence || state.prepared {
+            return Err("DT input preparation sequence is out of order".into());
+        }
+        if batch.num_requests > self.spec.max_requests {
+            return Err("DT batch exceeds its registered request capacity".into());
+        }
+        let mut plans = Vec::new();
+        let mut previous = Vec::new();
+        let mut turns = Vec::new();
+        let mut initial_sessions = Vec::new();
+        if !batch.requests.is_empty() {
+            if self.spec.protocol != "nccl" || self.spec.num_features == 0 {
+                return Err("Device turns require a neural NCCL Draft".into());
+            }
+            if batch.requests.len() != batch.num_requests {
+                return Err("DT device rows differ from the prepared batch".into());
+            }
+            let mut identifiers = HashSet::new();
+            let mut offset = 0_usize;
+            for request in &batch.requests {
+                if !identifiers.insert(&request.request_id) || request.query_tokens == 0 {
+                    return Err("DT device batch contains duplicate or empty rows".into());
+                }
+                let existing = state.sessions.get(&request.request_id);
+                let (native_id, confirmed_length) = match (&request.initial, existing) {
+                    (Some(initial), None) => {
+                        if !client.accepting() {
+                            return Err(
+                                "Draft is draining; this request has no retained session".into()
+                            );
+                        }
+                        if initial.prompt_token_ids.len() != request.query_tokens
+                            || initial.prompt_token_ids.is_empty()
+                            || initial
+                                .prompt_token_ids
+                                .iter()
+                                .any(|token| *token >= self.spec.vocab_size)
+                            || !initial.temperature.is_finite()
+                            || initial.temperature < 0.0
+                        {
+                            return Err("DT initial device input has an invalid prompt or sampling configuration".into());
+                        }
+                        (
+                            Uuid::new_v4().simple().to_string(),
+                            initial.prompt_token_ids.len(),
+                        )
+                    }
+                    (None, Some(session)) => (session.native_id.clone(), session.confirmed_length),
+                    _ => {
+                        plans.clear();
+                        previous.clear();
+                        turns.clear();
+                        initial_sessions.clear();
+                        break;
+                    }
+                };
+                let plan = ReservedTurn {
+                    request_id: native_id.clone(),
+                    turn_sequence: batch.sequence,
+                    query_tokens: request.query_tokens,
+                    seq_len_upper_bound: request.seq_len_upper_bound,
+                    feature_offset: offset,
+                    peer_id: self.spec.peer_id.clone(),
+                    initial: request.initial.is_some(),
+                };
+                let mut extra = HashMap::from([
+                    ("dt_session".into(), json!(native_id)),
+                    (
+                        "dt_reserved_turn".into(),
+                        json!({
+                            "turn_sequence": plan.turn_sequence,
+                            "query_tokens": plan.query_tokens,
+                            "seq_len_upper_bound": plan.seq_len_upper_bound,
+                            "feature_offset": plan.feature_offset,
+                            "peer_id": plan.peer_id,
+                            "initial": plan.initial,
+                        }),
+                    ),
+                ]);
+                let (prompt, cache_salt, temperature, seed) =
+                    if let Some(initial) = &request.initial {
+                        extra.extend([
+                            ("dt_generation".into(), json!(confirmed_length)),
+                            ("dt_capture_q".into(), json!(self.spec.return_probabilities)),
+                            ("dt_gpu_output".into(), json!(true)),
+                        ]);
+                        initial_sessions.push((
+                            request.request_id.clone(),
+                            Session {
+                                native_id: native_id.clone(),
+                                pending_tokens: Vec::new(),
+                                confirmed_length,
+                                context_length: 0,
+                            },
+                        ));
+                        (
+                            initial.prompt_token_ids.clone(),
+                            initial.cache_salt.clone(),
+                            if self.spec.return_probabilities {
+                                initial.temperature
+                            } else {
+                                0.0
+                            },
+                            Some((initial.seed ^ 0x4452414654) & i64::MAX),
+                        )
+                    } else {
+                        (Vec::new(), None, 0.0, None)
+                    };
+                turns.push(EngineCoreRequest {
+                    request_id: native_id.clone(),
+                    external_req_id: Some(native_id.clone()),
+                    prompt_token_ids: Some(prompt),
+                    sampling_params: Some(EngineCoreSamplingParams {
+                        temperature,
+                        seed,
+                        max_tokens: self.spec.num_candidates as u32,
+                        extra_args: Some(extra),
+                        ..Default::default()
+                    }),
+                    cache_salt,
+                    arrival_time: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .expect("system clock predates Unix epoch")
+                        .as_secs_f64(),
+                    resumable: true,
+                    ..Default::default()
+                });
+                previous.push((native_id, confirmed_length));
+                plans.push(plan);
+                offset = offset
+                    .checked_add(request.query_tokens)
+                    .ok_or("DT device batch size overflowed")?;
+            }
+            if !plans.is_empty() && offset != batch.feature_rows {
+                return Err("DT device rows differ from the announced feature layout".into());
+            }
+        }
+        Ok(PreparedDeviceTurn {
+            plans,
+            previous,
+            turns,
+            initial_sessions,
+        })
+    }
+
+    /// Admits a reserved turn before Target sampling and retains its native completion owner.
+    async fn start_device_turn(
+        self: &Arc<Self>,
+        client: &DraftClient,
+        sequence: u64,
+        prepared: PreparedDeviceTurn,
+    ) -> Result<bool, String> {
+        let PreparedDeviceTurn {
+            plans,
+            previous,
+            turns,
+            initial_sessions,
+        } = prepared;
+        let rows: Vec<_> = plans
+            .iter()
+            .map(|plan| {
+                (
+                    &plan.request_id,
+                    plan.query_tokens,
+                    plan.seq_len_upper_bound,
+                    plan.initial,
+                )
+            })
+            .collect();
+        let admission: Vec<_> = plans
+            .iter()
+            .map(|plan| {
+                json!({
+                    "request_id": plan.request_id,
+                    "turn_sequence": plan.turn_sequence,
+                    "query_tokens": plan.query_tokens,
+                    "seq_len_upper_bound": plan.seq_len_upper_bound,
+                    "feature_offset": plan.feature_offset,
+                    "peer_id": plan.peer_id,
+                    "initial": plan.initial,
+                })
+            })
+            .collect();
+        let streams = client
+            .engine()
+            .try_call_batch(
+                turns,
+                Some(("dt_execute", (&self.spec.peer_id, sequence, rows))),
+                ("prepare_batch_admission", admission),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let Some(streams) = streams else {
+            return Ok(false);
+        };
+        // Acceptance owns native execution; publish its session identities before
+        // the detached completion task can reconcile their first device anchor.
+        self.requests
+            .lock()
+            .unwrap()
+            .sessions
+            .extend(initial_sessions);
+        let peer = self.clone();
+        let client = client.clone();
+        let execution = tokio::spawn(async move {
+            let result: Result<(), String> = async {
+                let mut pending: HashMap<_, _> = previous
+                    .iter()
+                    .map(|(id, _)| (id.clone(), 0_usize))
+                    .collect();
+                let mut output = select_all(streams);
+                while let Some(next) = output.next().await {
+                    let next = next.map_err(|error| error.to_string())?;
+                    let count = pending
+                        .get_mut(&next.request_id)
+                        .ok_or("Native Draft returned an unknown device turn")?;
+                    *count += next.new_token_ids.len();
+                    if let Some(reason) = next.finish_reason {
+                        if reason != EngineCoreFinishReason::Length
+                            || *count != peer.spec.num_candidates
+                        {
+                            return Err(
+                                "Native Draft returned an incomplete device proposal".into()
+                            );
+                        }
+                        pending.remove(&next.request_id);
+                    }
+                }
+                if !pending.is_empty() {
+                    return Err(
+                        "Native Draft output closed before its device turn completed".into(),
+                    );
+                }
+                let confirmed: Vec<Vec<NativeRequestState>> = client
+                    .engine()
+                    .call_utility("scheduler_rpc", ("dt_request_states", (&previous,)))
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let [confirmed]: [Vec<NativeRequestState>; 1] = confirmed
+                    .try_into()
+                    .map_err(|_| "DT confirmation requires exactly one native engine response")?;
+                peer.reconcile_device_turn(&previous, confirmed)
+            }
+            .await;
+            if let Err(error) = &result {
+                client.fail(error.clone());
+            }
+            result
+        });
+        let mut state = self.requests.lock().unwrap();
+        state.execution = Some(execution);
+        state.prepared = true;
+        Ok(true)
+    }
+
+    /// Joins the native device turn before acknowledging reuse of its registered buffers.
+    pub async fn execute(&self, batch: ExecuteBatch) -> Result<Proposal, String> {
+        let execution = {
+            let mut state = self.requests.lock().unwrap();
+            if batch.sequence != state.sequence {
+                return Err("DT device execution sequence is out of order".into());
+            }
+            state
+                .execution
+                .take()
+                .ok_or("DT device execution was not reserved")?
+        };
+        execution.await.map_err(|error| error.to_string())??;
+        let mut state = self.requests.lock().unwrap();
+        state.sequence += 1;
+        state.prepared = false;
+        Ok(Proposal {
+            sequence: batch.sequence,
+            token_ids: None,
+        })
+    }
+
+    /// Applies native request truth after device execution, retaining only its unsubmitted anchor.
+    fn reconcile_device_turn(
+        &self,
+        previous: &[(String, usize)],
+        confirmed: Vec<NativeRequestState>,
+    ) -> Result<(), String> {
+        if confirmed.len() != previous.len() {
+            return Err("Native Draft returned incomplete device confirmation state".into());
+        }
+        let mut state = self.requests.lock().unwrap();
+        for (confirmed, (native_id, before)) in confirmed.into_iter().zip(previous) {
+            if confirmed.request_id != *native_id
+                || confirmed.confirmed_length.checked_sub(*before)
+                    != Some(confirmed.token_ids_delta.len())
+                || confirmed.context_length.checked_add(1) != Some(confirmed.confirmed_length)
+                || confirmed.anchor >= self.spec.vocab_size
+                || confirmed.confirmed_length > self.spec.max_model_len
+            {
+                return Err("Native Draft returned inconsistent device confirmation state".into());
+            }
+            let session = state
+                .sessions
+                .values_mut()
+                .find(|session| session.native_id == *native_id)
+                .ok_or("Native Draft confirmed an unknown retained session")?;
+            session.confirmed_length = confirmed.confirmed_length;
+            session.context_length = confirmed.context_length;
+            session.pending_tokens.clear();
+            session.pending_tokens.push(confirmed.anchor);
+        }
         Ok(())
     }
 
@@ -160,7 +546,7 @@ impl Peer {
         let mut turns = Vec::with_capacity(batch.requests.len());
         {
             let mut state = self.requests.lock().unwrap();
-            if batch.sequence != state.sequence {
+            if batch.sequence != state.sequence || state.execution.is_some() {
                 return Err("DT proposal sequence is out of order".into());
             }
             if batch.requests.len() > self.spec.max_requests {
@@ -371,6 +757,13 @@ impl Peer {
         client: &DraftClient,
         request_ids: Option<&[String]>,
     ) -> Result<(), String> {
+        let prepared_sequence = {
+            let state = self.requests.lock().unwrap();
+            state.execution.as_ref().map(|_| state.sequence)
+        };
+        if let Some(sequence) = prepared_sequence {
+            self.execute(ExecuteBatch { sequence }).await?;
+        }
         let sessions: Vec<_> = self
             .requests
             .lock()
@@ -404,6 +797,7 @@ impl Peer {
         Ok(())
     }
 
+    /// Keeps prepared transfers and closing sessions visible until their ownership ends.
     pub fn in_flight(&self) -> bool {
         self.operation.available_permits() == 0
             || self.requests.lock().unwrap().prepared

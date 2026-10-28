@@ -82,6 +82,9 @@ func (reconciler *PoolReconciler) resolveDraftPools(ctx context.Context, pool *a
 			if !servingconfig.RoutingGroupOwnedBy(group, draft) || group.Spec.Revision != draft.Status.PreparedRevision || group.Spec.Ordinal >= draft.Spec.DesiredGroups || !servingconfig.RoutingGroupReady(group) {
 				continue
 			}
+			if group.Spec.DTProtocol != target.DTProtocol {
+				return false, nil
+			}
 			if group.Spec.SpeculationRole != api.SpeculationRoleDraft || runtimeconfig.ProjectModelArtifacts(group.Spec.Artifacts) != runtimeconfig.ResolveModelArtifacts(pool.Spec.Template) || !bytes.Equal(group.Spec.Runtime.EngineArgs["speculative-config"].Raw, target.Runtime.EngineArgs["speculative-config"].Raw) {
 				return false, fmt.Errorf("Draft Pool %q is not compatible with this Target's model and native speculative configuration", name)
 			}

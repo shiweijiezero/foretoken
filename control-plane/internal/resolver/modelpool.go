@@ -46,6 +46,7 @@ type ModelGroupTemplate struct {
 	Revision        string
 	Role            inferencev1alpha1.ModelRole
 	SpeculationRole inferencev1alpha1.SpeculationRole
+	DTProtocol      string
 	DraftGroups     []inferencev1alpha1.DraftGroupBinding
 	Artifacts       inferencev1alpha1.ModelGroupArtifacts
 	Runtime         inferencev1alpha1.ModelGroupRuntime
@@ -132,6 +133,9 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	var rdma *inferencev1alpha1.RDMAAllocation
 	if effective.RequestsRDMA(template, profile.DeviceResourceName) {
 		rdma = template.RDMA.DeepCopy()
+	}
+	if template.DTProtocol == "rdma" && rdma == nil {
+		return ModelGroupTemplate{}, fmt.Errorf("DT with RDMA transport requires a platform RDMA allocation")
 	}
 	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {
 		return ModelGroupTemplate{}, fmt.Errorf("P/D with RDMA transport requires a platform RDMA allocation")
@@ -245,6 +249,7 @@ func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate
 	return ModelGroupTemplate{
 		Role:            template.Role,
 		SpeculationRole: template.SpeculationRole,
+		DTProtocol:      template.DTProtocol,
 		Artifacts: inferencev1alpha1.ModelGroupArtifacts{
 			Model: template.Model, Source: template.Source, ModelRevision: template.ModelRevision,
 			Tokenizer: template.Tokenizer, TokenizerRevision: template.TokenizerRevision,
@@ -300,6 +305,7 @@ func (template ModelGroupTemplate) Spec(pool *inferencev1alpha1.ModelPool, ordin
 		Ordinal:         ordinal,
 		Role:            template.Role,
 		SpeculationRole: template.SpeculationRole,
+		DTProtocol:      template.DTProtocol,
 		DraftGroups:     slices.Clone(template.DraftGroups),
 		Artifacts:       template.Artifacts,
 		Runtime:         template.Runtime,

@@ -23,7 +23,10 @@ from .features import FeatureCapture
 from .nccl import NcclPeer
 from .protocol import (
     PEER_PROTOCOL_VERSION,
+    DeviceRequest,
+    ExecuteBatch,
     FinishRequests,
+    InitialDeviceRequest,
     OpenPeer,
     PrepareBatch,
     ProposalRequest,
@@ -40,6 +43,7 @@ class ProposalSession:
     cache_salt: str | None
     token_count: int = 0
     context_count: int = 0
+    initial_prompt: tuple[int, ...] | None = None
 
 
 @dataclass
@@ -53,7 +57,9 @@ class StagedProposal:
     token_offsets: list[int]
     feature_rows: int
     features_transferred: Future[None] | None
-    prepare_sent: Future[None] | None
+    prepare_sent: Future[bool] | None
+    device_inputs: torch.Tensor | None
+    device_inputs_ready: torch.cuda.Event | None
     query_start_loc: list[int]
     temperatures: np.ndarray
     seeds: np.ndarray
@@ -90,7 +96,8 @@ class RemoteProposer(BaseSpeculator):
         )
         self.exchange = TensorExchange(settings.protocol) if self.nccl is None else None
         self.feature_capture: FeatureCapture | None = None
-        self.prepare_sent: Future[None] | None = None
+        self.prepare_sent: Future[bool] | None = None
+        self.device_requests: list[DeviceRequest] = []
         self.control = None
         self.control_scope = None
         self.destination: TensorRegion | None = None
@@ -116,7 +123,15 @@ class RemoteProposer(BaseSpeculator):
 
     def add_request(self, request):
         """Carry the native cache identity through initial admission and slot rebinding."""
-        self.sessions.setdefault(request.req_id, ProposalSession(request.cache_salt))
+        self.sessions.setdefault(
+            request.req_id,
+            ProposalSession(
+                request.cache_salt,
+                initial_prompt=tuple(request.prompt_token_ids)
+                if request.prompt_token_ids
+                else None,
+            ),
+        )
 
     def init_cudagraph_manager(self, mode):
         """Keep Target graph ownership native; the remote Draft captures its own graphs."""
@@ -142,17 +157,70 @@ class RemoteProposer(BaseSpeculator):
             raise RuntimeError("the Draft binding has failed")
         if self.feature_capture is not None:
             self.feature_capture.prepare_forward()
+        self.device_requests = []
+        if (
+            self.nccl is not None
+            and self.spec.method in ("eagle", "eagle3")
+            and all(
+                int(length) + self.k + 1 <= self.config.model_config.max_model_len
+                for length in input_batch.seq_lens_cpu_upper_bound[
+                    : input_batch.num_reqs
+                ]
+            )
+        ):
+            sampling = self.runner.sampler.sampling_states
+            for row, request_id in enumerate(input_batch.req_ids):
+                session = self.sessions[request_id]
+                count = int(input_batch.num_scheduled_tokens[row])
+                initial = None
+                if session.token_count:
+                    if input_batch.is_prefilling_np[row] or count != self.k + 1:
+                        self.device_requests.clear()
+                        break
+                else:
+                    prompt = session.initial_prompt
+                    if (
+                        prompt is None
+                        or int(input_batch.num_computed_tokens_np[row]) != 0
+                        or int(input_batch.prefill_len_np[row]) != len(prompt)
+                        or count != len(prompt)
+                    ):
+                        self.device_requests.clear()
+                        break
+                    slot = int(input_batch.idx_mapping_np[row])
+                    initial = InitialDeviceRequest(
+                        prompt_token_ids=list(prompt),
+                        cache_salt=session.cache_salt,
+                        temperature=float(sampling.temperature.np[slot])
+                        if self.draft_logits is not None
+                        else 0.0,
+                        seed=int(sampling.seeds.np[slot]),
+                    )
+                self.device_requests.append(
+                    DeviceRequest(
+                        request_id=request_id,
+                        query_tokens=count,
+                        seq_len_upper_bound=int(
+                            input_batch.seq_lens_cpu_upper_bound[row]
+                        ),
+                        initial=initial,
+                    )
+                )
         if self.nccl is not None:
             self.prepare_sent = self.executor.submit(
                 self._prepare_batch,
                 input_batch.num_tokens if self.feature_capture is not None else 0,
                 input_batch.num_reqs,
+                self.device_requests,
             )
 
-    def _prepare_batch(self, rows, num_requests):
-        """Announce shapes before native execution, matching the AFD control/data split."""
+    def _prepare_batch(self, rows, num_requests, requests):
+        """Reserve native inputs during Target forward, retaining replay when reservation is unavailable."""
         request = PrepareBatch(
-            sequence=self.sequence, feature_rows=rows, num_requests=num_requests
+            sequence=self.sequence,
+            feature_rows=rows,
+            num_requests=num_requests,
+            requests=requests,
         )
         self.control.send(
             json.dumps(
@@ -161,6 +229,14 @@ class RemoteProposer(BaseSpeculator):
                 allow_nan=False,
             )
         )
+        accepted = self._receive_control()["execute"]
+        if accepted:
+            for request in requests:
+                if request.initial is not None:
+                    session = self.sessions[request.request_id]
+                    session.token_count = len(request.initial.prompt_token_ids)
+                    session.initial_prompt = None
+        return accepted
 
     def _open(self) -> None:
         """Retain the control stream that owns every native Draft session for this worker."""
@@ -276,6 +352,24 @@ class RemoteProposer(BaseSpeculator):
             ),
             dim=1,
         )
+        device_inputs = None
+        device_inputs_ready = None
+        if self.device_requests:
+            # The peer uses its own request slots and KV blocks. Only logical
+            # token positions and post-verification lengths cross this boundary.
+            device_inputs = torch.cat(
+                (
+                    input_batch.input_ids[: input_batch.num_tokens].to(torch.int64),
+                    input_batch.positions[: input_batch.num_tokens],
+                    input_batch.seq_lens[: input_batch.num_reqs].to(torch.int64),
+                    num_sampled.to(torch.int64),
+                    num_rejected.to(torch.int64),
+                    last_sampled[indices].reshape(-1).to(torch.int64),
+                    states.total_len.gpu[indices].to(torch.int64),
+                )
+            )
+            device_inputs_ready = torch.cuda.Event()
+            device_inputs_ready.record(self.runner.main_stream)
         token_sources = []
         token_rows = []
         token_offsets = []
@@ -286,6 +380,8 @@ class RemoteProposer(BaseSpeculator):
                 int(input_batch.seq_lens_cpu_upper_bound[row]) + bonus_tokens,
             )
             slot = int(input_batch.idx_mapping_np[row])
+            # Host reconciliation may trail the device result. Absolute offsets
+            # let this snapshot include an older confirmed prefix safely.
             start = self.sessions[request_id].token_count
             token_offsets.append(start)
             if self.token_history_cpu is not None:
@@ -324,6 +420,8 @@ class RemoteProposer(BaseSpeculator):
             feature_rows=input_batch.num_tokens,
             features_transferred=None,
             prepare_sent=self.prepare_sent,
+            device_inputs=device_inputs,
+            device_inputs_ready=device_inputs_ready,
             query_start_loc=input_batch.query_start_loc_np.tolist(),
             temperatures=sampling.temperature.np[input_batch.idx_mapping_np],
             seeds=sampling.seeds.np[input_batch.idx_mapping_np],
@@ -337,6 +435,54 @@ class RemoteProposer(BaseSpeculator):
         self.executor.submit(self._complete_proposal, staged, result)
         return result
 
+    def _confirmed_requests(self, staged: StagedProposal) -> list[ProposalRequest]:
+        """Read verified inputs after DMA, retaining one source for session reconciliation."""
+        staged.copy_done.synchronize()
+        staged.sources.clear()
+        requests = []
+        for row, request_id in enumerate(staged.request_ids):
+            sampled, rejected, total_len, start = staged.metadata[row].tolist()
+            session = self.sessions[request_id]
+            previous = session.token_count
+            if total_len < previous:
+                raise RuntimeError(
+                    "native request reset without a Draft session release"
+                )
+            context_start = session.context_count
+            feature_offset = 0
+            count = 0
+            if self.feature_capture is not None:
+                left, right = staged.query_start_loc[row : row + 2]
+                computed_end = start + right - left - rejected
+                if computed_end > context_start:
+                    if start > context_start:
+                        raise RuntimeError(
+                            "Target features skipped an uncommitted interval"
+                        )
+                    feature_offset = left + context_start - start
+                    count = computed_end - context_start
+            requests.append(
+                ProposalRequest(
+                    request_id=request_id,
+                    cache_salt=session.cache_salt,
+                    generation=total_len,
+                    base_length=previous,
+                    token_ids=staged.token_ids[row][
+                        previous - staged.token_offsets[row] : total_len
+                        - staged.token_offsets[row]
+                    ].tolist(),
+                    context_start=context_start,
+                    feature_offset=feature_offset,
+                    feature_count=count,
+                    temperature=float(staged.temperatures[row])
+                    if self.draft_logits is not None
+                    else 0.0,
+                    seed=int(staged.seeds[row]),
+                    generate=sampled > 0,
+                )
+            )
+        return requests
+
     @torch.inference_mode()
     def _complete_proposal(
         self, staged: StagedProposal, output: DeviceFuture[torch.Tensor]
@@ -345,8 +491,11 @@ class RemoteProposer(BaseSpeculator):
         try:
             if self.failed:
                 raise RuntimeError("the Draft binding has failed")
-            if staged.prepare_sent is not None:
+            execute = (
                 staged.prepare_sent.result()
+                if staged.prepare_sent is not None
+                else False
+            )
             if self.feature_capture is not None:
                 # Feature sends wait on native layer events, not on sampling
                 # metadata. The control binding owns the receiver throughout.
@@ -354,53 +503,12 @@ class RemoteProposer(BaseSpeculator):
                     self.feature_capture.transfer(
                         staged.feature_rows, self.destination, self.nccl
                     )
+                if execute:
+                    self.nccl.send_device_inputs(
+                        staged.device_inputs, staged.device_inputs_ready
+                    )
                 staged.features_transferred.set_result(None)
-            if staged.prepare_sent is not None:
-                self._receive_control()
-            staged.copy_done.synchronize()
-            staged.sources.clear()
-            requests = []
-            for row, request_id in enumerate(staged.request_ids):
-                sampled, rejected, total_len, start = staged.metadata[row].tolist()
-                session = self.sessions[request_id]
-                previous = session.token_count
-                if total_len < previous:
-                    raise RuntimeError(
-                        "native request reset without a Draft session release"
-                    )
-                context_start = session.context_count
-                feature_offset = 0
-                count = 0
-                if self.feature_capture is not None:
-                    left, right = staged.query_start_loc[row : row + 2]
-                    computed_end = start + right - left - rejected
-                    if computed_end > context_start:
-                        if start > context_start:
-                            raise RuntimeError(
-                                "Target features skipped an uncommitted interval"
-                            )
-                        feature_offset = left + context_start - start
-                        count = computed_end - context_start
-                requests.append(
-                    ProposalRequest(
-                        request_id=request_id,
-                        cache_salt=session.cache_salt,
-                        generation=total_len,
-                        base_length=previous,
-                        token_ids=staged.token_ids[row][
-                            previous - staged.token_offsets[row] : total_len
-                            - staged.token_offsets[row]
-                        ].tolist(),
-                        context_start=context_start,
-                        feature_offset=feature_offset,
-                        feature_count=count,
-                        temperature=float(staged.temperatures[row])
-                        if self.draft_logits is not None
-                        else 0.0,
-                        seed=int(staged.seeds[row]),
-                        generate=sampled > 0,
-                    )
-                )
+            requests = None if execute else self._confirmed_requests(staged)
             tokens = None
             log_q = None
             if self.nccl is not None:
@@ -409,19 +517,29 @@ class RemoteProposer(BaseSpeculator):
                     torch.cuda.stream(self.result_stream),
                 ):
                     tokens = torch.empty(
-                        len(requests), self.k, dtype=torch.int64, device=self.device
+                        len(staged.request_ids),
+                        self.k,
+                        dtype=torch.int64,
+                        device=self.device,
                     )
                     if self.draft_logits is not None:
                         log_q = torch.empty(
-                            len(requests),
+                            len(staged.request_ids),
                             self.k,
                             self.config.model_config.get_vocab_size(),
                             dtype=torch.float32,
                             device=self.device,
                         )
             sequence = self.sequence
-            batch = ProposeBatch(sequence=sequence, requests=requests)
-            payload = {"operation": "propose", "payload": batch.model_dump()}
+            batch = (
+                ExecuteBatch(sequence=sequence)
+                if execute
+                else ProposeBatch(sequence=sequence, requests=requests)
+            )
+            payload = {
+                "operation": "execute" if execute else "propose",
+                "payload": batch.model_dump(),
+            }
             with record_function_or_nullcontext("DT Target proposal RPC"):
                 if self.nccl is not None:
                     self.control.send(
@@ -437,6 +555,8 @@ class RemoteProposer(BaseSpeculator):
             # that dependency without waiting for the device on this IO thread.
             with torch.cuda.device(self.device), torch.cuda.stream(self.result_stream):
                 if self.nccl is not None:
+                    # Keep persistent receive work behind the Target's completed inputs.
+                    self.result_stream.wait_event(staged.copy_done)
                     self.nccl.receive_output(tokens, log_q)
                     self.result_stream.wait_event(self.nccl.output_ready)
                 else:
@@ -460,13 +580,16 @@ class RemoteProposer(BaseSpeculator):
                     ).clamp_min(1e-20)
                     self.draft_logits[staged.indices] = log_q * scale[:, None, None]
                 self.sequence += 1
-                for request in requests:
-                    session = self.sessions[request.request_id]
-                    session.token_count = request.generation
-                    session.context_count = (
-                        request.context_start + request.feature_count
-                    )
                 output.set_result(tokens)
+            # Native consumers already own the device result. Host reconciliation
+            # completes before this ordered connection admits another batch.
+            if requests is None:
+                requests = self._confirmed_requests(staged)
+            for request in requests:
+                session = self.sessions[request.request_id]
+                session.token_count = request.generation
+                session.context_count = request.context_start + request.feature_count
+                session.initial_prompt = None
             if self.nccl is not None:
                 # Like native PP's side-stream result, GPU consumers can proceed
                 # before CPU bookkeeping finishes. This ordered connection still
@@ -496,7 +619,14 @@ class RemoteProposer(BaseSpeculator):
 
     def remove_requests(self, request_ids: set[str]) -> None:
         """Join ordered peer cleanup before native request IDs or slots are reused."""
-        self.executor.submit(self._finish_requests, request_ids).result()
+        cleanup = self.executor.submit(self._finish_requests, request_ids)
+        try:
+            cleanup.result(timeout=self.config.shutdown_timeout)
+        except TimeoutError as error:
+            self.failed = True
+            raise RuntimeError(
+                "Draft request cleanup exceeded the drain budget"
+            ) from error
 
     def _finish_requests(self, request_ids: set[str]) -> None:
         """Release retained peer sessions after their preceding proposals complete."""

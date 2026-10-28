@@ -103,6 +103,23 @@ class NcclPeer:
                 probabilities.record_stream(self.output_stream)
             self.output_ready.record(self.output_stream)
 
+    def send_device_inputs(self, packed: torch.Tensor, ready: torch.cuda.Event) -> None:
+        """Send logical token and length inputs after their producing Target stream."""
+        assert self.t2d_comm is not None
+        with torch.cuda.device(self.device), torch.cuda.stream(self.input_stream):
+            self.input_stream.wait_event(ready)
+            self.t2d_comm.send(packed, self.remote_rank, self.input_stream)
+            packed.record_stream(self.input_stream)
+            self.input_ready.record(self.input_stream)
+
+    def receive_device_inputs(self, packed: torch.Tensor) -> None:
+        """Receive the reserved batch's logical inputs after its feature planes."""
+        assert self.t2d_comm is not None
+        with torch.cuda.device(self.device), torch.cuda.stream(self.input_stream):
+            self.t2d_comm.recv(packed, self.remote_rank, self.input_stream)
+            packed.record_stream(self.input_stream)
+            self.input_ready.record(self.input_stream)
+
     def send_output(
         self,
         tokens: torch.Tensor,

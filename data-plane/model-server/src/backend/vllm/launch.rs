@@ -50,7 +50,16 @@ pub struct DraftTargetPlan {
     pub role: SpeculationRole,
     pub draft_artifacts: Option<ModelArtifacts>,
     pub draft_endpoint: Option<String>,
-    pub protocol: Option<TransferProtocol>,
+    pub protocol: DraftTargetProtocol,
+}
+
+/// Controller-selected transport shared by a connected Draft/Target cohort.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DraftTargetProtocol {
+    Tcp,
+    Rdma,
+    Nccl,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -360,6 +369,17 @@ impl LaunchPlanV1 {
         } else {
             command
         };
+        if let Some(dt) = &self.dt
+            && dt.role == SpeculationRole::Target
+        {
+            // Peer bindings change across deployments without changing the compiled graph.
+            command.env(
+                "FORETOKEN_DT_DRAFT_ENDPOINT",
+                dt.draft_endpoint
+                    .as_deref()
+                    .expect("validated Target endpoint"),
+            );
+        }
         match &self.kv {
             KvPlan::Pd {
                 connector: KvConnector::Mooncake,
@@ -447,13 +467,7 @@ impl LaunchPlanV1 {
         }
         let mut engine_args = self.engine_args.clone();
         if let Some(dt) = &self.dt {
-            let mut settings = json!({"role": dt.role});
-            if let Some(endpoint) = &dt.draft_endpoint {
-                settings["endpoint"] = json!(endpoint);
-            }
-            if let Some(protocol) = dt.protocol {
-                settings["protocol"] = json!(protocol.as_str());
-            }
+            let settings = json!({"role": dt.role, "protocol": dt.protocol});
             let additional = engine_args
                 .entry("additional-config".into())
                 .or_insert_with(|| json!({}))

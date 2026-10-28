@@ -18,6 +18,27 @@ class DraftContext:
         self.current_start = 0
         self.copied: torch.cuda.Event | None = None
 
+    def reserve_history(self, end, feature_shape, dtype):
+        """Reserve owned host history without advancing the confirmed feature prefix."""
+        if end == 0:
+            return
+        previous = self.tensor
+        if previous is not None and (
+            previous.shape[1:] != feature_shape or previous.dtype != dtype
+        ):
+            raise ValueError("Target feature layout changed within a request")
+        if previous is None or previous.shape[0] < end:
+            self.tensor = torch.empty(
+                (1 << (end - 1).bit_length(), *feature_shape),
+                dtype=dtype,
+                device="cpu",
+                pin_memory=True,
+            )
+            if previous is not None:
+                if self.copied is not None:
+                    self.copied.synchronize()
+                self.tensor[: self.end].copy_(previous[: self.end])
+
     def append(self, start, rows, copy_stream=None):
         """Retain the current GPU interval and a host history for native KV replay."""
         if start != self.end:
@@ -25,22 +46,7 @@ class DraftContext:
         if not rows.shape[0]:
             return
         end = start + rows.shape[0]
-        previous = self.tensor
-        if previous is not None and (
-            previous.shape[1:] != rows.shape[1:] or previous.dtype != rows.dtype
-        ):
-            raise ValueError("Target feature layout changed within a request")
-        if previous is None or previous.shape[0] < end:
-            self.tensor = torch.empty(
-                (1 << (end - 1).bit_length(), *rows.shape[1:]),
-                dtype=rows.dtype,
-                device="cpu",
-                pin_memory=True,
-            )
-            if previous is not None:
-                if self.copied is not None:
-                    self.copied.synchronize()
-                self.tensor[:start].copy_(previous[:start])
+        self.reserve_history(end, rows.shape[1:], rows.dtype)
         self.current_start = start
         if rows.is_cuda:
             self.current = rows.clone()

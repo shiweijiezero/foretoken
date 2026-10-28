@@ -217,6 +217,8 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 | `timeouts.drain` | 退出时等待已接收请求完成的时长，默认 `10m`；修改它会替换前端 Pod |
 | `logLevel` | `trace`、`debug`、`info`（默认）、`warn`、`error`、`off` |
 
+模型自身的 `ModelService.spec.timeouts.drain` 也约束取消后等待原生执行结束的时长；超期会退役推理引擎。
+
 限制输入长度时，设置 `ModelService.spec.maxInputTokens`，或各 Pool 的 `spec.modelPools[].maxInputTokens`。该设置支持在线更新，与引擎的输入输出合计上下文上限分别配置。
 
 模型的严格工具调用需要结构标签时，在模型 YAML 中声明该能力：

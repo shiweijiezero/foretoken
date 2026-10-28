@@ -220,6 +220,11 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	SpeculationRole SpeculationRole `json:"speculationRole,omitempty"`
 
+	// DTProtocol is the common transport selected for connected Draft and Target Pools.
+	// +optional
+	// +kubebuilder:validation:Enum=tcp;rdma;nccl
+	DTProtocol string `json:"dtProtocol,omitempty"`
+
 	// DraftPools retains this Target's same-service discovery scope.
 	// +optional
 	// +listType=set

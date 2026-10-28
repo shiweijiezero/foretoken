@@ -212,12 +212,18 @@ async fn serve_peer(client: &DraftClient, socket: &mut WebSocket) -> Result<(), 
                     Ok("{}".to_owned())
                 }
                 PeerCommand::Prepare(batch) => {
-                    client
+                    let execute = client
                         .operate(peer, |client, peer| async move {
                             peer.prepare(&client, batch).await
                         })
                         .await?;
-                    Ok("{}".to_owned())
+                    Ok(json!({"execute": execute}).to_string())
+                }
+                PeerCommand::Execute(batch) => {
+                    let proposal = client
+                        .operate(peer, |_, peer| async move { peer.execute(batch).await })
+                        .await?;
+                    serde_json::to_string(&proposal).map_err(|error| error.to_string())
                 }
                 PeerCommand::Propose(batch) => {
                     let proposal = client
