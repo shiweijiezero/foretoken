@@ -52,9 +52,9 @@ results/decode/parallelism/
 │   ├── progress.yaml          # Chart data for one metric and comparison condition
 │   ├── progress-milestones.png
 │   └── progress-search.png
-├── team/                      # Agent-maintained team and observation notes
+├── team/                      # Agent-maintained team and assessment notes
 │   ├── README.md              # Task, reminders and follow-up decisions
-│   └── observations/          # One dated note per Evaluator check
+│   └── evaluations/          # One dated note per Evaluator check
 └── iterations/tp2/
     ├── notes/
     │   ├── iteration.md       # Summaries, document links and decisions
@@ -91,7 +91,7 @@ Supporting research, scripts, preparation logs and cleanup records also belong u
 
 ## Keep team and session records
 
-The lead keeps the check schedule in `<output-dir>/team/README.md` and links each Evaluator note under `team/observations/`. Existing task records hold action owners, decisions and expected results. Keep unresolved findings linked to their first note, update their progress there, and have the report link to this current state. Each observation preserves the evidence and judgment from that check.
+The lead keeps the check schedule in `<output-dir>/team/README.md` and links each Evaluator note under `team/evaluations/`. Existing task records hold action owners, decisions and expected results. Keep unresolved findings linked to their first note, update their progress there, and have the report link to this current state. Each assessment preserves the evidence and judgment from that check.
 
 Task records describe intent, ownership and decisions. Read actual agent activity from the native harness, hook bindings from continuation status, and jobs from their execution owner. When a report needs a snapshot, include its observation time and source. Avoid maintaining another live-state copy in each task, member and report file. An action closes when its owner links the resulting change or explains the decision to stop, not merely when a follow-up message was sent.
 

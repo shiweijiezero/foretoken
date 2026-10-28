@@ -96,7 +96,7 @@ Research takes time, and a sound experiment may fail. Judge the actual work, not
 
 ## Report the assessment, then finish
 
-Save a dated note under `<output-dir>/team/observations/`, with the agent identity in its filename. State the period and most important findings, then complete every checklist item in the six groups.
+Save a dated note under `<output-dir>/team/evaluations/`, with the agent identity in its filename. State the period and most important findings, then complete every checklist item in the six groups.
 
 | ID and check | Object | Requirement and evidence location | Facts and judgment | Status | Impact and question for the lead |
 | --- | --- | --- | --- | --- | --- |

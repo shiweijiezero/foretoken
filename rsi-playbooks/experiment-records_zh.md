@@ -54,7 +54,7 @@ results/decode/parallelism/
 │   └── progress-search.png
 ├── team/                      # Agent 维护的团队与巡查记录
 │   ├── README.md              # 任务、提醒与处理决定
-│   └── observations/          # 每轮 Evaluator 的独立巡查笔记
+│   └── evaluations/          # 每轮 Evaluator 的独立评估笔记
 └── iterations/tp2/
     ├── notes/
     │   ├── iteration.md       # 摘要、文档链接与决定
@@ -91,7 +91,7 @@ results/decode/parallelism/
 
 ## 保存团队与会话记录
 
-主 Agent 在 `<output-dir>/team/README.md` 维护巡查安排，链接 `team/observations/` 下的每轮笔记。行动的负责人、决定和预期结果保存在已有任务记录中；未解决的问题持续链接首次记录，并在原处更新进展，报告引用这份当前状态。巡查笔记保留各次检查的依据和判断。
+主 Agent 在 `<output-dir>/team/README.md` 维护巡查安排，链接 `team/evaluations/` 下的每轮笔记。行动的负责人、决定和预期结果保存在已有任务记录中；未解决的问题持续链接首次记录，并在原处更新进展，报告引用这份当前状态。评估笔记保留各次检查的依据和判断。
 
 任务记录保存目标、分工和决定。成员实际活动从原生 harness 读取，hook 绑定从 continuation 查询，作业状态由执行负责人核实。报告需要快照时，注明观察时间和来源，避免在任务、成员和报告文件中各维护一份实时状态。负责人提供实际改动的结果链接，或说明停止行动的决定，才算结束跟进；发出 follow-up 消息本身不代表问题已解决。
 
