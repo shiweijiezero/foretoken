@@ -147,7 +147,7 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 
 分析、审查和决定分别注明作者，每项决定写清行动和适用范围。更正结论或改变决定时，链接旧条目与新依据，保留认识变化的过程。
 
-每次运行后，Experimenter 在[迭代笔记](templates/iteration-template_zh.md)中补入原件位置与结果，再按[团队交付流程](../.agents/skills/rsi/roles/common_zh.md#随实验返回结果)直接交给 Worker、审查者和报告作者。例如，诊断命令退出码为 0，但保存的输出比较可能不一致；应同时记录两个事实并链接比较结果。速度测量、所需质量检查和是否保留分别判断。
+每次运行后，Experimenter 在[迭代笔记](templates/iteration-template_zh.md)中补入原件位置与结果，再按[团队交付流程](../.agents/skills/rsi/roles/common_zh.md#随实验返回结果)直接交给 Worker、已安排的审查者和报告作者。例如，诊断命令退出码为 0，但保存的输出比较可能不一致；应同时记录两个事实并链接比较结果。速度测量、所需质量检查和是否保留分别判断。
 
 正式测量、诊断控制和工具验证均注明用途与样本数，没有 `metrics.json` 的辅助产物也要保留入口。远端运行由 Experimenter 将结果保存到约定位置，包括从临时存储转移原件；接收者直接读取原件，或使用交付的副本。恢复时先检查已登记的远端作业与结果位置，不能仅因本地副本缺失就判断没有执行。
 

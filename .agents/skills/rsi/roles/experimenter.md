@@ -33,7 +33,7 @@ Compare throughput with actual request concurrency and timing. When request late
 
 GPU collection continues throughout the experiment. The Experimenter reuses [collectors](../SKILL.md#collect-gpu-usage) covering the assigned devices, with one collection owner chosen by the lead for each device set. Utilization is interpreted alongside build, measurement and waiting periods, and missing intervals are reported. When collection spans several experiments, it is handed over with the resources and stopped when no longer needed.
 
-As each evaluation finishes, complete the [result delivery](common.md#return-results-as-work-finishes) to the Worker, reviewer and report writer. Read diagnostic assertions and native quality results as well as command exits. When using remote scratch storage, preserve the results at the agreed location and confirm recipients can read them; large traces may stay remote with an accessible path. Keep any unfinished transfer with its run in the iteration notes.
+As each evaluation finishes, complete the [result delivery](common.md#return-results-as-work-finishes) to the Worker, any assigned reviewer and report writer. Read diagnostic assertions and native quality results as well as command exits. When using remote scratch storage, preserve the results at the agreed location and confirm recipients can read them; large traces may stay remote with an accessible path. Keep any unfinished transfer with its run in the iteration notes.
 
 ## Continue with ready work
 
