@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 # One report-owned measurement condition; see progress-charts.md.
-title: Optimization progress
-subtitle: Specify model, hardware, precision, workload, concurrency, and measurement scope
+title: Model · Dataset · Throughput · Concurrency 1
 updated_at: "Not yet measured"
 x_label: Elapsed time (hours)
 metric:

@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](progress-charts.md) | 简体中文
 
-里程碑图展示实测累计版本的变化，搜索图展示全部有效尝试、截至当时的最佳结果和失败尝试。两张图随[实验报告](../experiment-records_zh.md#持续维护用户报告)一起维护。
+里程碑图展示实测累计版本的变化，搜索图展示对比方案、截至当时的最佳结果和失败尝试。将对应搜索图紧接在[实验报告](../experiment-records_zh.md#持续维护用户报告)的各张总表上方。
 
 ## 首次生成
 
@@ -24,22 +24,22 @@ cp rsi-playbooks/templates/progress-template.yaml results/my-experiment/figures/
 foretoken plot --progress results/my-experiment/figures/progress*.yaml
 ```
 
-命令以 PNG、SVG 和 PDF 导出里程碑图与搜索图，例如 `progress-milestones.png` 和 `progress-search.png`。基线尚未测得时生成待测图片。按[报告模板](report-template_zh.md)将 PNG 放在结果汇总表之后。
+命令以 PNG、SVG 和 PDF 导出里程碑图与搜索图，例如 `progress-milestones.png` 和 `progress-search.png`。基线尚未测得时生成待测图片。按[报告模板](report-template_zh.md)将对应 PNG 紧接在总表上方。
 
-每个指标和每组对照条件分别使用独立文件，例如 `progress-c1-throughput.yaml` 和 `progress-c16-latency.yaml`。一次导出本报告的所有条件：每次命令会替换输出目录中上次导出的图表文件。输入均在同一目录时默认输出到该目录，来自不同目录时默认输出到 `./plots`；用 `--output-dir` 指定其他位置。输出名沿用各输入文件去掉扩展名后的名称。预览样式时，将[虚构数据示例](progress-example.yaml)复制到临时目录，再对副本执行绘图命令。
+每个指标和每组对照条件分别使用独立文件，例如 `progress-concurrency-1-throughput.yaml` 和 `progress-concurrency-16-latency.yaml`。一次导出本报告的所有条件：每次命令会替换输出目录中上次导出的图表文件。输入均在同一目录时默认输出到该目录，来自不同目录时默认输出到 `./plots`；用 `--output-dir` 指定其他位置。输出名沿用各输入文件去掉扩展名后的名称。预览样式时，将[虚构数据示例](progress-example.yaml)复制到临时目录，再对副本执行绘图命令。
 
 ## 填入结果
 
-同一文件沿用同一指标、baseline 和对照条件。`subtitle` 写明模型、硬件、精度、负载、并发和测量范围。
+用户最初的初始配置是唯一 baseline。同一文件沿用同一指标和可比负载条件；后续控制放在 `references`，不重置 baseline。每个点对应总表中的一个方案，使用相同名称和汇总值；重复运行采用表中的统计方式，链接原始测量。标题保留模型、数据集和指标等简短信息，并发写全为“并发 1”等名称。详细硬件、缓存和源码设置放在报告条件及链接的记录中。
 
 | 字段 | 内容 |
 | --- | --- |
-| `title`、`subtitle` | 标题和对照条件；标题自动加上 `Foretoken · ` 前缀。 |
+| `title`、`subtitle` | 简短标题和可选图注。 |
 | `updated_at` | 与报告一致的更新时间，包含时区。 |
 | `x_label` | `x` 的含义，例如经过的小时数、评测序号或工具调用次数；baseline 位于零点。 |
 | `metric` | `name`、`unit` 和改善方向 `direction`；吞吐通常用 `higher`，延迟通常用 `lower`。 |
-| `baseline` | 实测 `value`、`label` 和证据 `source`；尚未测量时保留 `value: null`。 |
-| `points` | 每次尝试的 `x`、`value`、`status` 和 `source`；可选 `label` 添加标注，`checkpoint: true` 选为累计里程碑。 |
+| `baseline` | 初始配置的原始测量值 `value`、`label` 和证据 `source`。该负载没有可比的初始测量时保留 `value: null`。 |
+| `points` | 每个方案的 `x`、`value`、`status` 和 `source`；可选 `label` 添加标注，`checkpoint: true` 选为累计里程碑。 |
 | `phases` | 可选阶段背景，包含 `label`、`start`、`end`，与 `x` 使用相同单位。 |
 | `references` | 同条件对照，包含 `label` 和 `source`；用 `value` 绘制水平线，或用 `points: [{x, value}, …]` 在搜索图中绘制实测轨迹。 |
 
@@ -69,10 +69,10 @@ references:
 
 ## 阅读与维护
 
-指标越大越好时，改善倍数为 `value / baseline`；越小越好时为 `baseline / value`。baseline 为 `1×`，倍数越大表示改善越大。
+指标越大越好时，改善倍数为 `value / baseline`；越小越好时为 `baseline / value`。原始 baseline 为 `1×`，倍数越大表示改善越大。局部控制是具名参照，不是新的 `1×` 起点。原始 baseline 缺少匹配测量时，报告保留绝对值，`--progress` 此时显示待基线测量的图。
 
 里程碑图连接 baseline 与标为 `checkpoint: true` 的有效点。每个点代表实测的累计配置；同时保留多项改动时，使用组合后的实测值。后续版本替代早期版本时，保留早期节点以呈现历史。
 
-搜索图展示全部有效值，以及从 baseline 起始的历史最佳阶梯线；当前保留版本由报告说明。
+搜索图展示改善、回退和失败，历史最佳曲线从注明的 baseline 起始。报告保留方案的采用决定。`status` 字段用于控制绘图，普通方案点不需要显示“valid”标签。
 
 恢复任务时沿用同一份数据和 baseline 原点，保留早期已采用版本与失败尝试。后续对照复测用命名 reference 表示，没有新测量的更新保留已有点。

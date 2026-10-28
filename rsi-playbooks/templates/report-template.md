@@ -6,36 +6,28 @@ Use this for the task's continuously maintained `report.md`, following the [repo
 
 ## Summary
 
-State the retained approach, measured gains, quality trade-offs and unfinished validation. Briefly identify the model, software version, hardware and precision so readers can place the results.
+State what was optimized, the measured improvement and the retained approach in a few sentences. Identify the model and workloads.
 
-Place the comparison tables in this summary, one per task type, such as random requests, multi-turn conversations or answer quality. Start with `baseline`, then give each approach its own row. Use short names that describe the change, such as "Finer prefix matching" or "Larger token batches"; name combined changes explicitly. Link each name to its explanation below.
+Use one overview table per task type, such as random requests, multi-turn conversations or answer quality, with its iteration chart immediately above it. Keep them adjacent. Include the initial baseline, retained changes, regressions, rejected approaches and failed attempts so readers can see the complete search.
 
-Choose columns for the task's conditions and metrics, with units and improvement directions. State workload and concurrency beside the table. Retain the initial configuration as the task's baseline across sessions and time windows. When hardware, workload or measurement conditions change, group those rows with their applicable controls; calculate changes only within comparable groups. Label later control measurements and explain which one each percentage uses.
+Each row summarizes one approach; each point represents that approach's result for the plotted metric and condition. Use the same names, values and ordering. Name rows as an ablation table: `baseline`, `+ A`, `+ A + B`, listing the complete measured changes from the original baseline in each name. Summarize comparable repeated runs with their count and variability, linking the individual measurements. Keep different conditions separate in table cells and chart panels or series. Count approaches separately from measurement runs.
+
+The user's initial configuration is the only baseline and stays first across sessions. Later retests and local controls are named references, not replacement baselines. Every baseline ratio uses the original comparable measurement; where none exists, show absolute values and leave that ratio unmeasured. Use a short conditions column for changed hardware, software or workload protocols; keep local-control comparisons in the linked details. Show concurrency levels side by side and spell them out, such as “Concurrency 1” and “Concurrency 16”. Run IDs, full configurations and logs belong in linked records.
+
+Keep chart titles short: model, dataset and metric are enough. Mark retained milestones and failed attempts; ordinary measured points need no “valid” label. The main chart shows all summarized approaches. Additional milestone-only or per-condition figures belong with the details. See the [plotting guide](progress-charts.md).
 
 ### Task type
 
-Replace this heading and the metric columns with those of the actual task. The rows illustrate the layout; fill them with measured results.
+Adapt the following layout to the task's metrics. Values include their change from the stated reference; “—” means unmeasured or undefined, with a reason in the decision column. State the statistic and repeat count. Quality tables retain evaluator sample counts and error estimates, and identify ordinary evaluations, diagnostics and tool validation by purpose.
 
-| Approach | Metric A (unit, direction) | Change from baseline | Metric B (unit, direction) | Change from baseline |
-| --- | ---: | ---: | ---: | ---: |
-| baseline | Measured value | — | Measured value | — |
-| [Finer prefix matching](#finer-prefix-matching) | Measured value | Percentage change | Measured value | Percentage change |
+![Approach iteration history](figures/progress-search.png)
 
-State the repeat count `n` and statistic used. Show a single value for one measurement; for repeats, include the mean and variability or link their detailed values. Keep regressions and use “—” for unmeasured or undefined entries, with a reason. Quality scores retain the evaluator's sample counts and error estimates. Source results follow the [experiment records guide](../experiment-records.md#analyze-results).
+| Approach | Conditions | Concurrency 1: tokens/s ↑ | Concurrency 1: ms/token ↓ | Concurrency 16: tokens/s ↑ | Concurrency 16: ms/token ↓ | Repeats | Decision |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| baseline | Initial conditions | Value (—) | Value (—) | Value (—) | Value (—) | Count | Reference |
+| [+ Finer prefix matching](#finer-prefix-matching) | Same conditions | Value (%) | Value (%) | Value (%) | Value (%) | Count | Retained / rejected / under investigation |
 
-Alongside the values, state whether each approach is retained, rejected or still under investigation and link the relevant interpretation. Separate ordinary quality evaluations from instrumented diagnostics and tool validation. Mention comparison differences where they affect a row, such as changed clients, background builds or output lengths.
-
-## Optimization progress
-
-Generate the [progress charts](progress-charts.md), then insert these references for each metric and comparison condition, adjusting filenames as needed:
-
-```markdown
-![Measured optimization milestones](figures/progress-milestones.png)
-
-![Optimization search history](figures/progress-search.png)
-
-[Chart data](figures/progress.yaml)
-```
+Link the chart data and [original results](../experiment-records.md#analyze-results). Put any client, background-build or output-length difference that changes the interpretation in the affected row. Explain mechanisms and trade-offs in the approach details without repeating the table's values.
 
 ## Approach details
 

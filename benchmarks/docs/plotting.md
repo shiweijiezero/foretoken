@@ -23,7 +23,7 @@ Compare two approaches:
 foretoken plot results/baseline results/candidate
 ```
 
-Performance comparisons include output throughput per user versus output throughput per GPU. Each method has its own markers; labels such as `c1` and `c16` show the configured concurrency. Dashed curves connect Pareto-optimal points, where neither coordinate can improve without worsening the other. All measured markers remain visible.
+Performance comparisons include output throughput per user versus output throughput per GPU. Each method has its own markers; labels such as `Concurrency 1` and `Concurrency 16` show the configured concurrency. Dashed curves connect Pareto-optimal points, where neither coordinate can improve without worsening the other. All measured markers remain visible.
 
 The default curve varies `max_concurrency`. Other conditions, including input lengths, output limits, and datasets, stay in separate figures. For a request-rate scan, use `--sweep-axis request_rate --label-by request_rate`. `--label-by` accepts several saved workload fields; `--label-values` adds coordinates, and `--columns 2` produces wider figures.
 
@@ -53,14 +53,14 @@ Decode speed is based on successful requests' TPOT; total token throughput inclu
 
 For AgentX results, choose `--x-metric agentx_interactivity --x-stat p95` to use successful profiling requests' native token intervals, preferring full-response ITL. This native ITL definition is separate from Foretoken's TPOT-based decode speed. See [AgentX metrics](metrics.md#agentx-metrics) for its timing and availability rules.
 
-### Show changes from a baseline
+### Show changes from a reference
 
 ```bash
 foretoken plot results/candidate --base results/baseline \
   --label-values --columns 2
 ```
 
-`--base` loads one reference result or iteration, including its repeated measurements. Matching workloads are connected and labeled with the x-axis percentage change. Use `--compare-axis y` for the y axis. The calculation is `(candidate / baseline - 1) × 100%`; negative latency changes and positive throughput changes indicate improvement.
+`--base` loads one reference result or iteration, including its repeated measurements. Matching workloads are connected and labeled with the x-axis percentage change. Use `--compare-axis y` for the y axis. The calculation is `(candidate / reference - 1) × 100%`; negative latency changes and positive throughput changes indicate improvement.
 
 ## Estimate revenue and profit
 

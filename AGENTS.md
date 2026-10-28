@@ -78,6 +78,8 @@ Prefer extending an existing job and invoking the repository command that alread
 
 ## Documentation
 
+Delete sentences whose only purpose is to preempt criticism rather than advance the argument. Apply this while writing and reviewing, including existing text encountered in the work.
+
 For new or substantially rewritten user documentation:
 
 1. verify the current code, CLI help, Helm values, schema, and maintained examples;
