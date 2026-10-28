@@ -56,7 +56,7 @@ Use the task's `Observer count` and `Observer check interval`; for example, `1` 
 
 Follow the [Observer instructions](roles/observer.md) to create new agents without inherited history each round. Checks use ordinary agent slots, so make room in the schedule. Complete a round in batches if it exceeds available slots. If slots are full or the previous round is unfinished, record the delay and run it later without stacking rounds or interrupting experiments.
 
-On an Observer's completion notification, the lead records its start and completion, reads the report and dispatches ready independent work. It records decisions, owners and expected outcomes in the existing team records, explaining deferred or declined findings. When candidates repeatedly yield only local, small or mixed gains, the lead reassesses the evidence and records whether to continue, revise or stop that direction, the next research question within the user's objective, its owner, additional budget, expected evidence and review time. On pause, stop, deadline or completion, disable reminders and end active checks.
+On an Observer's completion notification, the lead records the check's start and completion, reads the assessment and records its own judgment and decisions in the team notes. Explain deferred or declined findings and continue ready work. On pause, stop, deadline or completion, disable reminders and end active checks.
 
 ## Isolate candidate workspaces and execution
 
@@ -78,7 +78,7 @@ The Worker gives a runnable, reproducible version to the assigned Experimenter. 
 
 Before retaining or integrating a change, the lead reads the implementation and relevant call paths and reviews the independent assessment. The combined approach is still validated under the task's workload.
 
-The lead continually adjusts directions and resources as research and experiments advance. When an Explorer flags stalled or misdirected work, the lead revisits the task objectives, current understanding and available results, explains whether to continue, change or stop the direction, and assigns the next action and owner. The responsible member fixes recurring execution problems and checks the affected workflow before the team relies on the fix.
+The lead weighs time and resources spent against measured gains and new knowledge. When progress stalls or an Explorer or Observer raises a concern, it reassesses the evidence and decides whether to continue, revise or stop the direction within the user's objective. Record the next question, owner, budget, expected evidence and review time. The responsible member fixes recurring execution problems and checks the affected workflow before the team relies on the fix.
 
 When stopping a direction, state what the evidence ruled out and what remains unimplemented or unmeasured. An unavailable upstream option is an implementation constraint, not a performance result. Validation of the current best candidate can proceed while independent research continues within the remaining budget.
 

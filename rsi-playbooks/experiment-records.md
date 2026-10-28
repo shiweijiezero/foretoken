@@ -147,7 +147,7 @@ Keep execution evidence, the history of judgments, and the current summary disti
 
 Attribute analysis, reviews, and decisions to their authors. Each decision states the action and its scope. When correcting a conclusion or changing a decision, link the earlier entry and new evidence so readers can follow how the understanding changed.
 
-After each run, the Experimenter adds its original location and finding to the [iteration notes](templates/iteration-template.md), then delivers them to the Worker, any assigned reviewer and report writer using the [team workflow](../.agents/skills/rsi/roles/common.md#return-results-as-work-finishes). For example, a diagnostic command can finish with exit 0 while its saved output comparison fails. Record both facts and link the comparison; keep measured speed, required quality checks and the retention decision separate.
+After each run, the Experimenter adds its original location and finding to the [iteration notes](templates/iteration-template.md), then delivers them to the Worker, any assigned reviewer and report writer using the [team workflow](../.agents/skills/rsi/roles/common.md#return-results-as-work-finishes). For example, a diagnostic command can finish with exit 0 while its saved output comparison fails. Record both facts and link the comparison; distinguish measured speed, applicable validation evidence and the retention decision.
 
 Include formal measurements, diagnostic controls and tool-validation runs with their purposes and sample counts. Link auxiliary artifacts even when they have no `metrics.json`. On remote runs, the Experimenter preserves the agreed result location, including any transfer from scratch storage. Recipients read the originals there or use the delivered copy. On recovery, check the recorded remote job and result location before treating an absent local copy as missing execution.
 
@@ -163,6 +163,6 @@ Update the report after each measured iteration, including failed attempts, and 
 
 Write for readers who did not participate in the experiment, separating supported conclusions from hypotheses and pending validation. Before measurements are available, state the objective, starting conditions and what remains unmeasured.
 
-When measurements, comparison conditions or plotted judgments change, update the chart data, regenerate both figures and view them. Text-only corrections can be published without rerendering unchanged figures. Derive tables and plots from the same saved results and interpretation; a successful command alone does not select a valid optimization point.
+Deliver measurements and findings first. Refresh chart data and inspect regenerated figures at a stage summary or report delivery when plotted values or judgments have changed. Text-only updates need no redraw. Tables and plots use the same saved results and interpretation.
 
 On pause, stop or completion, update the same report with the reason, results obtained, retained changes and unfinished validation. Replace obsolete plans with the actual state and share the report path again.

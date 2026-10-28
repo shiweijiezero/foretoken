@@ -89,7 +89,7 @@ max_concurrent_threads_per_session = 16
 | Explorer | 检索本地或在线资料，研究机制，提出方法和新问题。 |
 | Worker | 实现方案，分析实验结果并继续改进。 |
 | Experimenter | 准备环境、部署和运行实验、保存结果、释放资源。 |
-| Observer | 每轮以新 Agent 独立读记录，逐项检查进度、研究深度和资源使用，提出调整建议。 |
+| Observer | 每轮独立评估进度、研究深度与资源使用，向主 Agent 提交发现及待决定的问题。 |
 
 ## 执行规则与参考资料
 

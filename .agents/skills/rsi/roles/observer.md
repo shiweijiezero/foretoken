@@ -15,7 +15,7 @@ The lead [creates new Observers](../SKILL.md#arrange-periodic-team-checks) at th
 
 The first check covers work since task start; later checks cover changes since the previous round and revisit its open findings. Reuse unchanged background evidence, reading earlier records when needed to judge the current period.
 
-Handoffs, summaries and previous reviews found in the work records are audit material, not inherited agent context. Use them to locate claims and check their sources. Reading such material does not invalidate a fresh check or require another Observer.
+Read saved handoffs, summaries and previous reviews to locate claims and check their sources. This is part of the new agent's independent investigation.
 
 ## Read the work without interrupting it
 
@@ -80,8 +80,8 @@ Use the [communication guidance](common.md#share-findings-and-keep-working), [ex
 | --- | --- | --- |
 | 18 | Waits and dependencies | Waits reflect real dependencies; independent implementation and exploration continue while the environment or a reply is unavailable. |
 | 19 | Communication and its cost | Brief coordination uses messages; long or shared material uses files. Check repeated reads of unchanged material, relayed updates and whether the lead is maintaining execution details that belong to an Experimenter. |
-| 20 | Performance conclusions | Results match actual code, settings and workloads, comparison differences are explained, and profiled or instrumented diagnosis is separate from ordinary measurement. |
-| 21 | Correctness and quality | Required validation is complete, with failures, empty answers and quality changes recorded rather than judging only speed or exit status. |
+| 20 | Performance conclusions | Measurements address the current question with suitable workloads and reuse comparable results. Claims match the actual code and conditions; profiling and temporary instrumentation remain separate from performance comparisons. |
+| 21 | Correctness and quality | Validation fits the change's effect on outputs and reuses applicable evidence; failures, empty answers and quality changes are recorded, without unnecessary repeated scoring. |
 
 ### 6. Progress and corrections
 
@@ -94,14 +94,14 @@ Use the [communication guidance](common.md#share-findings-and-keep-working), [ex
 
 Research takes time, and a sound experiment may fail. Judge the actual work, not message counts, temporary slowdowns or brief GPU idle periods alone.
 
-## Return useful corrections, then finish
+## Report the assessment, then finish
 
 Save a dated note under `<output-dir>/team/observations/`, with the agent identity in its filename. State the period and most important findings, then complete every checklist item in the six groups.
 
 | ID and check | Object | Requirement and evidence location | Facts and judgment | Status | Impact and question for the lead |
 | --- | --- | --- | --- | --- | --- |
 
-Name each requirement and locate evidence by session time, file line, run or field. Use "passed" for a verified fact with supporting evidence, "issue found" for a problem with its effect and remedy, "unresolved" for missing evidence or a pending decision, and "not applicable" with the reason. Write "no change needed" when appropriate.
+Locate evidence by session time, file line, run or field. Use "passed" for a verified fact, "issue found" for a problem and its impact, "unresolved" for missing evidence or a pending decision, and "not applicable" with the reason.
 
 Link recurring findings to their first note. Compare the lead's previous decision and expected result with actual changes, elapsed time and remaining dependencies. State the observed problem, its impact, the supporting artifacts and the unresolved decision. Existing owners and deadlines are evidence to inspect, not new assignments for the Observer to make.
 

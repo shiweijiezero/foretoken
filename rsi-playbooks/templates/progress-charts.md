@@ -49,18 +49,18 @@ Reference values use the same metric and baseline; trajectory points share the c
 
 | `status` | Meaning |
 | --- | --- |
-| `valid` | A comparable measured value that passed the required checks. |
+| `valid` | A comparable measured value that meets the task's constraints. |
 | `incorrect` | Failed correctness or quality checks. |
 | `compile_failed` | Build failed. |
 | `runtime_failed` | Execution failed or produced no usable measurement. |
 
 Failures appear in a separate lower strip. Set their `value: null` and omit `checkpoint` or set it to false. To invalidate an earlier result, make those changes and update its status, then regenerate the charts and link the correction in the iteration notes.
 
-A completed command does not establish `valid`: use the task's actual comparison and quality judgment. A candidate can have a usable speed measurement while quality review is pending or has failed. Preserve that value in the report table and, when its measurement conditions are comparable, in a named reference. References do not enter the best-so-far curve or milestones. For example:
+Follow the [validation guidance](../../.agents/skills/rsi/roles/common.md#review-claims-independently) to decide whether quality evaluation is needed. Comparable measurements can be `valid` when the change leaves output quality unaffected or existing evidence still applies. If an applicable quality question remains unresolved, retain the measured speed in the report and a named reference until it is resolved. References do not enter the best-so-far curve or milestones. For example:
 
 ```yaml
 references:
-  - label: Candidate speed; quality review pending
+  - label: Candidate speed; output consistency unresolved
     source: ../iterations/candidate/notes/analysis.md
     points: [{x: 3, value: 119}]
 ```

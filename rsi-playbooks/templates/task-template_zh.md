@@ -26,7 +26,7 @@ Observer 巡查间隔：<两轮团队巡查之间的时间，例如 1h>
 Codex 模型：Explorer = gpt-6-astra/high；Worker、Experimenter、Observer = gpt-6.1-sol/high
 Claude 模型：Explorer = Fable/Opus/high；Worker、Experimenter、Observer = sonnet/high
 最大并行实验数：<同时运行的独立实验上限，如 4；或由 Agent 根据资源预算确定并记录>
-评测负载：<指定数据集、长度、并发等负载组，或由 Agent 选择>
+评测负载：<日常迭代的低成本负载，以及何时扩大或进行最终验证；指定数据集、长度、并发等，或由 Agent 选择>
 优化目标：<主指标与目标值、需保持的条件、按各组或整体判断；也可开放探索>
 可改动范围：<如部署参数、推理引擎、请求路由，或不限定组件>
 工作与结束条件：<计时起点与总工作时长或达标条件；单轮实验预算可指定或由 Agent 根据假设选择>

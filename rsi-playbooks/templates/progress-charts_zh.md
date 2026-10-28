@@ -49,18 +49,18 @@ foretoken plot --progress results/my-experiment/figures/progress*.yaml
 
 | `status` | 含义 |
 | --- | --- |
-| `valid` | 条件可比、通过所需检查的实测值。 |
+| `valid` | 条件可比、符合任务约束的实测值。 |
 | `incorrect` | 未通过正确性或质量检查。 |
 | `compile_failed` | 构建失败。 |
 | `runtime_failed` | 执行失败或没有可用测量。 |
 
 失败尝试显示在独立底栏，`value` 设为 null，并移除 `checkpoint` 或设为 false。更正原先的无效结果时，按此调整数据并修改状态，重新绘图，在迭代笔记中链接更正依据。
 
-命令完成不等于 `valid`，应采用任务实际的可比性与质量判断。候选可能已有可用速度测量，但质量仍待审或未通过；在报告表中保留数值，测量条件可比时，也可用命名 reference 展示。Reference 不进入历史最佳曲线或里程碑。例如：
+是否需要质量评测，按[验证范围说明](../../.agents/skills/rsi/roles/common_zh.md#独立复核结论)判断。改动不影响输出质量，或已有证据仍适用时，可比实测值可直接记为 `valid`。确有与改动相关的质量问题尚未解决时，先在报告和命名 reference 中保留速度测量；reference 不进入历史最佳曲线或里程碑。例如：
 
 ```yaml
 references:
-  - label: 候选速度；质量待审
+  - label: 候选速度；输出一致性尚未确认
     source: ../iterations/candidate/notes/analysis.md
     points: [{x: 3, value: 119}]
 ```

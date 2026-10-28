@@ -2,7 +2,7 @@
 
 English | [简体中文](iteration-template_zh.md)
 
-Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Identify the developer, executor, writer, and independent reviewer, and link supporting runs under `../runs/`. Follow the [recording guide](../experiment-records.md#complete-the-experiment-notes) to preserve the history of analysis, reviews, and decisions.
+Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Identify the developer, executor, writer, and any assigned independent reviewer, and link supporting runs under `../runs/`. Follow the [recording guide](../experiment-records.md#complete-the-experiment-notes) to preserve the history of analysis, reviews, and decisions.
 
 Link task records for ownership and scheduling. Without task tools, record current owners, dependencies, resource allocations and measurement windows here.
 
@@ -27,7 +27,7 @@ Summarize the Worker's delivered changes, linking the checkout, revision or chan
 
 ## Measurements and interpretation
 
-Append a concise finding for each run, linking its original results and full analysis. Include diagnostic controls outside `runs/` and the accessible remote location when applicable. Distinguish command completion, measured request outcomes, required correctness or quality checks and the current interpretation. Link the evidence for each conclusion and name who receives the result for analysis, any assigned review and report updates.
+Append a concise finding for each run, linking its original results and full analysis. Include diagnostic controls outside `runs/` and the accessible remote location when applicable. Distinguish command completion, measured request outcomes, applicable correctness or quality evidence and the current interpretation. Link the evidence for each conclusion and name who receives the result for analysis, any assigned review and report updates.
 
 Keep workload and sample-size rationale, comparisons, and detailed explanations of the observed differences in the linked analysis.
 

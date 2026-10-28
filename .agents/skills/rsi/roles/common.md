@@ -17,6 +17,8 @@ Then study the source, configuration and earlier experiments for the assigned qu
 
 ## Assign complete questions
 
+For each question, identify the next decision and the least costly evidence that can inform it. Reuse relevant research, prepared environments and comparable results before doing more work. Expand source reading, builds or measurements when the current evidence leaves a specific question unresolved; a fixed workload sweep is useful only while its remaining points can inform the decision.
+
 The lead assigns a sustained research question with an owner, known findings, unresolved points and relevant code, references and experiment records. The owner follows it through investigation, implementation and analysis, identifying useful work that can continue while results are pending. Assign environment preparation separately so Explorers and Workers can proceed with source analysis, implementation and available checks.
 
 Each assignment explains what may change, which workloads and generation settings must stay the same, and how much time and compute are available. Research tests uncertain benefits; a speedup need not be proven before implementation begins. Also name who will run the experiment, which checkout and environment to use, and where to save results. Members work independently within these agreements and ask the lead to coordinate changes to priorities, resource budgets, shared environments or comparison conditions.
@@ -65,11 +67,13 @@ Existing sweeps can run fixed workload groups and repetitions continuously. Task
 
 The Experimenter owns a run through result delivery and resource release. The lead names the Worker and report writer, and an independent reviewer when the comparison needs one. As each run finishes, the Experimenter reads its outcome, makes the original results accessible at the agreed location and sends the same finding and links directly to these recipients. This includes diagnostic controls saved outside a benchmark's `runs/` directory. See [complete the experiment notes](../../../../rsi-playbooks/experiment-records.md#complete-the-experiment-notes) for delivery contents and remote recovery.
 
-The Worker interprets the result and continues the implementation question; the reviewer checks the claim; the writer updates the existing report with the measured result and any pending judgment. These stages can proceed together without a new lead assignment after every point. If a recipient is idle, use the harness's native follow-up that starts their next turn, or ask the lead to do so when only it has that capability. Sending a message or recording a queued step alone does not establish that the recipient resumed.
+Deliver each completed measurement point without waiting for the full workload group. The Worker analyzes available evidence while the Experimenter continues remaining measurements; pending points stay explicit. Any assigned reviewer checks the claim, and the writer updates the report. These stages proceed without a new lead assignment after every point. If a recipient is idle, use the harness's native follow-up, or ask the lead when only it can resume the member. A message or queued step alone does not resume an idle member.
 
 The Experimenter or an explicitly accepting successor remains responsible for undelivered results. Record missing access and the person taking the next action in the existing iteration notes. The lead resolves changes to priorities, budgets, comparison conditions and retention while unaffected work continues. Reviewed results remain useful while their inputs and conditions still apply.
 
 ## Review claims independently
+
+Choose validation from the change's effect on model outputs. If outputs are unaffected or existing quality evidence still applies, record that basis and reuse the conclusion. When a change may affect outputs and the evidence is insufficient, validate the affected behavior within the task's evaluation budget and frequency; run quality scoring only when needed. Completing a performance measurement does not itself call for another quality evaluation.
 
 Before retaining an approach, the lead asks someone who did not implement or run it to check the results. The reviewer examines the actual code, runtime configuration and original data to confirm that the intended change ran. They then check precision, workload, output settings and resources, and consider whether failures, caches, warmup or competing work affected the comparison.
 

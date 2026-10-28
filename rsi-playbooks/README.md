@@ -89,7 +89,7 @@ The task file expresses user requirements. The RSI skill and role instructions o
 | Explorer | Search local or online sources, study mechanisms, and propose methods and questions. |
 | Worker | Implement approaches, analyze results and improve the code or configuration. |
 | Experimenter | Prepare environments, deploy and run experiments, save results and release resources. |
-| Observer | Use a new agent each round to read records independently, check progress, research depth and resource use item by item, and suggest adjustments. |
+| Observer | Independently assess progress, research depth and resource use each round, and alert the lead to findings and decisions needing attention. |
 
 ## Execution rules and references
 
