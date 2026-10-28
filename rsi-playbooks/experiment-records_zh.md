@@ -49,9 +49,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 results/decode/parallelism/
 ├── report.md                  # Agent 维护的整体报告
 ├── figures/
-│   ├── progress.yaml          # 一个指标、一组对照条件的绘图数据
-│   ├── progress-milestones.png
-│   └── progress-search.png
+│   ├── progress-main.yaml          # 一个指标、一组对照条件的绘图数据
+│   ├── progress-main-milestones.png
+│   └── progress-main-search.png
 ├── team/                      # Agent 维护的团队与巡查记录
 │   ├── README.md              # 任务、提醒与处理决定
 │   └── evaluations/          # 每轮 Evaluator 的独立评估笔记

@@ -7,7 +7,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](progress-charts_zh.md)
 
-The milestone chart follows measured cumulative versions. The search chart shows the compared approaches, the best result so far and failed attempts. Place the matching search chart immediately above each overview table in the [experiment report](../experiment-records.md#maintain-the-user-facing-report).
+The milestone chart follows measured cumulative versions. The search chart shows the compared approaches, the best result so far and failed attempts. Place both matching charts immediately above each overview table in the [experiment report](../experiment-records.md#maintain-the-user-facing-report).
+
+The horizontal axis follows iteration order or elapsed time; the vertical axis shows the improvement ratio relative to the original baseline. Prefix chart data and image filenames with `progress-`, for example `progress-random-concurrency-1.yaml`.
 
 ## Create the charts
 
@@ -15,16 +17,16 @@ Use the installed Foretoken CLI. Chinese labels need an installed Chinese font, 
 
 ```bash
 mkdir -p results/my-experiment/figures
-cp rsi-playbooks/templates/progress-template.yaml results/my-experiment/figures/progress.yaml
+cp rsi-playbooks/templates/progress-template.yaml results/my-experiment/figures/progress-main.yaml
 ```
 
-In `progress.yaml`, fill in the title, comparison conditions and update time, then add the baseline and measurements as described below. Leave `baseline.value: null` until the baseline is measured. Generate the charts:
+In `progress-main.yaml`, fill in the title, comparison conditions and update time, then add the baseline and measurements as described below. Leave `baseline.value: null` until the baseline is measured. Generate the charts:
 
 ```bash
 foretoken plot --progress results/my-experiment/figures/progress*.yaml
 ```
 
-The command exports milestone and search charts as PNG, SVG and PDF, with names such as `progress-milestones.png` and `progress-search.png`. An unmeasured baseline produces pending-measurement charts. Use the [report template](report-template.md) to place the corresponding PNGs directly above their tables.
+The command exports milestone and search charts as PNG, SVG and PDF, with names such as `progress-main-milestones.png` and `progress-main-search.png`. An unmeasured baseline produces pending-measurement charts. Use the [report template](report-template.md) to place the corresponding PNGs directly above their tables.
 
 Use a separate file for each metric and comparison condition, such as `progress-concurrency-1-throughput.yaml` and `progress-concurrency-16-latency.yaml`. Export all of the report's conditions together: each invocation replaces the previous chart files in its output directory. Inputs in one directory default to that directory; inputs from different directories default to `./plots`. Use `--output-dir` to choose another destination. Each output name uses its input's filename stem. For a style preview, copy the [synthetic example](progress-example.yaml) to a temporary directory and render that copy.
 

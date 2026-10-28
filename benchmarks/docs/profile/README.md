@@ -98,7 +98,9 @@ For external traffic, use `foretoken deploy examples/feature/profile/nsight --na
 
 ## Clean up
 
-When the deployment and capture records are no longer needed, clean up with:
+Throughout analysis, retain the findings, reproduction information and needed originals, and promptly remove task-owned traces that are no longer useful.
+
+When the deployment is no longer needed, remove it with:
 
 ```bash
 foretoken delete examples/quickstart/qwen3-0.6b

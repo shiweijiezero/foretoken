@@ -49,9 +49,9 @@ For example, when logged in to W&B, replace the recipe's output options with:
 results/decode/parallelism/
 ├── report.md                  # Agent-maintained overall report
 ├── figures/
-│   ├── progress.yaml          # Chart data for one metric and comparison condition
-│   ├── progress-milestones.png
-│   └── progress-search.png
+│   ├── progress-main.yaml          # Chart data for one metric and comparison condition
+│   ├── progress-main-milestones.png
+│   └── progress-main-search.png
 ├── team/                      # Agent-maintained team and assessment notes
 │   ├── README.md              # Task, reminders and follow-up decisions
 │   └── evaluations/          # One dated note per Evaluator check

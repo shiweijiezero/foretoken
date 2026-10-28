@@ -98,7 +98,9 @@ foretoken perf examples/feature/profile/nsight --name nsight \
 
 ## 清理
 
-不再需要该部署及采集记录时清理：
+分析过程中保留结论、复现信息和必要原件，及时清理本任务已无用途的 trace。
+
+不再需要该部署时，执行：
 
 ```bash
 foretoken delete examples/quickstart/qwen3-0.6b

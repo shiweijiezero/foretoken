@@ -72,6 +72,8 @@ Candidates select the same shared [data directory](../../../docs/features/model-
 
 ## Advance each iteration
 
+Continue the main implementation line from the best validated retained configuration; the initial baseline remains the comparison reference. Independent exploration and ablations can branch separately, then bring effective changes back for combined measurement and further iteration.
+
 Organize iterations as progress within the assigned research questions: investigate the mechanism, implement the core change, integrate it and evaluate its service behavior. The lead considers both the research portfolio and the execution queue. A prototype need not produce a speedup at each stage; use its evidence to develop the mechanism or reassess the hypothesis. Workers retain ownership as results return, while useful configuration experiments can proceed in parallel. Existing [recipes](../../../benchmarks/docs/recipes.md), examples and CLI help guide execution, with resources and comparison conditions arranged before the run.
 
 When preparation or measurement is blocked, the lead assigns an owner to resolve it while other members continue research, implementation or local validation that does not depend on that result. Candidates and validation methods can be prepared from available evidence before a full baseline or profile is available; measurements then determine whether to adopt them.

@@ -7,7 +7,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](progress-charts.md) | 简体中文
 
-里程碑图展示实测累计版本的变化，搜索图展示对比方案、截至当时的最佳结果和失败尝试。将对应搜索图紧接在[实验报告](../experiment-records_zh.md#持续维护用户报告)的各张总表上方。
+里程碑图展示实测累计版本的变化，搜索图展示对比方案、截至当时的最佳结果和失败尝试。将对应的两类图紧接在[实验报告](../experiment-records_zh.md#持续维护用户报告)的各张总表上方。
+
+横轴按迭代顺序或时间推进，纵轴展示相对原始 baseline 的改善倍数。绘图数据和图片使用 `progress-` 前缀，例如 `progress-random-concurrency-1.yaml`。
 
 ## 首次生成
 
@@ -15,16 +17,16 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ```bash
 mkdir -p results/my-experiment/figures
-cp rsi-playbooks/templates/progress-template.yaml results/my-experiment/figures/progress.yaml
+cp rsi-playbooks/templates/progress-template.yaml results/my-experiment/figures/progress-main.yaml
 ```
 
-在 `progress.yaml` 中填写标题、对照条件和更新时间，再按下文填入基线和测量结果。基线尚未测得时，保留 `baseline.value: null`。然后生成图片：
+在 `progress-main.yaml` 中填写标题、对照条件和更新时间，再按下文填入基线和测量结果。基线尚未测得时，保留 `baseline.value: null`。然后生成图片：
 
 ```bash
 foretoken plot --progress results/my-experiment/figures/progress*.yaml
 ```
 
-命令以 PNG、SVG 和 PDF 导出里程碑图与搜索图，例如 `progress-milestones.png` 和 `progress-search.png`。基线尚未测得时生成待测图片。按[报告模板](report-template_zh.md)将对应 PNG 紧接在总表上方。
+命令以 PNG、SVG 和 PDF 导出里程碑图与搜索图，例如 `progress-main-milestones.png` 和 `progress-main-search.png`。基线尚未测得时生成待测图片。按[报告模板](report-template_zh.md)将对应 PNG 紧接在总表上方。
 
 每个指标和每组对照条件分别使用独立文件，例如 `progress-concurrency-1-throughput.yaml` 和 `progress-concurrency-16-latency.yaml`。一次导出本报告的所有条件：每次命令会替换输出目录中上次导出的图表文件。输入均在同一目录时默认输出到该目录，来自不同目录时默认输出到 `./plots`；用 `--output-dir` 指定其他位置。输出名沿用各输入文件去掉扩展名后的名称。预览样式时，将[虚构数据示例](progress-example.yaml)复制到临时目录，再对副本执行绘图命令。
 
