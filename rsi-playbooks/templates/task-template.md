@@ -24,7 +24,7 @@ Experimenter count: <concurrent subagents in this role, excluding the lead; a no
 Observer count: 1
 Observer check interval: <time between team checks, for example 1h>
 Agent models: Explorer = gpt-6-astra/high; Worker, Experimenter and Observer = gpt-6.1-sol/high
-Claude models: Explorer = opus/high; Worker, Experimenter and Observer = sonnet/high
+Claude models: Explorer = Fable/Opus/high; Worker, Experimenter and Observer = sonnet/high
 Maximum parallel experiments: <simultaneous independent experiments, for example 4; or have the agent determine and record the limit from the resource budget>
 Evaluation workloads: <specified dataset, length and concurrency groups, or agent-selected>
 Optimization objectives: <primary metric and target, conditions to preserve, and per-group or aggregate judgment; open-ended exploration is also valid>
