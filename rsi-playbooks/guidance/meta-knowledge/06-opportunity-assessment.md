@@ -64,7 +64,7 @@ F describes the mechanism under the task's semantics, precision, hardware and re
 | 3 | Dependencies and added costs accounted for within task constraints | Matched service comparison; replication or coverage incomplete | Resolves a key causal or correctness uncertainty |
 | 4 | Representative execution demonstrates the mechanism and required invariants | Repeated representative comparisons support the claimed scope | Independently checked finding reused in relevant cases |
 
-Link the supporting evidence, scope and remaining assumptions. A prototype bug does not disprove the whole mechanism; a component result does not establish service performance. E reflects evidence already available, including applicable correctness evidence, and does not prescribe repeated quality scoring. Code volume, messages and PR counts do not establish I.
+Link the supporting evidence, scope and remaining assumptions. A prototype bug does not disprove the whole mechanism; a component result does not establish service performance. E includes applicable correctness evidence already available. Code volume, messages and PR counts do not establish I.
 
 ### Additional cost: C
 
@@ -72,7 +72,7 @@ Keep spent cost for reflection and additional cost for decisions. Record wall ho
 
 Compare costs to the same evidence milestone. A component probe and complete service validation deliver different results; show the remaining task-level cost when the next milestone is only a probe.
 
-With a defined remaining resource budget `B`, score additional cost `c` by `r = c/B`. All rows in a snapshot use the same observation time and budget. Keep raw costs across checks: a shrinking budget can lower C without making the method less efficient.
+For a remaining resource budget `B > 0`, score additional cost `c` by `r = c/B`. With an exhausted budget, positive additional cost is C0 and zero additional cost is C4. All rows in a snapshot use the same observation time and budget. Keep raw costs across checks: a shrinking budget can lower C without making the method less efficient.
 
 | C (higher means less costly) | Fraction of remaining budget |
 | --- | --- |
