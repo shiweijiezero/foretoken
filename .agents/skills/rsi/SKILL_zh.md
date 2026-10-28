@@ -53,6 +53,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 收到 Evaluator 完成通知时，主 Agent 登记巡查起止时间，阅读评估，在已有团队记录中写下自己的判断与决定。延期或不采纳时说明依据，并继续已就绪的工作。暂停、停止、到期或完成时，停用提醒并结束巡查。
 
+结合 Observer 的[量化机会评估](../../../rsi-playbooks/guidance/meta-knowledge/06-opportunity-assessment_zh.md)反思当前方向与剩余预算。主 Agent 记录自己的决定和后续分工，评分与前沿不自动派工。
+
 ## 隔离候选工作区与执行
 
 每名 Worker 使用独立工作区、任务分支和固定实例名，跨轮复用。交付的版本在构建和评测期间保持不变，具体安排见[候选交接](roles/common_zh.md#分开候选准备与评测)。
