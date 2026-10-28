@@ -73,7 +73,7 @@ The Experimenter or an explicitly accepting successor remains responsible for un
 
 ## Review claims independently
 
-Choose validation from the change's effect on model outputs. If outputs are unaffected or existing quality evidence still applies, record that basis and reuse the conclusion. When a change may affect outputs and the evidence is insufficient, validate the affected behavior within the task's evaluation budget and frequency; run quality scoring only when needed. Completing a performance measurement does not itself call for another quality evaluation.
+Choose validation from the change's effect on model outputs. If outputs are unaffected or existing quality evidence still applies, record that basis and reuse the conclusion. When a change may affect outputs and the evidence is insufficient, validate the affected behavior within the task's evaluation budget and frequency; run quality scoring only when needed.
 
 Before retaining an approach, the lead asks someone who did not implement or run it to check the results. The reviewer examines the actual code, runtime configuration and original data to confirm that the intended change ran. They then check precision, workload, output settings and resources, and consider whether failures, caches, warmup or competing work affected the comparison.
 

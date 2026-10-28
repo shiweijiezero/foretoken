@@ -27,7 +27,7 @@ Record initial environment preparation separately from each iteration's compilat
 
 To find performance bottlenecks, start with Foretoken's existing [profiling tools](../../../../rsi-playbooks/guidance/meta-knowledge/02-bottleneck-analysis.md). Compare speed in a separate run with profiling and temporary instrumentation disabled and the intended deployment settings restored.
 
-Result analysis distinguishes measurement completion, request success and acceptance against the task requirements. A command's exit alone does not establish all three, so the Experimenter also checks request records and aggregate metrics.
+Check request records and aggregate metrics to establish whether measurement completed, requests succeeded and results met the task requirements.
 
 Compare throughput with actual request concurrency and timing. When request latency stays similar but wall time grows, inspect the actual benchmark client and its result-recording path before attributing the difference to the model. Keep comparisons under the same execution conditions when correcting a measurement problem.
 

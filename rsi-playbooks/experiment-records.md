@@ -93,7 +93,7 @@ Supporting research, scripts, preparation logs and cleanup records also belong u
 
 The lead keeps the check schedule in `<output-dir>/team/README.md` and links each Evaluator note under `team/evaluations/`. Existing task records hold action owners, decisions and expected results. Keep unresolved findings linked to their first note, update their progress there, and have the report link to this current state. Each assessment preserves the evidence and judgment from that check.
 
-Task records describe intent, ownership and decisions. Read actual agent activity from the native harness, hook bindings from continuation status, and jobs from their execution owner. When a report needs a snapshot, include its observation time and source. Avoid maintaining another live-state copy in each task, member and report file. An action closes when its owner links the resulting change or explains the decision to stop, not merely when a follow-up message was sent.
+Task records describe intent, ownership and decisions. Read actual agent activity from the native harness, hook bindings from continuation status, and jobs from their execution owner. When a report needs a snapshot, include its observation time and source. Avoid maintaining another live-state copy in each task, member and report file. Close an action with its owner's link to the resulting change or explanation of the decision to stop.
 
 ### Read session evidence
 
@@ -149,7 +149,7 @@ Attribute analysis, reviews, and decisions to their authors. Each decision state
 
 After each run, the Experimenter adds its original location and finding to the [iteration notes](templates/iteration-template.md), then delivers them to the Worker, any assigned reviewer and report writer using the [team workflow](../.agents/skills/rsi/roles/common.md#return-results-as-work-finishes). For example, a diagnostic command can finish with exit 0 while its saved output comparison fails. Record both facts and link the comparison; distinguish measured speed, applicable validation evidence and the retention decision.
 
-Include formal measurements, diagnostic controls and tool-validation runs with their purposes and sample counts. Link auxiliary artifacts even when they have no `metrics.json`. On remote runs, the Experimenter preserves the agreed result location, including any transfer from scratch storage. Recipients read the originals there or use the delivered copy. On recovery, check the recorded remote job and result location before treating an absent local copy as missing execution.
+Include formal measurements, diagnostic controls and tool-validation runs with their purposes and sample counts. Link auxiliary artifacts even when they have no `metrics.json`. On remote runs, the Experimenter preserves the agreed result location, including any transfer from scratch storage. Recipients read the originals there or use the delivered copy. On recovery, check the recorded remote job and result location.
 
 Keep the report's current conclusions aligned with the iteration history and link the supporting entries. Reusable knowledge can also be revised as understanding improves, with links back to the experiment history.
 

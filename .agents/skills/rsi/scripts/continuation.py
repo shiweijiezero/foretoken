@@ -158,7 +158,7 @@ class Continuation:
             )
 
     def status(self, harness: str, session: str) -> dict[str, Any]:
-        """Return the last continuation decisions, not a mirror of native agent activity."""
+        """Return this task's recorded continuation decisions and queued steps."""
         task = dict(self.session(harness, session))
         task["members"] = [dict(row) for row in self.db.execute(
             "SELECT agent,role,state,next_step,reason FROM members WHERE harness=? AND session=? ORDER BY role,agent",
@@ -167,7 +167,7 @@ class Continuation:
         return task
 
     def review(self, task: sqlite3.Row, event_name: str) -> dict[str, Any]:
-        """Deliver pending completion decisions once to the lead without replacing tool results."""
+        """Deliver pending completion decisions once to the lead at the current hook boundary."""
         identity = (task["harness"], task["session"])
         self.db.execute(
             "UPDATE sessions SET review_pending=0 WHERE harness=? AND session=?", identity

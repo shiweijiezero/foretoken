@@ -20,9 +20,9 @@ Codex models: Explorer = gpt-6-astra/high; Worker, Experimenter and Evaluator = 
 Claude models: Explorer = Fable/Opus/high; Worker, Experimenter and Evaluator = sonnet/high
 Maximum parallel experiments: at most 3 two-GPU service candidates; smaller focused experiments share the six-GPU budget
 Parallel scheduling: reserve capacity for platform services, builds, and benchmark clients, then schedule experiments by their actual resource requests and record the achieved parallelism
-Iteration workloads: random only by default, at concurrency 1 and 16; analyze each completed point without waiting for the full group
+Iteration workloads: random only by default, at concurrency 1 and 16; analyze each point as it completes
 Extended validation: StudyChat for multi-turn hypotheses and the final retained approach, reusing existing matched controls; quality evaluation as needed
-Accuracy evaluation: run foretoken eval as needed for changes that may affect answer quality. Prioritize candidates being considered for retention, reuse results while their conditions still apply, and avoid repeating quality scoring after every performance measurement.
+Accuracy evaluation: run foretoken eval when an output-affecting change needs new quality evidence, prioritizing candidates considered for retention.
 Allowed changes: implementation and configuration at any layer, within the precision and resource constraints above
 Measurement budget per iteration: allow 10 minutes by default and use enough samples to answer the question; analyze once they finish. Adjust the budget and request count to the workload, recording the reason and time spent
 Work duration: a total budget of 24 hours from the start of task execution

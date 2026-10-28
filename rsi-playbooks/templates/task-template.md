@@ -33,9 +33,9 @@ Work and completion conditions: <clock start and total work period or target-bas
 Deliverables: <full iteration history: motivation, approach and changes, measurements, analysis, time spent and next decision for each iteration; overall gains, retained approach, code changes and result links>
 ```
 
-A starting configuration is an exploration aid, not an additional constraint. Check it against the task and current environment, then evolve it within the allowed changes. Without one, discover an initial deployment and record it before making comparisons. Use prior retained results when their conditions still apply.
+Check the starting configuration against the task and current environment, then evolve it within the allowed changes. Without one, discover an initial deployment and record it before making comparisons. Use prior retained results when their conditions still apply.
 
-Evaluator count is the number of new agents created for each check, not a permanent team size. It defaults to 1 when omitted or blank; set it to 0 to disable checks. When enabled, specify the interval here. The lead fills in a missing interval before execution and arranges the reminders and fresh agents through the [RSI skill](../../.agents/skills/rsi/SKILL.md#arrange-periodic-team-checks).
+Evaluator count is the number of new agents created for each check. It defaults to 1 when omitted or blank; set it to 0 to disable checks. When enabled, specify the interval here. The lead fills in a missing interval before execution and arranges the reminders and fresh agents through the [RSI skill](../../.agents/skills/rsi/SKILL.md#arrange-periodic-team-checks).
 
 The parallel-experiment limit counts independent experiments running at once; request concurrency belongs in the workload. Distinguish the final deployment budget from each experiment's needs. Smaller diagnostic experiments may use fewer devices; allocate the remaining resources to other useful work while preserving comparison conditions.
 
