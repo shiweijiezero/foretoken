@@ -11,12 +11,12 @@
 最终部署预算：单机最多 2 张沐曦 GPU；目标模型、辅助模型与 frontend 的工作负载合计不超过 32 核 CPU、250G 主机内存【不可修改】
 实验规模：服务候选遵守最终预算；算子、编译或正确性等局部实验按需使用更少资源，包括单卡
 可用资源：实验合计最多使用 6 张沐曦 GPU；按实际主机容量安排 CPU、内存和存储【不可修改】
-Explorer 数量：2【不可修改】
+Explorer 数量：4【不可修改】
 Worker 数量：4【不可修改】
 Experimenter 数量：3【不可修改】
 Evaluator 数量：1【不可修改】
 Evaluator 巡查间隔：1h【不可修改】
-Codex 模型：Explorer = gpt-6-astra/high；Worker、Experimenter、Evaluator = gpt-6.1-sol/high【不可修改】
+Codex 模型：Explorer、Evaluator = gpt-6-astra/high；Worker、Experimenter = gpt-6.1-sol/high【不可修改】
 Claude 模型：Explorer = Fable/Opus/high；Worker、Experimenter、Evaluator = sonnet/high【不可修改】
 最大并行实验数：最多 3 个双卡服务候选；更小规模的局部实验共享六卡预算
 并行安排：先为平台服务、构建和评测客户端预留资源，再按各组实际资源请求安排实验，并记录并行度

@@ -18,12 +18,12 @@ Precision: <for example, fixed BF16, a comparison of BF16 and FP8, or unrestrict
 Deployment layout: <for example, colocated serving, prefill/decode disaggregation, or unrestricted>
 Final deployment budget: <node placement and total GPU, CPU, and memory limits for the retained service; specify which workloads are included, or leave agent-selected>
 Available resources: <node count and available GPUs, CPU cores and memory per node; for example, 2*8 C500 GPUs with 64 CPU cores and 512 GiB memory per node>
-Explorer count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank for the lead to choose>
+Explorer count: 4
 Worker count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank for the lead to choose>
 Experimenter count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank for the lead to choose>
 Evaluator count: 1
 Evaluator check interval: <time between team checks, for example 1h>
-Codex models: Explorer = gpt-6-astra/high; Worker, Experimenter and Evaluator = gpt-6.1-sol/high
+Codex models: Explorer and Evaluator = gpt-6-astra/high; Worker and Experimenter = gpt-6.1-sol/high
 Claude models: Explorer = Fable/Opus/high; Worker, Experimenter and Evaluator = sonnet/high
 Maximum parallel experiments: <simultaneous independent experiments, for example 4; or have the agent determine and record the limit from the resource budget>
 Evaluation workloads: <low-cost workloads for routine iterations, and when broader or final validation is needed; specify datasets, lengths and concurrency groups or leave agent-selected>
@@ -35,7 +35,7 @@ Deliverables: <full iteration history: motivation, approach and changes, measure
 
 The starting configuration provides a comparison point. Its structure and parameters remain design choices unless marked as fixed. A fixed target model still permits research into auxiliary models and their weights, and execution mechanisms within the task requirements. Without a starting configuration, discover an initial deployment and record it before making comparisons. Use prior retained results when their conditions still apply.
 
-Evaluator count is the number of new agents created for each check. It defaults to 1 when omitted or blank; set it to 0 to disable checks. When enabled, specify the interval here. The lead fills in a missing interval before execution and arranges the reminders and fresh agents through the [RSI skill](../../.agents/skills/rsi/SKILL.md#arrange-periodic-team-checks).
+Evaluator count is the number of new agents created for each check. It defaults to 1 when omitted or blank; set it to 0 to disable checks. When enabled, specify the interval here. The lead fills in a missing interval and enables the recurring reminder at task start, creating fresh Evaluators each round as described in the [RSI skill](../../.agents/skills/rsi/SKILL.md#arrange-periodic-team-checks).
 
 The parallel-experiment limit counts independent experiments running at once; request concurrency belongs in the workload. Distinguish the final deployment budget from each experiment's needs. Smaller diagnostic experiments may use fewer devices; allocate the remaining resources to other useful work while preserving comparison conditions.
 
