@@ -3,9 +3,11 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# 06｜评估研究机会
+# 06｜帕累托引导探索（PGE）
 
 [English](06-opportunity-assessment.md) | 简体中文
+
+帕累托引导探索（Pareto-Guided Exploration，PGE）通过机会评估、前沿识别、主 Agent 决策和实验反馈，组织 Agent 的推理优化工作。
 
 结合已有源码分析和实验记录，比较一个方向的收益空间与所需投入。Observer 评估当前证据和时间使用，主 Agent 决定方向、负责人和预算。评估与决定分别写入已有巡查笔记和团队记录。
 

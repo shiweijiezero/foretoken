@@ -3,9 +3,11 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# 06 | Assess research opportunities
+# 06 | Pareto-Guided Exploration
 
 English | [简体中文](06-opportunity-assessment_zh.md)
+
+Pareto-Guided Exploration (PGE) organizes agentic inference optimization through opportunity assessment, frontier identification, lead decisions and feedback from experiments.
 
 Compare a direction's potential gain with the work it requires, using existing source analysis and experiment records. The Observer assesses current evidence and time use; the lead decides directions, owners and budgets. Keep both in the existing observation and team records.
 
