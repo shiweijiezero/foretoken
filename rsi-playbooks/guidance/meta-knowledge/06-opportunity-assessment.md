@@ -9,13 +9,13 @@ English | [简体中文](06-opportunity-assessment_zh.md)
 
 Pareto-Guided Exploration (PGE) organizes agentic inference optimization through opportunity assessment, frontier identification, lead decisions and feedback from experiments.
 
-Compare a direction's potential gain with the work it requires, using existing source analysis and experiment records. The Observer assesses current evidence and time use; the lead decides directions, owners and budgets. Keep both in the existing observation and team records.
+Compare a direction's potential gain with the work it requires, using existing source analysis and experiment records. The Evaluator assesses current evidence and time use; the lead decides directions, owners and budgets. Keep both in the existing observation and team records.
 
-Update changed entries at Observer checks. Reuse applicable evidence and unchanged assessments; a score does not require a new experiment or a quality evaluation. Quality checks follow the task's agreed frequency and are needed for changes that may affect outputs when existing evidence is insufficient.
+Update changed entries at Evaluator checks. Reuse applicable evidence and unchanged assessments; a score does not require a new experiment or a quality evaluation. Quality checks follow the task's agreed frequency and are needed for changes that may affect outputs when existing evidence is insufficient.
 
 ## Start with a comparison
 
-Group measurements by research question; give a candidate its own row when its mechanism, gain or cost materially differs. Identify the workload, reference, candidate revision, current stage, source links and the owner's recorded estimate of remaining work. Missing estimates stay `U` (unknown); use `N/A` for an inapplicable dimension. The Observer reports missing decisions to the lead.
+Group measurements by research question; give a candidate its own row when its mechanism, gain or cost materially differs. Identify the workload, reference, candidate revision, current stage, source links and the owner's recorded estimate of remaining work. Missing estimates stay `U` (unknown); use `N/A` for an inapplicable dimension. The Evaluator reports missing decisions to the lead.
 
 For example, these synthetic estimates use one throughput workload, a common baseline, the same service-validation milestone and eight remaining wall hours. Other resource costs are assumed equal and within budget.
 
@@ -92,7 +92,7 @@ Environment work earns inference G only from measured inference changes. Record 
 
 Estimate net cumulative preparation savings as `N × saving_per_use − remaining_repair_and_validation_time`, with N limited to plausible remaining uses and deployment included. Savings count as task wall time only on the serial critical path; overlapping preparation needs a schedule-based estimate. Show GPU and Agent cost separately. When a repair makes an otherwise impossible experiment executable, identify that experiment rather than inventing saved minutes. Attribute an enabled inference gain once.
 
-The Observer reports observed and task-to-date time allocation, coverage and delayed work. Growing environment cost without improved readiness is a finding for the lead, not an automatic percentage limit.
+The Evaluator reports observed and task-to-date time allocation, coverage and delayed work. Growing environment cost without improved readiness is a finding for the lead, not an automatic percentage limit.
 
 ## Identify non-dominated opportunities
 
@@ -100,7 +100,7 @@ Pareto dominance means no worse on every compared objective and strictly better 
 
 For bounded estimates, A robustly dominates B only if every gain lower bound of A is at least B's upper bound and every cost upper bound of A is at most B's lower bound, with one strict inequality. This conclusion holds under the stated bounds and assumptions. Otherwise leave dominance unresolved, including unknown values or incompatible conditions. Coarse score ties do not imply equal raw values.
 
-Keep demonstrated constraint violations outside the feasible front with their counterevidence; unresolved feasibility stays unknown. Report absolute headroom and time allocation as well as front membership: a cheap 1% gain can remain non-dominated. The Observer alerts the lead to low ceilings, regressions, weak estimates or growing costs. The lead explains its choice, assigns work and budget, and sets when to reconsider it. Subsequent checks compare that decision with actual work and evidence.
+Keep demonstrated constraint violations outside the feasible front with their counterevidence; unresolved feasibility stays unknown. Report absolute headroom and time allocation as well as front membership: a cheap 1% gain can remain non-dominated. The Evaluator alerts the lead to low ceilings, regressions, weak estimates or growing costs. The lead explains its choice, assigns work and budget, and sets when to reconsider it. Subsequent checks compare that decision with actual work and evidence.
 
 ## References
 

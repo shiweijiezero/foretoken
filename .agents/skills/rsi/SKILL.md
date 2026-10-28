@@ -58,7 +58,7 @@ Follow the [Evaluator instructions](roles/evaluator.md) to create new agents wit
 
 On an Evaluator's completion notification, the lead records the check's start and completion, reads the assessment and records its own judgment and decisions in the team notes. Explain deferred or declined findings and continue ready work. On pause, stop, deadline or completion, disable reminders and end active checks.
 
-Use the Observer’s [PGE opportunity assessment](../../../rsi-playbooks/guidance/meta-knowledge/06-opportunity-assessment.md) to review the current direction and remaining budget. The lead records its own decision and resulting assignments; the scores and frontier do not schedule work.
+Use the Evaluator’s [PGE opportunity assessment](../../../rsi-playbooks/guidance/meta-knowledge/06-opportunity-assessment.md) to review the current direction and remaining budget. The lead records its own decision and resulting assignments; the scores and frontier do not schedule work.
 
 ## Isolate candidate workspaces and execution
 
