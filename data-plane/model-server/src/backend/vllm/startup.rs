@@ -226,7 +226,7 @@ pub async fn spawn_engine_attempt(
             .retain(|argument| argument != "--load-format=modelexpress");
     }
     // Rust preprocessing already normalizes pixels; newer engines must not normalize twice.
-    if matches!(engine_protocol, EngineCoreProtocol::V0_28ToV0_31) {
+    if matches!(engine_protocol, EngineCoreProtocol::V0_28ToV0_32) {
         managed_engine
             .python_args
             .push("--no-mm-device-do-normalize".into());
@@ -666,15 +666,15 @@ print(json.dumps([vllm_version, model_express, dma_buf]))
     let major = parts.next().and_then(|part| part.parse::<u64>().ok());
     let minor = parts.next().and_then(|part| part.parse::<u64>().ok());
     match (major, minor) {
-        (Some(0), Some(minor @ 20..=31)) => {
+        (Some(0), Some(minor @ 20..=32)) => {
             let protocol = match minor {
                 20 => EngineCoreProtocol::V0_20,
                 21..=25 => EngineCoreProtocol::V0_21ToV0_25,
                 26..=27 => EngineCoreProtocol::V0_26ToV0_27,
-                _ => EngineCoreProtocol::V0_28ToV0_31,
+                _ => EngineCoreProtocol::V0_28ToV0_32,
             };
             // Match the native lifecycle profiles installed by the vLLM patch catalog.
-            let retained_prefixes = minor == 31 || version.split('+').next() == Some("0.30.0.dev0");
+            let retained_prefixes = minor >= 31 || version.split('+').next() == Some("0.30.0.dev0");
             Ok(VllmInspection {
                 protocol,
                 retained_prefixes,
@@ -683,7 +683,7 @@ print(json.dumps([vllm_version, model_express, dma_buf]))
             })
         }
         _ => Err(format!(
-            "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.31"
+            "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.32"
         )
         .into()),
     }

@@ -15,7 +15,7 @@ index d1c20ad58..89a6cd8c3 100644
      /// handshake. In bootstrapped mode it binds the provided frontend
      /// sockets and waits for the expected engine registration frames.
      pub async fn connect(config: EngineCoreClientConfig) -> Result<Self> {
-+        Self::connect_with_protocol(config, EngineCoreProtocol::V0_28ToV0_31).await
++        Self::connect_with_protocol(config, EngineCoreProtocol::V0_28ToV0_32).await
 +    }
 +
 +    /// Connect using an explicitly selected vLLM EngineCore wire layout.
@@ -147,7 +147,7 @@ index 9c539bf18..1365cf663 100644
                  engine_id: EngineId::from(b"engine-0"),
                  ready_response: default_ready_response(),
              }],
-+            EngineCoreProtocol::V0_28ToV0_31,
++            EngineCoreProtocol::V0_28ToV0_32,
          )
      }
  
@@ -305,7 +305,7 @@ index a9695bd1c..ecbfa879e 100644
      Frame: AsRef<[u8]>,
  {
 -    let first_frame = frames.first().ok_or_else(|| ext_value_decode!("missing output frame"))?;
-+    decode_engine_core_outputs_for(frames, EngineCoreProtocol::V0_28ToV0_31)
++    decode_engine_core_outputs_for(frames, EngineCoreProtocol::V0_28ToV0_32)
 +}
  
 -    let mut outputs: EngineCoreOutputs = decode_msgpack(first_frame.as_ref())?;
@@ -372,8 +372,8 @@ index 8118b770e..821bfc007 100644
 +    V0_21ToV0_25,
 +    /// vLLM 0.26 and 0.27 also add `ec_transfer_params` to outputs.
 +    V0_26ToV0_27,
-+    /// vLLM 0.28 through 0.31 include `session_id`; 0.31 accepts omitted `kv_hints`.
-+    V0_28ToV0_31,
++    /// vLLM 0.28 through 0.32 include `session_id`; 0.31 accepts omitted `kv_hints`.
++    V0_28ToV0_32,
 +}
 +
 +/// Encode legacy field layouts without copying request data or using intermediate dynamic values.
@@ -385,7 +385,7 @@ index 8118b770e..821bfc007 100644
 +
 +impl Serialize for VersionedRequest<'_> {
 +    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-+        if self.protocol == EngineCoreProtocol::V0_28ToV0_31 {
++        if self.protocol == EngineCoreProtocol::V0_28ToV0_32 {
 +            return self.request.serialize(serializer);
 +        }
 +        let request = self.request;
@@ -428,7 +428,7 @@ index 8118b770e..821bfc007 100644
 +        for (field, unsupported) in [
 +            (
 +                "session_id",
-+                protocol != EngineCoreProtocol::V0_28ToV0_31 && self.session_id.is_some(),
++                protocol != EngineCoreProtocol::V0_28ToV0_32 && self.session_id.is_some(),
 +            ),
 +            (
 +                "prompt_is_token_ids",
@@ -702,7 +702,7 @@ diff --git a/rust/src/engine-core-client/src/protocol/output.rs b/rust/src/engin
 +++ b/rust/src/engine-core-client/src/protocol/output.rs
 @@ -11,3 +11,5 @@
  use serde_tuple::{Deserialize_tuple, Serialize_tuple};
-+use serde_with::serde_as;
++use serde_with::{DeserializeAs, serde_as};
 
 +use super::serde_utils::AllowTrailingFields;
  use super::utility::UtilityOutput;
@@ -763,3 +763,16 @@ new file mode 100644
 +        deserializer.deserialize_seq(ArrayVisitor(PhantomData))
 +    }
 +}
+diff --git a/rust/src/engine-core-client/src/protocol/output.rs b/rust/src/engine-core-client/src/protocol/output.rs
+--- a/rust/src/engine-core-client/src/protocol/output.rs
++++ b/rust/src/engine-core-client/src/protocol/output.rs
+@@ -362,7 +362,6 @@
+         D: Deserializer<'de>,
+     {
+-        WireEngineCoreOutputs::deserialize(deserializer)?
+-            .try_into()
+-            .map_err(serde::de::Error::custom)
++        let wire: WireEngineCoreOutputs = AllowTrailingFields::deserialize_as(deserializer)?;
++        wire.try_into().map_err(serde::de::Error::custom)
+     }
+ }
