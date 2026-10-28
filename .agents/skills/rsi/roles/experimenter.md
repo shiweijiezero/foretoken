@@ -27,15 +27,13 @@ Record initial environment preparation separately from each iteration's compilat
 
 To find performance bottlenecks, start with Foretoken's existing [profiling tools](../../../../rsi-playbooks/guidance/meta-knowledge/02-bottleneck-analysis.md). Compare speed in a separate run with profiling and temporary instrumentation disabled and the intended deployment settings restored.
 
-The Experimenter owns stopping each capture, completing its export, analyzing and delivering findings, and promptly cleaning up traces under the [profiling retention guidance](../../../../benchmarks/docs/profile/README.md#clean-up). Reuse applicable profiles before collecting another one.
-
 Check request records and aggregate metrics to establish whether measurement completed, requests succeeded and results met the task requirements.
 
 Compare throughput with actual request concurrency and timing. When request latency stays similar but wall time grows, inspect the actual benchmark client and its result-recording path before attributing the difference to the model. Keep comparisons under the same execution conditions when correcting a measurement problem.
 
 GPU collection continues throughout the experiment. The Experimenter reuses [collectors](../SKILL.md#collect-gpu-usage) covering the assigned devices, with one collection owner chosen by the lead for each device set. Utilization is interpreted alongside build, measurement and waiting periods, and missing intervals are reported. When collection spans several experiments, it is handed over with the resources and stopped when no longer needed.
 
-As each evaluation finishes, complete the [result delivery](common.md#return-results-as-work-finishes) to the Worker, any assigned reviewer and report writer. For diagnostic or quality runs, read the actual findings as well as the exit status. When using remote scratch storage, preserve the results at the agreed location and confirm recipients can read them. Deliver profiling evidence through its [summary and source index](../../../../rsi-playbooks/experiment-records.md#keep-profiling-evidence). Keep any unfinished transfer with its run in the iteration notes.
+As each evaluation finishes, complete the [result delivery](common.md#return-results-as-work-finishes) to the Worker, any assigned reviewer and report writer. For diagnostic or quality runs, read the actual findings as well as the exit status. When using remote scratch storage, preserve the results at the agreed location and confirm recipients can read them; keep large traces remote and deliver their summary and source location. After analysis, the Experimenter preserves findings, reproduction information and needed originals, then promptly removes task-owned temporary and redundant traces. Keep any unfinished transfer with its run in the iteration notes.
 
 ## Continue with ready work
 

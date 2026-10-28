@@ -153,10 +153,6 @@ Include formal measurements, diagnostic controls and tool-validation runs with t
 
 Keep the report's current conclusions aligned with the iteration history and link the supporting entries. Reusable knowledge can also be revised as understanding improves, with links back to the experiment history.
 
-### Keep profiling evidence
-
-The Experimenter records each capture's question, commands, code and tool versions, relevant ranks and time ranges, findings, and original host/path in the iteration notes. For remote traces, deliver a local summary, key figures and source index by default, with access to the retained raw evidence. Follow the [profiling cleanup guidance](../benchmarks/docs/profile/README.md#clean-up) after analysis and delivery, and update source links when files are moved or removed.
-
 ## Maintain the user-facing report
 
 At experiment start, the lead or a designated writer creates `report.md` using the [report template](templates/report-template.md) and shares its path with the user. Use the task's delivery location, or the experiment root when none is specified. Link the task, experiment directory and iteration notes from the report, resolving links from its actual location. Keep the same report when resuming. The same writer maintains the report and its [progress chart data and figures](templates/progress-charts.md); benchmark commands save the underlying evidence.

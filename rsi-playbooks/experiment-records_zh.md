@@ -153,10 +153,6 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 
 报告中的当前结论与迭代历史保持一致，并链接支撑条目。可复用知识也可随认识变化修订，保留指向实验历史的链接。
 
-### 保存剖析证据
-
-Experimenter 在迭代笔记中记录每次采集要回答的问题、命令、代码与工具版本、相关 rank 和时间区间、发现，以及原件主机与路径。远端 trace 默认交付本地摘要、关键图和原件索引，并提供所保留原始证据的访问方式。分析和交付完成后，按[剖析清理说明](../benchmarks/docs/profile/README_zh.md#清理)及时清理；文件迁移或删除时同步更新来源链接。
-
 ## 持续维护用户报告
 
 实验开始时，由主 Agent 或指定作者按[报告模板](templates/report-template_zh.md)创建 `report.md`，并向用户提供文件路径。报告放在任务指定的交付位置；未指定时放在实验根目录。报告链接任务、实验目录和各轮迭代笔记，链接以报告的实际位置为起点。恢复实验时继续更新同一份文件。报告及其[进展图数据和图片](templates/progress-charts_zh.md)由同一作者维护，评测命令负责保存原始证据。
