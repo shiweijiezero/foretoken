@@ -173,7 +173,7 @@ spec:
 
 只有需要覆盖自动选择时，才设置 `kvTransfer.protocol: tcp` 或 `rdma`。修改后执行 `foretoken deploy <配置目录>`，替换该模型的 P/D 实例，其他模型继续使用各自的传输配置。
 
-Foretoken 的 vLLM 0.31 和所提供的沐曦运行环境会为使用完整注意力、不带 LoRA 的文本模型自动启用复用，并准备所需的传输依赖。
+Foretoken 的 vLLM 0.31–0.32 和所提供的沐曦运行环境会为使用完整注意力、不带 LoRA 的文本模型自动启用复用，并准备所需的传输依赖。
 
 复用要求每个模型副本位于单个节点，P/D 的 KV 布局兼容，PP/PCP/DCP 均为 1；NIXL 还要求两端 TP 大小相同。其他受支持的配置继续使用普通 P/D。Encoder 分离和 Mooncake Store 使用 Mooncake。
 
