@@ -56,7 +56,7 @@ Use the task's `Observer count` and `Observer check interval`; for example, `1` 
 
 Follow the [Observer instructions](roles/observer.md) to create new agents without inherited history each round. Checks use ordinary agent slots, so make room in the schedule. Complete a round in batches if it exceeds available slots. If slots are full or the previous round is unfinished, record the delay and run it later without stacking rounds or interrupting experiments.
 
-On an Observer's completion notification, record its start and completion, read the report, record decisions, owners and next outcomes, and dispatch ready independent work. Revisit priorities when a finding persists. On pause, stop, deadline or completion, disable reminders and end active checks.
+On an Observer's completion notification, the lead records its start and completion, reads the report and dispatches ready independent work. It records decisions, owners and expected outcomes in the existing team records, explaining deferred or declined findings. When candidates repeatedly yield only local, small or mixed gains, the lead reassesses the evidence and records whether to continue, revise or stop that direction, the next research question within the user's objective, its owner, additional budget, expected evidence and review time. On pause, stop, deadline or completion, disable reminders and end active checks.
 
 ## Isolate candidate workspaces and execution
 
