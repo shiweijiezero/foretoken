@@ -181,8 +181,9 @@ class Continuation:
         message = (
             f"Process the new RSI member delivery or dependency for {task['task']}. "
             "Read the native completion notice and its evidence. For an unfinished responsibility, "
-            "give the owner its next substantive question through the native follow-up tool, "
+            "continue the owner's assigned research question through its next substantive stage using native follow-up, "
             "or record the actual missing result and resume condition. "
+            "Reassess the primary research priorities before reallocating owners. "
             "Keep exploration assigned when a member moves into implementation or review. "
             "Record an Evaluator's actual completion, findings, action owners and next check time; "
             "update the existing report when results or decisions change. "

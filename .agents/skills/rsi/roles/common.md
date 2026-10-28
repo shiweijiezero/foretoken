@@ -17,7 +17,7 @@ Then study the source, configuration and earlier experiments for the assigned qu
 
 ## Assign complete questions
 
-For each question, identify the next decision and the least costly evidence that can inform it. Reuse relevant research, prepared environments and comparable results before doing more work. Expand source reading, builds or measurements when the current evidence leaves a specific question unresolved; a fixed workload sweep is useful only while its remaining points can inform the decision.
+Select research questions by their importance and potential impact before choosing the cost of the next experiment. Reuse existing evidence, but fund the source study and core implementation needed to answer consequential questions, even when cheaper parameter changes are ready. Within an assigned question, choose evidence that resolves its uncertainty without redundant work; economy of execution must not narrow the research to easy changes.
 
 The lead assigns a sustained research question with an owner, known findings, unresolved points and relevant code, references and experiment records. The owner follows it through investigation, implementation and analysis, identifying useful work that can continue while results are pending. Assign environment preparation separately so Explorers and Workers can proceed with source analysis, implementation and available checks.
 
@@ -83,7 +83,7 @@ If a specific question remains unresolved, the reviewer explains what evidence o
 
 A stage delivery reports the conclusion, evidence and next useful step while the owner continues work within the assignment. If progress needs a result or decision, name that dependency and the condition for resuming. When the research question is answered, report remaining questions and resources still in use.
 
-On a native completion or idle notification, the lead checks current role staffing against the task. Resume the familiar member with a concrete next assignment, assign another owner, or record the real dependency or reason for ending that responsibility. If an Explorer moves into implementation or review, count the actual role and keep exploration assigned. On task resumption, check records, jobs and members, retaining the original budget and completed results.
+On a native completion or idle notification, the lead checks the next stage of the member’s assigned research question and current role staffing. Continue with the familiar owner while the question remains open and worthwhile. Change ownership or direction through an explicit lead decision, or record a real dependency; completing a stage does not automatically end its research allocation. If an Explorer moves into implementation or review, count the actual role and keep exploration assigned. On task resumption, check records, jobs and members, retaining the original budget and completed results.
 
 On a user pause, stop or deadline, the lead stops scheduling new experiments. Each owner stops or hands over their jobs and preserves the results. A GPU collector's deadline controls only that collector, so other jobs need their own stop action.
 

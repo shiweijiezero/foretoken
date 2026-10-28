@@ -30,7 +30,7 @@ The lead establishes the user-facing `report.md` and its writer at task start, f
 
 ## Set up the team and assignments
 
-The lead chooses which questions to pursue, gives each one time and resources, and keeps an owner following it. Ideas that need an implementation before their benefits can be judged may receive a trial; measurements determine whether to keep them. The Experimenter tests ready approaches within these arrangements. Members continue within the agreed scope without waiting for instructions at every step. See the [team guidance](roles/common.md) for assignments and handoffs.
+The lead organizes a portfolio around the most important problems and mechanisms with substantial improvement potential. Give the primary directions continuing owners and research, implementation and experiment budgets; independent alternatives and smaller improvements can proceed alongside them. Readiness, low cost or immediate positive results alone do not set research priority. Members advance within these assignments while the lead revisits the portfolio as evidence changes. See the [team guidance](roles/common.md) for handoffs and execution.
 
 Use the task's separate Explorer, Worker, Experimenter and Evaluator counts; none includes the lead. Explorer, Worker and Experimenter counts describe concurrent members. For these three roles, the lead chooses unspecified counts and assigns any unstaffed responsibilities to itself or another member; this does not create another member or establish independent review. Evaluator count means new agents per check and defaults to 1 when omitted or blank. Respect explicit counts, including 0, which disables Evaluator checks rather than replacing them with the lead's self-review.
 
@@ -48,7 +48,7 @@ If the task specifies `Codex models` or `Claude models`, treat those mappings as
 
 Research and execution assignments include absolute paths to the task, role instructions, code and evidence, together with the reference approach and relevant decisions. Members read the original sources themselves and use stable names such as `worker-01` and `experimenter-01`. Evaluators receive the task file, role instructions and working directory, find the records themselves, and use a new name each round, such as `evaluator-r03-01`. When the harness assigns the lead a messaging address, the team uses that address.
 
-The lead maintains the requested roles as members finish stages, using native completion and idle notifications to assign the next useful question or record a real dependency. Register [concrete next steps](continuation.md#arrange-a-members-next-step) for continuing members; Evaluators and one-time reviewers remain unregistered. Use experiment records, durations and remaining budget to adjust research and execution separately, keeping familiar owners with their questions.
+At native completion or idle events, the lead resumes the owner on the next substantive stage of its research question, records a real dependency, or explicitly changes the assignment. A completed measurement or review does not end a sustained research responsibility. Maintain the requested roles across these stages. Register [concrete next steps](continuation.md#arrange-a-members-next-step) for continuing members; Evaluators and one-time reviewers remain unregistered. Use experiment records, durations and remaining budget to adjust research and execution separately, keeping familiar owners with their questions.
 
 ## Arrange periodic team checks
 
@@ -72,7 +72,7 @@ Candidates select the same shared [data directory](../../../docs/features/model-
 
 ## Advance each iteration
 
-At the start of an iteration, use research, code and earlier results to select the question and the next implementation or comparison that can answer it. The lead allocates time for both useful configuration experiments and mechanism changes that need further development. Workers continue owning their questions as measurements return. Existing [recipes](../../../benchmarks/docs/recipes.md), examples and CLI help guide execution, with resources and comparison conditions arranged before the run.
+Organize iterations as progress within the assigned research questions: investigate the mechanism, implement the core change, integrate it and evaluate its service behavior. The lead considers both the research portfolio and the execution queue. A prototype need not produce a speedup at each stage; use its evidence to develop the mechanism or reassess the hypothesis. Workers retain ownership as results return, while useful configuration experiments can proceed in parallel. Existing [recipes](../../../benchmarks/docs/recipes.md), examples and CLI help guide execution, with resources and comparison conditions arranged before the run.
 
 When preparation or measurement is blocked, the lead assigns an owner to resolve it while other members continue research, implementation or local validation that does not depend on that result. Candidates and validation methods can be prepared from available evidence before a full baseline or profile is available; measurements then determine whether to adopt them.
 

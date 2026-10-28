@@ -9,24 +9,25 @@ English | [简体中文](06-opportunity-assessment_zh.md)
 
 Pareto-Guided Exploration (PGE) organizes agentic inference optimization through opportunity assessment, frontier identification, lead decisions and feedback from experiments.
 
-Compare a direction's potential gain with the work it requires, using existing source analysis and experiment records. The Evaluator assesses current evidence and time use; the lead decides directions, owners and budgets. Keep both in the existing assessment and team records.
+PGE prioritizes important problems with substantial improvement potential. Its purpose is to discover and realize better mechanisms, including changes to algorithms, operators, dataflow and execution architecture. The lead organizes sustained research around those opportunities, with smaller improvements and independent alternatives progressing in parallel. The Evaluator assesses evidence and actual investment; the lead makes future decisions. Both use the existing assessment and team records.
 
-Update changed entries at Evaluator checks. Reuse applicable evidence and unchanged assessments; a score does not require a new experiment or a quality evaluation. Quality checks follow the task's agreed frequency and are needed for changes that may affect outputs when existing evidence is insufficient.
+## Organize research before ranking candidates
 
-## Start with a comparison
+First identify which limitations matter to the task and what might change them. Explorers investigate mechanisms beyond the current candidate list. The lead selects the main research questions, gives their owners time to develop core implementations, and arranges experiments that can resolve their major uncertainties. Quick improvements can contribute, but their readiness or low cost does not give them priority over more consequential work.
 
-Group measurements by research question; give a candidate its own row when its mechanism, gain or cost materially differs. Identify the workload, reference, candidate revision, current stage, source links and the owner's recorded estimate of remaining work. Missing estimates stay `U` (unknown); use `N/A` for an inapplicable dimension. The Evaluator reports missing decisions to the lead.
+The opportunity front compares the candidates that can currently be compared; it does not define the boundary of worthwhile research. New mechanisms may lack a gain estimate or a complete integration plan. Record their importance, the mechanism being considered and what is unknown, without inventing favorable numbers or treating `U` as low value. The lead can fund research and prototyping before these estimates exist. Its choice concerns the value of the research program, not just gain per hour from the next experiment.
 
-For example, these synthetic estimates use one throughput workload, a common baseline, the same service-validation milestone and eight remaining wall hours. Other resource costs are assumed equal and within budget.
+For example, these hypothetical research questions are at different stages and do not belong in one gain/cost ranking:
 
-| Direction | Estimated gain | Additional hours | Assessment |
-| --- | ---: | ---: | --- |
-| A: small kernel change | 1–3% | 0.3–0.4 | Low ceiling; no other row dominates it |
-| B: execution redesign | 12–18% | 1.6–2.4 | Higher upside and cost; evidence still local |
-| C: similar tuning sweep | 0–1% | 3–4 | Dominated by A under these estimates |
-| D: unresolved idea | U | U | Incomplete; dominance unresolved |
+| Research question | Available evidence | Important uncertainty | Information the work could produce |
+| --- | --- | --- | --- |
+| Can a different data layout remove repeated materialization? | Intermediate copies occupy a substantial part of the observed path | Whether consumers can use the new layout without conversion overhead | A working core path and an account of traffic saved versus added |
+| Can execution be reorganized to overlap exposed stages? | Profiles show waiting and partly serialized work | Which dependencies are essential and which follow from the implementation | A causal dependency model and a runnable alternative schedule |
+| Can a different speculation mechanism reduce cost per accepted token? | Drafting and verification costs are recorded across workloads | Whether the proposed change reduces total work rather than acceptance alone | An explanation or prototype that resolves the combined cost trade-off |
 
-A and B offer different trade-offs; the front does not select the next task. B's projected gain is not an achieved service result. A preparation repair that costs 0.8 hours and saves 0.5 hours on each of three remaining runs has net estimated savings of 0.7 hours, counted as preparation benefit rather than inference speedup.
+These examples illustrate possible research outputs, not Evaluator assignments or promised speedups. A useful stage may establish a mechanism, expose a limitation or deliver a core implementation before it produces a net service gain. A slow or failing prototype calls for diagnosis of the idea and its realization, rather than immediate rejection of the whole direction.
+
+Group measurements by research question and version; retain workload, reference, stage, sources and the owner's remaining-work estimates. Unknown values remain `U`, inapplicable ones `N/A`. Update changed entries from existing evidence rather than requiring extra runs to fill scores. Quality validation follows output impact and the task's agreed evaluation policy; final retention uses the task's correctness, precision and resource requirements.
 
 ## Keep measurements and opportunities distinct
 
@@ -66,13 +67,13 @@ F describes the mechanism under the task's semantics, precision, hardware and re
 | 3 | Dependencies and added costs accounted for within task constraints | Matched service comparison; replication or coverage incomplete | Resolves a key causal or correctness uncertainty |
 | 4 | Representative execution demonstrates the mechanism and required invariants | Repeated representative comparisons support the claimed scope | Independently checked finding reused in relevant cases |
 
-Link the supporting evidence, scope and remaining assumptions. A prototype bug does not disprove the whole mechanism; a component result does not establish service performance. E includes applicable correctness evidence already available. Code volume, messages and PR counts do not establish I.
+Link the supporting evidence, scope and remaining assumptions. Lower F or E can identify what deeper work must resolve; they do not make a well-motivated question less important. Distinguish the performance of the current prototype from the opportunity opened by a different implementation. E includes applicable correctness evidence already available. Code volume, messages and PR counts do not establish I.
 
 ### Additional cost: C
 
 Keep spent cost for reflection and additional cost for decisions. Record wall hours, attributable GPU-hours and Agent working hours. Separate preparation and waiting where evidence permits; concurrent wall intervals cannot be added, and open agent turns are not measured productive time. Token or monetary costs require reliable attribution.
 
-Compare costs to the same evidence milestone. A component probe and complete service validation deliver different results; show the remaining task-level cost when the next milestone is only a probe.
+Compare costs to the same evidence milestone. A component probe and complete service validation deliver different results. Estimate the next research stage when possible, and retain unknown integration costs as U until the implementation makes them clearer. A complete delivery estimate is not a prerequisite for starting an important research question.
 
 For a remaining resource budget `B > 0`, score additional cost `c` by `r = c/B`. With an exhausted budget, positive additional cost is C0 and zero additional cost is C4. All rows in a snapshot use the same observation time and budget. Keep raw costs across checks: a shrinking budget can lower C without making the method less efficient.
 
@@ -100,7 +101,11 @@ Pareto dominance means no worse on every compared objective and strictly better 
 
 For bounded estimates, A robustly dominates B only if every gain lower bound of A is at least B's upper bound and every cost upper bound of A is at most B's lower bound, with one strict inequality. This conclusion holds under the stated bounds and assumptions. Otherwise leave dominance unresolved, including unknown values or incompatible conditions. Coarse score ties do not imply equal raw values.
 
-Keep demonstrated constraint violations outside the feasible front with their counterevidence; unresolved feasibility stays unknown. Report absolute headroom and time allocation as well as front membership: a cheap 1% gain can remain non-dominated. The Evaluator alerts the lead to low ceilings, regressions, weak estimates or growing costs. The lead explains its choice, assigns work and budget, and sets when to reconsider it. Subsequent checks compare that decision with actual work and evidence.
+For a purely numerical example, two paths to the same validation milestone use the same reference: A has gain bounds of 4–6% and additional cost of 3–4 hours; B has 8–10% and 1–2 hours. B dominates A under these assumptions. That comparison concerns these implementations and estimates, not every future implementation of A's underlying idea.
+
+Keep demonstrated constraint violations outside the feasible candidate front with their counterevidence; unresolved feasibility stays unknown. A cheap 1% gain can remain non-dominated without being the best research priority. The Evaluator therefore also examines whether important mechanisms have actual research owners, sustained implementation time and access to experiments, or whether the team has concentrated on small ready changes, reporting and environment work. It reports both progress and neglected opportunities; it does not prescribe the next direction.
+
+The lead responds by choosing or revising the research portfolio: the primary problems, independent alternatives, smaller concurrent work, owners, stage budgets and expected learning or implementation outcomes. Preserve continuity on important questions while evidence develops; do not reassign their owners simply because a cheaper experiment finished first. Reconsider a direction when evidence undermines its potential or further work is no longer justified, distinguishing that from an incomplete or temporarily slower prototype. Subsequent evaluations compare the allocation and progress with these decisions.
 
 ## References
 

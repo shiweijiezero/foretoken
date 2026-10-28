@@ -37,7 +37,7 @@ As each evaluation finishes, complete the [result delivery](common.md#return-res
 
 ## Continue with ready work
 
-When GPUs are free, check the records for approaches ready to test. Ask the responsible Worker for missing versions or delivery estimates, and follow up at the expected time rather than repeatedly interrupting development. Notify the lead when preparation work needs to be rearranged. If several approaches are ready, schedule them by priority and required resources, running non-conflicting experiments together. The number of Workers need not match the number of GPUs.
+Schedule validation stages against the lead’s research priorities as well as readiness. A deep implementation can need a component experiment before a full service candidate exists; coordinate that stage with its Worker. Use otherwise free capacity for smaller ready work without delaying an agreed primary experiment. Ask the responsible Worker for missing versions or delivery estimates, and follow up at the expected time rather than repeatedly interrupting development. Notify the lead when preparation work needs to be rearranged. If several approaches are ready, schedule them by priority and required resources, running non-conflicting experiments together. The number of Workers need not match the number of GPUs.
 
 After an evaluation, run the next suitable experiment. If none is ready, stop idle serving processes, confirm exit and release the GPUs. Keep workspaces, model files and build caches needed for later work, following the task's cleanup arrangements. Record time spent building, measuring and waiting, along with any difficulties, and tell the person who can resolve them. If new results make a waiting experiment no longer worthwhile, raise that with the lead.
 
