@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Retain individual lm-eval generations and completed token-likelihood scores."""
+"""Retain and restore lm-eval progress and its associated response evidence."""
 
 from __future__ import annotations
 
@@ -15,12 +15,22 @@ from typing import Any, NamedTuple, Self
 
 from loguru import logger
 
+HTTP_RESPONSES_FILENAME = "lm_eval_http_responses.jsonl"
+
 
 class ResponseSlot(NamedTuple):
     """Pair a completion callback with its position in the harness's requested samples."""
 
     request: int
     sample: int
+
+
+def generation_request_key(arguments: Any) -> tuple[str, Any]:
+    """Match native parameter equivalence when binding response callbacks and HTTP evidence."""
+    from lm_eval.models.utils import Collator
+
+    groups = Collator.group([arguments], lambda request: request[1])
+    return json.dumps(arguments[0], sort_keys=True, ensure_ascii=False), next(iter(groups))
 
 
 class LmEvalResponses:
@@ -87,14 +97,6 @@ class LmEvalResponses:
     def _key(arguments: Any) -> str:
         return json.dumps(arguments, sort_keys=True, ensure_ascii=False)
 
-    @classmethod
-    def _dispatch_key(cls, arguments: Any) -> tuple[str, Any]:
-        """Match the native batcher's parameter equivalence, including integer/float equality."""
-        from lm_eval.models.utils import Collator
-
-        groups = Collator.group([arguments], lambda request: request[1])
-        return cls._key(arguments[0]), next(iter(groups))
-
     def reserve(self, arguments: Any) -> ResponseSlot:
         """Allocate each harness-expanded sample a position and queue any unfinished work."""
         key = self._key(arguments)
@@ -105,12 +107,12 @@ class LmEvalResponses:
         self.consumed[request] = sample + 1
         slot = ResponseSlot(request, sample)
         if self.get(slot) is None:
-            self.pending[self._dispatch_key(arguments)].append(slot)
+            self.pending[generation_request_key(arguments)].append(slot)
         return slot
 
     def claim(self, arguments: Any) -> ResponseSlot:
         """Bind an upstream call to the next missing sample before concurrent execution or retries."""
-        return self.pending[self._dispatch_key(arguments)].popleft()
+        return self.pending[generation_request_key(arguments)].popleft()
 
     def get(self, slot: ResponseSlot) -> str | None:
         """Return a completed generation, with None denoting work still needed and empty text preserved."""
@@ -141,8 +143,17 @@ class LmEvalResponses:
 
 
 def restore_progress(source: Path, native: Path) -> None:
-    """Stage a closed response archive for the new run, leaving the previous run unchanged."""
+    """Stage progress and complete HTTP records for a new run without changing the source."""
     database = source / LmEvalResponses.filename
     if not database.is_file():
         raise ValueError("The previous lm-eval run has no saved evaluation progress")
     shutil.copyfile(database, native.parent / LmEvalResponses.filename)
+    evidence = source / HTTP_RESPONSES_FILENAME
+    if evidence.is_file():
+        # An interrupted write may leave a trailing fragment; retain the original source file.
+        with evidence.open("rb") as original, (native.parent / evidence.name).open("wb") as restored:
+            for line in original:
+                if not line.endswith(b"\n"):
+                    logger.warning("Omitting an incomplete final HTTP response record from the resumed copy")
+                    break
+                restored.write(line)

@@ -20,9 +20,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// servingCacheReady lets frontends share a cache only after a serving workload has bound it.
-// Every selected cohort must use that cache before the frontend changes its mount.
+// servingCacheReady preserves selected cohorts' cache bindings while allowing
+// frontends to start independently on already-bound shared storage.
 func (reconciler *Reconciler) servingCacheReady(ctx context.Context, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, services []inferencev1alpha1.ModelService) (bool, error) {
+	sharedClaimReady := false
+	if cache != nil {
+		claim, err := runtimeconfig.ReadPreparedCachePVC(ctx, reconciler.Client, namespace, cache.ClaimName)
+		if err != nil {
+			return false, err
+		}
+		// An unbound or single-node claim must follow model placement rather than
+		// letting a frontend bind it to a node that cannot host the model.
+		sharedClaimReady = claim.Status.Phase == corev1.ClaimBound && slices.Contains(claim.Spec.AccessModes, corev1.ReadWriteMany)
+	}
 	var pools inferencev1alpha1.ModelPoolList
 	if err := reconciler.List(ctx, &pools, client.InNamespace(namespace)); err != nil {
 		return false, fmt.Errorf("list ModelPools for frontend runtime cache: %w", err)
@@ -55,7 +65,7 @@ func (reconciler *Reconciler) servingCacheReady(ctx context.Context, namespace s
 				group := &groups.Items[groupIndex]
 				if servingconfig.RoutingGroupOwnedBy(group, pool) && group.Spec.Revision == selected.Revision {
 					matched = true
-					if !servingconfig.RoutingGroupReady(group) || !reflect.DeepEqual(group.Spec.Artifacts.Cache, cache) {
+					if !reflect.DeepEqual(group.Spec.Artifacts.Cache, cache) || !sharedClaimReady && !servingconfig.RoutingGroupReady(group) {
 						return false, nil
 					}
 				}
@@ -65,7 +75,7 @@ func (reconciler *Reconciler) servingCacheReady(ctx context.Context, namespace s
 			}
 		}
 	}
-	return cache == nil || selectedRevision, nil
+	return cache == nil || sharedClaimReady || selectedRevision, nil
 }
 
 // placeFrontendCache shares the cache placement contract and permits its accelerator-node taint.

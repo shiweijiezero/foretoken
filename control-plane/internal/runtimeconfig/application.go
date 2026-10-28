@@ -73,10 +73,34 @@ func (files ApplicationFiles) Configure(template *corev1.PodTemplateSpec, contai
 // ResolveImage reads a newly selected source publication's image for service controllers.
 // Only legacy manifests without an image field use the platform image; redirects are refused.
 func (files ApplicationFiles) ResolveImage(ctx context.Context, component, revision, platformImage string) (string, error) {
+	manifest, err := files.readManifest(ctx, component, revision)
+	if err != nil {
+		return "", err
+	}
+	return manifestImage(manifest, "image", platformImage)
+}
+
+// ResolveControllerImages selects the controller and its preparation environment
+// from one immutable publication, retaining platform defaults for older manifests.
+func (files ApplicationFiles) ResolveControllerImages(ctx context.Context, revision, platformImage, preparationImage string) (string, string, error) {
+	manifest, err := files.readManifest(ctx, "control-plane", revision)
+	if err != nil {
+		return "", "", err
+	}
+	image, err := manifestImage(manifest, "image", platformImage)
+	if err != nil {
+		return "", "", err
+	}
+	preparation, err := manifestImage(manifest, "modelPreparationImage", preparationImage)
+	return image, preparation, err
+}
+
+// readManifest retrieves one completed publication without following redirects to other origins.
+func (files ApplicationFiles) readManifest(ctx context.Context, component, revision string) (map[string]json.RawMessage, error) {
 	manifestURL := files.Ref(component, revision) + "/manifest.json"
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("create %s application manifest request: %w", component, err)
+		return nil, fmt.Errorf("create %s application manifest request: %w", component, err)
 	}
 	client := &http.Client{
 		Timeout: 5 * time.Second,
@@ -86,30 +110,34 @@ func (files ApplicationFiles) ResolveImage(ctx context.Context, component, revis
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return "", fmt.Errorf("fetch %s application manifest: %w", component, err)
+		return nil, fmt.Errorf("fetch %s application manifest: %w", component, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("fetch %s application manifest: HTTP %d", component, response.StatusCode)
+		return nil, fmt.Errorf("fetch %s application manifest: HTTP %d", component, response.StatusCode)
 	}
 	payload, err := io.ReadAll(response.Body)
 	if err != nil {
-		return "", fmt.Errorf("read %s application manifest: %w", component, err)
+		return nil, fmt.Errorf("read %s application manifest: %w", component, err)
 	}
 	var manifest map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &manifest); err != nil {
-		return "", fmt.Errorf("decode %s application manifest: %w", component, err)
+		return nil, fmt.Errorf("decode %s application manifest: %w", component, err)
 	}
 	if manifest == nil {
-		return "", fmt.Errorf("%s application manifest must be an object", component)
+		return nil, fmt.Errorf("%s application manifest must be an object", component)
 	}
-	rawImage, present := manifest["image"]
+	return manifest, nil
+}
+
+func manifestImage(manifest map[string]json.RawMessage, key, fallback string) (string, error) {
+	raw, present := manifest[key]
 	if !present {
-		return platformImage, nil
+		return fallback, nil
 	}
 	var image string
-	if err := json.Unmarshal(rawImage, &image); err != nil || strings.TrimSpace(image) == "" {
-		return "", fmt.Errorf("%s application manifest image must be a nonempty string", component)
+	if err := json.Unmarshal(raw, &image); err != nil || strings.TrimSpace(image) == "" {
+		return "", fmt.Errorf("application manifest %s must be a nonempty string", key)
 	}
 	return image, nil
 }

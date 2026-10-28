@@ -178,30 +178,11 @@ foretoken perf "$BASELINE" "$CANDIDATE" \
 
 ## 绘制与对照结果
 
-从已有结果生成图表和对照表，无需重新推理。在保存结果的机器上执行，将下面路径换成评测结果目录：
+将路径换成已保存的结果目录，即可重新绘图或对照不同方案：
 
 ```bash
-# 重绘一个目录的结果。
 foretoken plot results/baseline
-
-# 对照两个目录的结果。
 foretoken plot results/baseline results/candidate
 ```
 
-也可以选择整个实验目录或包含多次运行的文件夹。输出包括 PDF、SVG、PNG 和 CSV；单个输入保存到该目录的 `plots/`，多个输入或指定 `--base` 时保存到当前目录的 `plots/`。通过 `--output-dir` 修改输出位置。
-
-添加 `--sync_wandb` 可[将已有结果上传到 W&B](perf/wandb_zh.md#恢复上传)。
-
-比较性能结果时，用 `--base` 指定参考方案，直接生成实测值和相对变化：
-
-```bash
-foretoken plot results/candidate --base results/baseline
-```
-
-`--base` 接受一个结果目录或迭代目录的相对、绝对路径，包含其中的重复测量。命令会自动读取 base，无需再次列出。
-
-`comparison-base.csv` 按相同负载对照各候选与 base，包含均值、重复次数和标准差、失败情况、条件差异及原始结果路径。选择速度指标时，也保留已有的成功率和实际 token 长度指标。数值沿用保存指标的单位，只有一次测量时标准差留空。
-
-相对变化按 `(candidate 均值 / base 均值 - 1) × 100%` 计算，延迟降低、吞吐提高表示改善。缺少对应负载、缺失指标或 base 为零时，百分比留空，`status` 标明原因。结合结果审查环境差异与缺失记录；仅凭预热参数无法确定缓存冷暖态。
-
-用 `--metric generation_tokens_per_second ttft_p95_seconds` 一次选择多个指标。`--method` 同样接受多个名称，`--columns 2` 增加图宽。评分说明见[质量结果](eval/README_zh.md#查看评分)。
+[绘图指南](plotting_zh.md) 介绍指标坐标轴、测量点标签、基准变化和收益估算，支持导出 PDF、SVG、PNG 和 CSV。

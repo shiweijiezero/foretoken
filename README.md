@@ -142,19 +142,29 @@ Open the printed URL to inspect the capture. Press Ctrl+C to close the viewer; t
 
 Agents investigate optimization methods for a chosen model, workload, and resource budget, change code or configuration, and deploy candidates. Performance measurements, quality evaluations, and execution profiles guide the next iteration. A running experiment report compares approaches and records measured gains and retained changes.
 
-Install and sign in to Claude Code or Codex, then run either command from the repository root to start the [Qwen3.5-35B-A3B optimization task](rsi-playbooks/tasks/qwen3.5-35b-a3b.md). The task file defines the model, resources, objectives, time budget, and deliverables; adjust it to your environment before starting.
+After installing and signing in to Claude Code or Codex, open a session from the repository root. The example below optimizes [Qwen3.5-35B-A3B on NVIDIA GPUs](rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia.md).
 
 ```bash
 # Claude Code
 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude \
-  '/goal Use the RSI skill and an Agent Team to complete rsi-playbooks/tasks/qwen3.5-35b-a3b.md.'
+  '/goal Use the RSI skill and an Agent Team to complete rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia.md.'
 
-# Codex
-codex \
-  '/goal Use the RSI skill to complete rsi-playbooks/tasks/qwen3.5-35b-a3b.md.'
+# Codex CLI
+codex
 ```
 
-The command opens an interactive session and submits the optimization task. To pause, use `/goal clear` in Claude Code or `/goal pause` in Codex, and ask the agents to stop this task's experiments and collectors. For more detailed objectives and constraints, fill in the [task template](rsi-playbooks/templates/task-template.md) and reference the task file in your prompt. See the [RSI playbooks](rsi-playbooks/README.md) for the full workflow.
+In the Codex CLI, enter the following commands separately, reviewing and trusting the project hooks before starting the goal:
+
+```text
+/hooks
+/goal Use the RSI skill to complete rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia.md.
+```
+
+In the desktop app, review the Foretoken project hooks under Settings → Hooks, then enter the `/goal` command above in the chat.
+
+For larger Codex teams, [raise the agent concurrency limit](rsi-playbooks/README.md#codex) before starting the session.
+
+To pause, use `/goal clear` in Claude Code or `/goal pause` in Codex, and ask the agents to stop this task's experiments and collectors. For more detailed objectives and constraints, fill in the [task template](rsi-playbooks/templates/task-template.md) and reference the task file in your prompt. See the [RSI playbooks](rsi-playbooks/README.md) for the full workflow.
 
 ## Gateway Mode
 

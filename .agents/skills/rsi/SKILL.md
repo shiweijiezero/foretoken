@@ -18,6 +18,10 @@ Before starting, every role [learns how Foretoken works](roles/common.md#learn-t
 
 The team starts experiments only when the user requests execution or resumption. A new task records its start and deadline; a resumed task first checks existing jobs and results and keeps the original time budget. A supplied configuration is a starting point that can evolve with evidence. If none is supplied, the team records an initial approach for comparison. The team builds on existing findings and continues until the task's end conditions are met.
 
+Activate this root session's [continuation binding](continuation.md#enable-the-task) after establishing the task. Project hooks then act only on this RSI session and its registered members. If the harness has not loaded or trusted them, report that limitation and handle native completion notifications directly.
+
+Start research and implementation alongside environment preparation. The Experimenter prepares the runtime and initial measurements, Explorers search and analyze sources, and Workers develop key changes and run available local checks. While the environment is unavailable, prioritize implementation and exploration that can proceed independently; complete environment-dependent validation when it is ready.
+
 Before allocating resources, the lead checks the task's nodes, current users and available GPU windows, following the [resource coordination guidance](roles/common.md#coordinate-resources-and-environments). If a node cannot be used, the lead records the reason and addresses problems that can be resolved.
 
 The lead establishes W&B naming before parallel experiments begin. An ongoing research topic uses one project, named with a `foretoken-` prefix and the model, hardware and objective, such as `foretoken-qwen35-metax-inference`. Each experiment uses a dated or named group, with run names distinguishing approaches, workloads and repetitions. Resumption keeps the original names, and experiment records retain the run links.
@@ -26,43 +30,55 @@ The lead establishes the user-facing `report.md` and its writer at task start, f
 
 ## Set up the team and assignments
 
-The lead keeps the task moving toward its objectives: choosing research directions, assigning questions and resources, and turning promising findings into implementations and experiments. Results determine which approaches to retain, improve or stop. Members work on complete questions and continue within the agreed scope without waiting for individual commands. The [team guidance](roles/common.md) explains assignments and handoffs.
+The lead chooses which questions to pursue, gives each one time and resources, and keeps an owner following it. Ideas that need an implementation before their benefits can be judged may receive a trial; measurements determine whether to keep them. The Experimenter tests ready approaches within these arrangements. Members continue within the agreed scope without waiting for instructions at every step. See the [team guidance](roles/common.md) for assignments and handoffs.
 
-Use the task's separate Advisor, Worker and Experimenter counts; each counts concurrent subagents in that role and excludes the lead. Respect user-specified counts, including zero. For unspecified counts, the lead chooses and records staffing from the work and available capacity. When a role has no dedicated member, the lead assigns its responsibilities to itself or another member; this does not create an additional member or establish independent review.
+Use the task's separate Explorer, Worker, Experimenter and Observer counts; none includes the lead. Explorer, Worker and Experimenter counts describe concurrent members. For these three roles, the lead chooses unspecified counts and assigns any unstaffed responsibilities to itself or another member; this does not create another member or establish independent review. Observer count means new agents per check and defaults to 1 when omitted or blank. Respect explicit counts, including 0, which disables Observer checks rather than replacing them with the lead's self-review.
 
 The harness's actual concurrency limit still applies, including any slot used by the lead. If it cannot accommodate the requested team, prioritize and stagger assignments within that limit, recording the requested and actual staffing and the reason for the difference. Count each member under one assigned role at a time.
 
-[Advisors](roles/advisor.md) continually explore mechanisms, methods and new research questions, and help the team reassess its current direction. They investigate independently and may explore different questions or examine the same question from different angles, sharing findings as their research progresses.
+[Explorers](roles/explorer.md) continually explore mechanisms, methods and new research questions, and help the team reassess its current direction. They investigate independently and may explore different questions or examine the same question from different angles, sharing findings as their research progresses.
 
 [Workers](roles/worker.md) investigate specific questions and implement candidates, then improve them using experimental results. The implementation owner follows the end-to-end execution path to connect local changes with service behavior.
 
-[Experimenters](roles/experimenter.md) build and evaluate prepared candidates while observing resources, recording results and cleaning up experiments. One Experimenter can manage several non-conflicting experiments.
+[Experimenters](roles/experimenter.md) manage the experiment queue and execution resources, request ready candidates from Workers, build and evaluate them, record results and release resources. One Experimenter can manage several non-conflicting experiments.
 
-Assignments include absolute paths to the task, role instructions, code and evidence, together with the reference approach and relevant decisions. Members read the original sources themselves. Use stable names such as `worker-01` and `experimenter-01`, with the role prefixes `lead`, `advisor`, `worker` and `experimenter`. When the harness assigns the lead a messaging address, the team uses that address.
+[Observers](roles/observer.md) read work and session records to check the team's progress, use of resources and research depth. Each check starts with new agents that have no inherited conversation history. They send findings to the lead without questioning or interrupting other members.
 
-During execution, the lead follows the role staffing above and tracks candidates being prepared, waiting for evaluation and executing. Preparation and evaluation concurrency can change independently according to observed durations, backlog and remaining time.
+Research and execution assignments include absolute paths to the task, role instructions, code and evidence, together with the reference approach and relevant decisions. Members read the original sources themselves and use stable names such as `worker-01` and `experimenter-01`. Observers receive the task file, role instructions and working directory, find the records themselves, and use a new name each round, such as `observer-r03-01`. When the harness assigns the lead a messaging address, the team uses that address.
+
+The lead maintains the requested roles as members finish stages, using native completion and idle notifications to assign the next useful question or record a real dependency. Register [concrete next steps](continuation.md#arrange-a-members-next-step) for continuing members; Observers and one-time reviewers remain unregistered. Use experiment records, durations and remaining budget to adjust research and execution separately, keeping familiar owners with their questions.
+
+## Arrange periodic team checks
+
+Use the task's `Observer count` and `Observer check interval`. For example, `1` and `1h` means one new Observer each hour. If checks are enabled without an interval, the lead fills it in, then records the next check time and reminder in the [team records](../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records). The reminder goes to the lead, which creates the new agents. Without a reminder tool, check the time using bounded waits and note that this works only while the session is active.
+
+Follow the [Observer instructions](roles/observer.md) to create new agents without inherited history each round. Checks use ordinary agent slots, so make room in the schedule. Complete a round in batches if it exceeds available slots. If slots are full or the previous round is unfinished, record the delay and run it later without stacking rounds or interrupting experiments.
+
+The lead reads the report and records each decision, owner and next observable outcome in the existing team records, including reasons for deferring or declining an action. Revisit priorities and remaining budget when a finding persists across checks. Check existing reminders and rounds before resuming a task. On pause, stop, deadline or completion, disable reminders and end active checks.
 
 ## Isolate candidate workspaces and execution
 
 Give each Worker a separate checkout, task branch and stable instance name, and reuse them across iterations. Keep the delivered version unchanged through build and evaluation, following the [candidate handoff](roles/common.md#prepare-candidates-while-evaluations-run).
 
-Follow the [iteration workflow](../../../rsi-playbooks/README.md#reuse-the-environment-across-iterations). Parameter-only experiments can reuse installed applications. For code changes, prepare the source platform once, coordinating any update to a shared platform with its administrator. Resolve dependencies and model/dataset access during preparation, then reuse the platform and build caches.
+Follow the repository's [deployment and iteration guidance](../../../AGENTS.md#deployment-and-iteration), reusing available compatible images and prepared environments first (which can substantially shorten deployment time). Parameter-only experiments reuse installed applications. For code changes, use an existing source platform or prepare it once, coordinating any shared-platform update with its administrator. Resolve model and dataset access during preparation.
 
-Deploy Go, Rust and Python edits incrementally with `-e` pointing to the candidate's source directory. Foretoken selects the applications and environments that need rebuilding. Follow [parallel source deployment](../../../docs/deployment/source.md#run-candidates-in-parallel), keeping the same candidate name for deployment and evaluation.
+Follow [source deployment](../../../docs/deployment/source.md#deploy-a-model-service) to apply Go, Rust and Python edits incrementally with `-e` pointing to the candidate's source directory. [Parallel candidates](../../../docs/deployment/source.md#run-candidates-in-parallel) share image references while keeping code and writable build state separate. Use the same name for deployment and evaluation. Since `perf` and `eval` measure the deployed service, deploy code changes before evaluating them.
 
-Candidates select the same shared [data directory](../../../docs/features/model-storage.md) for model downloads; runtime caches and results remain separate. Keep the baseline instance while its model files are needed: use `foretoken stop` when idle, then `foretoken delete` when the task ends.
+Candidates select the same shared [data directory](../../../docs/features/model-storage.md) for model downloads; runtime caches and results remain separate. Use `foretoken stop` to release idle serving resources while retaining reusable configuration and model references. Delete a candidate with `foretoken delete` when it is no longer needed; managed model versions can be collected after their last reference is released.
 
 ## Advance each iteration
 
-At the start of an iteration, the lead, Advisors and Workers use code, research and earlier results to choose a useful question and discuss a comparison that can answer it. The lead prioritizes work by its potential benefit to the target workload, available evidence, and implementation and measurement costs, allocating resources to both deepen the current approach and test alternatives. Existing [recipes](../../../benchmarks/docs/recipes.md), examples and CLI help guide execution, with resources and comparison conditions arranged before the run.
+At the start of an iteration, use research, code and earlier results to select the question and the next implementation or comparison that can answer it. The lead allocates time for both useful configuration experiments and mechanism changes that need further development. Workers continue owning their questions as measurements return. Existing [recipes](../../../benchmarks/docs/recipes.md), examples and CLI help guide execution, with resources and comparison conditions arranged before the run.
 
 When preparation or measurement is blocked, the lead assigns an owner to resolve it while other members continue research, implementation or local validation that does not depend on that result. Candidates and validation methods can be prepared from available evidence before a full baseline or profile is available; measurements then determine whether to adopt them.
 
-The Worker implements and explains the approach, then the Experimenter builds and measures it, confirming that the intended change ran. Fixed workload groups and repetitions can run through sweeps. Results return directly to developers and reviewers so analysis, preparation and recording can continue while other evaluations run.
+The Worker gives a runnable, reproducible version to the assigned Experimenter. Prefer a separate group of available GPUs for each experiment, arranging a shared schedule only when experiments need the same devices. The Experimenter deploys the change, confirms it took effect, records the measurements and sends results directly to the Worker and assigned reviewer. When GPUs are free, check which approaches are ready before asking for missing information. Fixed workload groups and repetitions can run through sweeps.
 
 Before retaining or integrating a change, the lead reads the implementation and relevant call paths and reviews the independent assessment. The combined approach is still validated under the task's workload.
 
-The lead continually adjusts directions and resources as research and experiments advance. When an Advisor flags stalled or misdirected work, the lead revisits the task objectives, current understanding and available results, explains whether to continue, change or stop the direction, and assigns the next action and owner. The responsible member fixes recurring execution problems and checks the affected workflow before the team relies on the fix.
+The lead continually adjusts directions and resources as research and experiments advance. When an Explorer flags stalled or misdirected work, the lead revisits the task objectives, current understanding and available results, explains whether to continue, change or stop the direction, and assigns the next action and owner. The responsible member fixes recurring execution problems and checks the affected workflow before the team relies on the fix.
+
+When stopping a direction, state what the evidence ruled out and what remains unimplemented or unmeasured. An unavailable upstream option is an implementation constraint, not a performance result. Validation of the current best candidate can proceed while independent research continues within the remaining budget.
 
 ## Collect GPU usage
 
@@ -96,6 +112,6 @@ A stop marker, deadline, SIGINT or SIGTERM lets the collector exit after its cur
 
 ## Pause or finish
 
-On a user pause, stop or deadline, the lead stops scheduling new experiments and notifies the team. Each owner stops their processes and confirms exit. Unfinished work is preserved on pause; at task completion, required results are saved before unused resources are removed.
+On a user pause, stop or deadline, the lead [releases the continuation binding](continuation.md#wait-pause-or-finish), stops scheduling new experiments and notifies the team. Each owner stops their processes and confirms exit. Unfinished work is preserved on pause; at task completion, required results are saved before unused resources are removed.
 
 The lead checks retained changes and measurements, including sampling coverage and unresolved questions. The writer updates the existing report to reflect the pause or end state and objectives actually achieved, following the [report workflow](../../../rsi-playbooks/experiment-records.md#maintain-the-user-facing-report), and shares its path with the user.

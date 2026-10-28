@@ -53,6 +53,7 @@ class ApplicationPublication:
     image: str | None
     parts: list[str] | None
     previous_image: str | None = None
+    model_preparation_image: str | None = None
 
 
 @dataclass(frozen=True)
@@ -162,6 +163,7 @@ class ApplicationFiles:
                 "image": publication.image,
                 "parts": publication.parts,
                 "previous_image": publication.previous_image,
+                "model_preparation_image": publication.model_preparation_image,
                 "archive_url": f"{self.endpoint}/sources/{component}/{revision}.tar.gz",
             })
         relative = None
@@ -390,18 +392,20 @@ class ApplicationFiles:
                 continue
             if revision in {".", ".."} or any(char in revision for char in "/\\\\\x00"):
                 raise DeploymentError("source revision must be a single directory segment")
-            references.add(self.reference(component, revision))
+            references.add((component, self.reference(component, revision)))
         images = set()
-        for reference in sorted(references):
+        for component, reference in sorted(references):
             manifest = self.read_manifest(reference)
             if manifest is None:
                 raise DeploymentError(f"selected application manifest is unavailable: {reference}")
-            if "image" not in manifest:
-                continue
-            image = manifest["image"]
-            if not isinstance(image, str) or not image.strip():
-                raise DeploymentError("application manifest image must be a nonempty string")
-            images.add(image)
+            keys = ("image", "modelPreparationImage") if component == "control-plane" else ("image",)
+            for key in keys:
+                if key not in manifest:
+                    continue
+                image = manifest[key]
+                if not isinstance(image, str) or not image.strip():
+                    raise DeploymentError(f"application manifest {key} must be a nonempty string")
+                images.add(image)
         return images
 
     @staticmethod

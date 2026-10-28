@@ -142,19 +142,29 @@ foretoken profile view
 
 Agent 可以围绕指定模型、负载和资源预算，研究优化方法、修改代码或配置、部署候选方案，再通过性能评测、质量评测和性能剖析决定下一步。实验报告随迭代更新，记录方案对比、实测收益和保留的改动。
 
-安装并登录 Claude Code 或 Codex 后，在仓库根目录选择一条命令启动 [Qwen3.5-35B-A3B 优化任务](rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md)。模型、资源、优化目标、时间预算和交付要求统一在任务文件中定义，运行前按实际环境调整。
+安装并登录 Claude Code 或 Codex 后，在仓库根目录打开会话。下面以优化 [NVIDIA GPU 上的 Qwen3.5-35B-A3B](rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia_zh.md) 为例。
 
 ```bash
 # Claude Code
 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude \
-  '/goal 使用 RSI skill 和 Agent Team，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md 中的优化任务。'
+  '/goal 使用 RSI skill 和 Agent Team，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia_zh.md 中的优化任务。'
 
-# Codex
-codex \
-  '/goal 使用 RSI skill，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md 中的优化任务。'
+# Codex CLI
+codex
 ```
 
-命令会打开交互会话并提交优化任务。暂停时，Claude Code 使用 `/goal clear`，Codex 使用 `/goal pause`，并要求 Agent 停止本任务的实验和采集进程。更详细的目标和约束可写入[任务模板](rsi-playbooks/templates/task-template_zh.md)，在提示词中引用任务文件；完整流程见 [RSI 手册](rsi-playbooks/README_zh.md)。
+在终端的 Codex CLI 中逐条输入以下命令，先审阅并信任项目 hook，再启动目标：
+
+```text
+/hooks
+/goal 使用 RSI skill，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia_zh.md 中的优化任务。
+```
+
+使用桌面应用时，在“设置 → Hooks”中审阅并信任 Foretoken 项目的 hook，再在聊天框输入上面的 `/goal` 命令。
+
+Codex 团队较大时，先[调整 Agent 并发上限](rsi-playbooks/README_zh.md#codex)，再启动会话。
+
+暂停时，Claude Code 使用 `/goal clear`，Codex 使用 `/goal pause`，并要求 Agent 停止本任务的实验和采集进程。更详细的目标和约束可写入[任务模板](rsi-playbooks/templates/task-template_zh.md)，在提示词中引用任务文件；完整流程见 [RSI 手册](rsi-playbooks/README_zh.md)。
 
 ## 网关模式
 

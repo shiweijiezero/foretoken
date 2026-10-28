@@ -239,6 +239,7 @@ def runtime_settings(platform: dict[str, Any]) -> dict[str, Any]:
         "control_plane_image": controller_image,
         "image": values["frontend"]["image"],
         "model_image": runtime["vllm"]["image"],
+        "preparation_image": runtime.get("preparationImage", ""),
         "omni_image": runtime["vllmOmni"]["image"],
         "nsight_image": runtime["vllm"]["nsightImage"],
         "mount": workload["cache"]["mountPath"],
@@ -369,7 +370,7 @@ def application_images(documents: Iterable[dict[str, Any]]) -> set[str]:
                 images.update(json.loads(source_build).get("completedBuild", {}).get("images", {}).values())
             images.update(filter(None, (
                 runtime["control_plane_image"], runtime["image"], runtime["model_image"],
-                runtime["omni_image"], runtime["nsight_image"],
+                runtime["omni_image"], runtime["nsight_image"], runtime["preparation_image"],
             )))
         spec = document.get("spec", {})
         status = document.get("status", {})
@@ -396,6 +397,7 @@ def application_images(documents: Iterable[dict[str, Any]]) -> set[str]:
                     for prefix in (
                         "--frontend-image=",
                         "--inference-engine-image=",
+                        "--model-preparation-image=",
                         "--omni-inference-engine-image=",
                         "--video-worker-image=",
                         "--nsight-image=",

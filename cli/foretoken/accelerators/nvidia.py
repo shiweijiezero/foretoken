@@ -91,26 +91,36 @@ class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
         )
 
     def _visible_devices(self, gpu_nodes: tuple[str, ...]) -> str | None:
-        """Reuse a standard device plugin's literal visibility for managed DCGM placement."""
+        """Reuse the covering NVIDIA plugin's literal visibility for managed DCGM placement."""
         # Nested nodes can lack driver mounts for GPUs outside the plugin's selection.
-        plugins = [
-            daemonset
-            for daemonset in self._exporters.daemonsets
-            if object_name(daemonset) == "nvidia-device-plugin-daemonset"
-            and self._exporters.daemonset_pods_on_nodes(daemonset, set(gpu_nodes))
-        ]
+        plugins = []
+        for daemonset in self._exporters.daemonsets:
+            for container in daemonset["spec"]["template"]["spec"]["containers"]:
+                command = container.get("command", [])
+                image = container["image"].split("@", 1)[0].rsplit("/", 1)[-1]
+                # Standard identities support mirrored images and entrypoint
+                # wrappers. Other names must distinguish same-image sidecars.
+                standard_plugin = (
+                    object_name(daemonset) == "nvidia-device-plugin-daemonset"
+                    and container["name"] == "nvidia-device-plugin-ctr"
+                )
+                is_plugin = standard_plugin or (
+                    command[0].rsplit("/", 1)[-1] == "nvidia-device-plugin"
+                    if command
+                    else image.split(":", 1)[0] == "k8s-device-plugin"
+                )
+                if not is_plugin:
+                    continue
+                if self._exporters.daemonset_pods_on_nodes(daemonset, set(gpu_nodes)):
+                    plugins.append(container)
         if len(plugins) != 1:
             return None
-        for container in plugins[0]["spec"]["template"]["spec"]["containers"]:
-            if container["name"] != "nvidia-device-plugin-ctr":
-                continue
-            for entry in container.get("env", []):
-                if entry["name"] == "NVIDIA_VISIBLE_DEVICES":
-                    value = entry.get("value")
-                    # References use the plugin container's environment, not the exporter's.
-                    return value if value is not None and "$(" not in value else None
-            return "all"
-        return None
+        for entry in plugins[0].get("env", []):
+            if entry["name"] == "NVIDIA_VISIBLE_DEVICES":
+                value = entry.get("value")
+                # References use the plugin container's environment, not the exporter's.
+                return value if value is not None and "$(" not in value else None
+        return "all"
 
     def has_capacity(self, node: dict[str, Any]) -> bool:
         """Return whether Kubernetes advertises an allocatable NVIDIA GPU."""

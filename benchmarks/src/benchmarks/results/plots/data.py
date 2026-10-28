@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Describe sweep figures from persisted run summaries without recomputing statistics."""
+"""Build sweep views and shared comparison statistics from saved measurements."""
 
 from __future__ import annotations
 
@@ -9,8 +9,12 @@ import json
 import math
 import re
 from collections import defaultdict
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
+
+from benchmarks.config.plot import interactivity_percentile
+from benchmarks.results.measurements.sweeps import _scalar_metrics, summarize_sweep
 
 
 @dataclass(frozen=True)
@@ -37,6 +41,46 @@ class Chart:
     kind: str = "line"
     yscale: str = "linear"
     metric: str = ""
+
+
+def paired_summaries(
+    points: list[dict[str, Any]], required: Sequence[str],
+) -> dict[tuple[str, str], dict[str, dict[str, Any]]]:
+    """Summarize the same valid repetitions for jointly displayed or selected metrics.
+
+    Callers retain attempt counts from the original summary. Each returned point
+    maps metric names to the shared sweep aggregator's means and standard deviations.
+    """
+    paired = []
+    for point in points:
+        values = _scalar_metrics(point)
+        if all(_numeric(values.get(metric)) is not None for metric in required):
+            paired.append(point)
+    grouped: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+    for row in summarize_sweep(paired):
+        grouped.setdefault((_method(row), str(row["combination"])), {})[row["metric"]] = row
+    return grouped
+
+
+def workload_slices(
+    rows: list[dict[str, Any]], varying_parameter: str,
+) -> Iterator[tuple[str, str, list[dict[str, Any]]]]:
+    """Group chart rows by fixed workloads and label conditions that differ between figures.
+
+    Only the method and selected scan parameter are removed from the workload
+    identity. Each slice yields its group, readable condition label, and original rows.
+    """
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        fixed = {key: value for key, value in row["bench"].items()
+                 if key not in {"service", varying_parameter} and not key.startswith("_")}
+        groups[row["parameter_group"], json.dumps(fixed, sort_keys=True)].append(row)
+    conditions = [_plot_conditions(json.loads(fixed)) for _, fixed in groups]
+    varying = {key for item in conditions for key in item
+               if len({json.dumps(other.get(key), sort_keys=True) for other in conditions}) > 1}
+    for ((group, _), grouped_rows), fields in zip(groups.items(), conditions):
+        details = ", ".join(f"{key}={fields[key]}" for key in sorted(varying) if key in fields)
+        yield group, details, grouped_rows
 
 
 def sweep_charts(
@@ -237,6 +281,9 @@ def _selected_sweep_rows(
         "speculative_decoding_target_forward_mean_seconds",
         "speculative_decoding_draft_time_share_ratio",
         "speculative_decoding_target_forward_time_share_ratio",
+        "agentx_latency_p95_seconds",
+        "agentx_ttft_p95_seconds",
+        "agentx_interactivity_p90",
     }
     default_metrics.update(
         str(row["metric"])
@@ -315,6 +362,20 @@ def _sweep_series(
 
 def _metric_display(metric: str) -> tuple[int, str]:
     """Resolve the existing measured-to-display scale and unit label for one sweep metric."""
+    interactivity = interactivity_percentile(metric)
+    if interactivity is not None:
+        family, percentile = interactivity
+        label = str(percentile).removesuffix(".0")
+        description = "TPOT-based decode speed" if family == "decode_interactivity" else "AgentX interactivity"
+        return 1, f"{description} · P{label} (tokens/s/user)"
+    for prefix, label, scale, unit in (
+        ("agentx_latency_", "AgentX request latency", 1, "s"),
+        ("agentx_ttft_", "AgentX TTFT", 1, "s"),
+        ("agentx_itl_", "AgentX token interval", 1000, "ms"),
+    ):
+        if metric.startswith(prefix) and metric.endswith("_seconds"):
+            statistic = metric.removeprefix(prefix).removesuffix("_seconds")
+            return scale, f"{label} {statistic} ({unit})"
     milliseconds = (
         metric.startswith(("tpot_", "itl_")) and metric.endswith("_seconds")
         or metric in {"speculative_decoding_draft_mean_seconds", "speculative_decoding_target_forward_mean_seconds"}
@@ -337,6 +398,12 @@ def _metric_display(metric: str) -> tuple[int, str]:
             "ttft_p95_seconds": "TTFT p95 (s)",
             "requests_per_second": "Request throughput (req/s)",
             "generation_tokens_per_second": "Output throughput (tokens/s)",
+            "total_output_tokens": "Total output tokens",
+            "generation_tokens_per_second_per_user": "Output throughput per user (tokens/s/user)",
+            "generation_tokens_per_second_per_gpu": "Output throughput per GPU (tokens/s/GPU)",
+            "total_tokens_per_second_per_gpu": "Total token throughput per GPU (tokens/s/GPU)",
+            "cached_prompt_tokens_per_second_per_gpu": "Cached input throughput per GPU (tokens/s/GPU)",
+            "uncached_prompt_tokens_per_second_per_gpu": "Uncached input throughput per GPU (tokens/s/GPU)",
             "success_rate": "Successful requests (%)",
             "resources_cpu_usage_cores": "Mean CPU usage (cores)",
             "resources_cpu_throttled_periods_ratio": "Throttled CPU periods (%)",

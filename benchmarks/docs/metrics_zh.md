@@ -22,10 +22,11 @@
 | Request throughput (req/s) | 成功请求数除以运行时间 |
 | Input token throughput (tokens/s) | 成功请求的输入 token 总数除以运行时间 |
 | Output token throughput (tokens/s) | 成功请求的输出 token 总数除以运行时间 |
+| 总输出 token（`total_output_tokens`） | 本轮成功请求的实际输出 token 总和，不含预热和失败请求；任一成功请求缺少用量时不可用，没有成功请求时为 0 |
 | `Output tok/s / user` | 输出吞吐量除以 `--max-concurrency`；`--max-concurrency -1` 时使用实测平均活跃请求数 |
 | Output token throughput per GPU (tokens/s) | 输出吞吐量除以模型声明的 GPU 容量 |
 | Mean reported cached input tokens | 成功请求中已报告的 `usage.prompt_tokens_details.cached_tokens` 平均值 |
-| Benchmark duration (s) | 整次评测的持续时间 |
+| Benchmark duration (s) | 从开始发送负载到已发送请求全部完成的时长 |
 
 多轮对话中，某轮失败后会跳过剩余轮次，不再补发。`not_executed_reasons` 区分前序请求失败（`failed_predecessor`）和达到时长限制（`duration`）；`failure_reasons` 按 HTTP 状态和错误信息汇总已记录的失败请求。
 
@@ -39,7 +40,45 @@ ITL 分位数的相对数值误差为 1%。逐请求 ITL SLO 使用最大间隔�
 
 W&B 分别展示每次运行所测模型的输入和输出吞吐量。`Time` 曲线按一秒窗口统计：成功请求结束时，将它的全部 token 计入该窗口，再除以窗口时长。`Cumulative` 曲线将已经完成的成功请求 token 总数除以经过时间。两者只统计本轮评测流量；Grafana 的模型总计则覆盖到达模型的全部流量。
 
-时间曲线还展示请求吞吐量、在途请求数、失败率和延迟分位数；逐请求曲线按发送顺序排列。同一 group 可对比不同运行，参数扫描的帕累托图用于比较吞吐量与延迟的取舍。
+时间曲线还展示请求吞吐量、在途请求数、失败率和延迟分位数；逐请求曲线按发送顺序排列。同一 group 可对比不同运行，参数扫描的权衡图用于比较吞吐量与延迟的取舍。
+
+## 绘图派生指标
+
+`foretoken plot` 从已保存结果计算以下指标，不改写原始测量：
+
+| 指标 | 含义 |
+| --- | --- |
+| `decode_interactivity`，统计量为 `p<N>` | 基于 TPOT 的解码速度，单位 tokens/s/user：`1 / P<N>(TPOT)`，先对成功请求的 TPOT 按最近秩法取分位数，再求倒数。`N` 可为 0 到 100 之间的整数或小数，例如 `50`、`95`、`99.9`。单 token 响应没有解码间隔，不参与计算；需要完整的成功请求输出数量，以及符合条件请求的 TPOT |
+| `total_tokens_per_second_per_gpu` | 输入加输出 token 的每秒总量除以已记录的 GPU 数。输入用量已经包含缓存部分 |
+| `cached_prompt_tokens_per_second_per_gpu` | 每 GPU 每秒缓存输入 token 数，需要所有成功请求均报告缓存输入用量 |
+| `uncached_prompt_tokens_per_second_per_gpu` | 每 GPU 每秒非缓存输入 token 数，按输入减缓存输入计算，需要完整的输入与缓存输入用量 |
+
+解码速度先取指定的 TPOT 分位数，再求倒数，而不是对逐请求速度取分位数。它使用逐请求分布，与 `itl` 汇总的所有分片间隔分布不同，不含 TTFT，也不同于输出吞吐量除以配置并发数。派生值先按每次运行计算，再汇总重复运行的均值与标准差。
+
+CLI 分别选择指标与统计量，导出记录用 `decode_interactivity_p95` 这类字段名标识实际数值，权衡图和收益 CSV 也保留所选指标与统计量。延迟、TTFT、TPOT 和 ITL 的摘要使用保存结果中已有的统计量；逐请求 ITL 摘要不能用于重建所有分片间隔的总体分位数。
+
+权衡图的两轴使用两个指标均可用的重复运行；有速度下限的收益选点也使用收入与速度同时可用的重复运行。对应 CSV 同时保留 `paired_samples`、完整尝试次数及失败次数；标量对照表则分别统计每个指标的可用重复运行。
+
+每 GPU 指标使用 `metrics.json` 记录的本次测量 `gpu_count`；不含该字段的旧结果，在模型匹配时可使用 `environment.json` 的 `before.declared_gpu_count`。`--gpu-count` 用于补充本次测量缺失的 GPU 总数，若与已记录的本次测量容量冲突则报错。收益图按显式提供的非缓存输入、缓存输入和输出价格，对相应用量计价。每 GPU 每小时收入为 `3600 × sum(tokens/s/GPU × 每百万 token 价格) / 1,000,000`，利润再减去配置的 GPU 每小时成本。缺失的 token 用量保持不可用，包括缓存用量。
+
+## AgentX 指标
+
+`foretoken perf --agentx` 保留官方 profiling 的速率和请求计数，预热记录不参与这些汇总。计时字段使用 `agentx_` 前缀，保留原生指标定义。分布只统计成功的 profiling 请求；错误仍计入请求数和失败数：
+
+| 指标 | 含义 |
+| --- | --- |
+| `agentx_interactivity`，统计量为 `p<N>` | 原生 token 间隔分位数换算为秒后的倒数，优先采用完整响应 ITL；实际来源保存在 `metrics.json` 的 `agentx.interactivity_source` 中 |
+| `agentx_latency`，统计量为 `mean` 或已有的 `p<N>` | 原生请求延迟，单位秒 |
+| `agentx_ttft`，统计量为 `mean` 或已有的 `p<N>` | 原生首 token 延迟，单位秒 |
+| `agentx_itl`，统计量为 `mean` 或已有的 `p<N>` | AgentX 交互速度所使用的原生 token 间隔，单位秒 |
+
+官方汇总中已有的分位数原样保留；额外的交互速度分位数由成功的原生 profiling 观测按线性插值计算，与官方客户端一致，不包含预热和失败请求。AgentX 使用原生 ITL，`decode_interactivity` 使用 Foretoken 的逐请求 TPOT。
+
+共用吞吐字段保留官方输入和输出速率；已知会话并发数时记录每用户输出速率，已知容量时记录每 GPU 速率。`total_output_tokens` 汇总成功 profiling 请求的完整输出用量。缓存和非缓存输入速率根据所有已报告成功 profiling 请求的完整用量比例，拆分官方输入速率。
+
+原生吞吐率使用 profiling 观测窗口；`benchmark_time` 保留原生首请求到末响应的时长，两者可能不同。AgentX 按声明的 GPU 容量归一化，不导出 GPU 分配时序和 Prometheus 窗口聚合值。
+
+运行是否完成与 `agentx.submission_valid` 及其原因分别查看。数据集、控制参数和原生报告见 [AgentX 回放](perf/agentx_zh.md)。
 
 ## GPU 分配量
 

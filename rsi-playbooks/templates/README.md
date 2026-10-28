@@ -4,6 +4,7 @@ English | [简体中文](README_zh.md)
 
 - [Optimization task](task-template.md): models, service configuration, available resources, workloads, objectives, and completion conditions.
 - [User-facing report](report-template.md): iteration changes, measured task metrics, changes from base, and conclusions for readers who did not participate.
+- [Progress chart data](progress-template.yaml): cumulative milestones and search history; see the [plotting guide](progress-charts.md).
 - [Iteration notes](iteration-template.md): analysis, design, changes, measurements, and decisions for one approach.
 - [Knowledge entries](guidance-template.md): principles, findings, working experience, conditions, evidence, and reusable implementation or experiment entrypoints.
 

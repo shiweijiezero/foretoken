@@ -212,6 +212,8 @@ foretoken perf --url http://localhost:8000/v1/chat/completions \
 
 URL mode takes the full request endpoint and an explicit prompt or dataset. `--output local` saves each run under `results/` without requiring a W&B account. See [performance benchmarks](../benchmarks/docs/perf/README.md) for datasets, concurrency, arrival rate and parameter sweeps.
 
+Add `--agentx` for [official AgentX replay](../benchmarks/docs/perf/agentx.md) with long-context, multi-turn agent workloads.
+
 ### eval
 
 Score model answers using lm-evaluation-harness or EvalScope. This example evaluates 100 GSM8K math problems:
@@ -231,7 +233,7 @@ Generate figures from saved benchmark results without rerunning inference. To pl
 foretoken plot results
 ```
 
-Figures are written to `results/plots/`. Pass individual run directories to select or compare particular runs. See [plotting options](../benchmarks/docs/recipes.md#plot-saved-results) and [W&B result uploads](../benchmarks/docs/perf/wandb.md#resume-an-upload).
+Figures are written to `results/plots/`. Pass individual run directories to select or compare particular runs. Use `foretoken plot --progress CHART.yaml [CHART.yaml ...]` for RSI progress charts. See the [plotting guide](../benchmarks/docs/plotting.md) and [W&B result uploads](../benchmarks/docs/perf/wandb.md#resume-an-upload).
 
 ## Profiling
 

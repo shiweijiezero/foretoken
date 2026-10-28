@@ -33,6 +33,15 @@ class LogConfig:
     image_pull_secrets: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class LogCollectionPlan:
+    """Resolved log settings and release state used by platform dependency scheduling."""
+
+    config: LogConfig
+    decisions: tuple[tuple[str, str, str], ...]
+    has_existing_releases: bool
+
+
 class LogCollectionLifecycle:
     """Install, update, and remove only CLI-owned log services, retaining stored logs."""
 
@@ -41,14 +50,16 @@ class LogCollectionLifecycle:
         self.loki = ReleaseRef(helm.config.loki.release_name, helm.config.namespace)
         self.collector = ReleaseRef(helm.config.log_collector.release_name, helm.config.namespace)
 
-    def plan(self, config: LogConfig) -> tuple[tuple[str, str, str], ...]:
-        """Validate release ownership and describe the requested collection change."""
+    def plan(self, config: LogConfig) -> LogCollectionPlan:
+        """Resolve log release ownership and scheduling before platform dependencies start."""
         actions = []
+        has_existing_releases = False
         for release, needed, name in (
             (self.loki, config.enabled and not config.endpoint, "Loki"),
             (self.collector, config.enabled, "Log collector"),
         ):
             exists = self._helm.release_exists(release)
+            has_existing_releases = has_existing_releases or exists
             if exists and needed and not self._helm.is_cli_managed(release):
                 raise DeploymentError(
                     f"Helm release {release.display_name} is not managed by foretoken; "
@@ -64,10 +75,11 @@ class LogCollectionLifecycle:
             if release == self.loki and config.endpoint:
                 action, detail = "Reuse", config.endpoint
             actions.append((name, action, detail))
-        return tuple(actions)
+        return LogCollectionPlan(config, tuple(actions), has_existing_releases)
 
-    def install(self, config: LogConfig, timeout: str) -> tuple[str, str]:
-        """Return Grafana's URL and the managed StatefulSet selected for volume expansion."""
+    def install(self, plan: LogCollectionPlan, timeout: str) -> tuple[str, str]:
+        """Apply the log plan and return the Loki endpoint and managed storage StatefulSet."""
+        config = plan.config
         endpoint = config.endpoint.rstrip("/") or (
             f"http://{self.loki.name}.{self.loki.namespace}.svc:3100"
         )

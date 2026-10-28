@@ -88,6 +88,7 @@ class SourceImages:
     control_plane: str
     frontend: str
     model_server: str
+    model_preparation: str
     inputs: Path
     build_state: dict[str, Any]
     applications: dict[str, str]
@@ -219,6 +220,7 @@ def prepare_source_images(
             yield SourceImages(
                 root, "registry" if prepared.registry else "import",
                 images.get("control-plane", ""), images["frontend"], images["model-server"],
+                build_state["images"]["environment-model-preparation"],
                 workspaces.snapshot, build_state, applications,
             )
 
@@ -299,6 +301,10 @@ def _prepare_source_build(
             build_cache_reference(DEFAULT_PLATFORM_REGISTRY, cache_version, runtime_component, "environment"),
             environment_image_reference(DEFAULT_PLATFORM_REGISTRY, cache_version, runtime_component),
         )
+    cache_references["model-preparation"] = (
+        build_cache_reference(DEFAULT_PLATFORM_REGISTRY, cache_version, "model-preparation", "preparation-environment"),
+        environment_image_reference(DEFAULT_PLATFORM_REGISTRY, cache_version, "model-preparation"),
+    )
     # Explicit overrides follow the platform image mapping. Otherwise preserve the
     # canonical names for BuildKit's registry mirrors without probing optional caches.
     if cache_mirror is not None:
@@ -326,6 +332,9 @@ def _prepare_source_build(
         **references,
         **{"compiler-" + component: reference + "-compiler" for component, reference in references.items()},
     }
+    environment_references["model-preparation"] = (
+        f"{prefix}/model-preparation:{revision}" if registry else f"{prefix}-model-preparation:{revision}"
+    )
     if build_metax_runtime:
         for name in ("metax-sdk", "vllm-metax"):
             environment_references[name] = (
@@ -639,7 +648,7 @@ def _build_environments(
             dependency_arguments["INFERENCE_ENGINE_IMAGE"] = engine_image
         selected = environments.build(
             component, _COMPONENT_DOCKERFILES[component], target="environment", arguments=dependency_arguments,
-            input_prefixes=("data-plane/patches/vllm/", "deploy/mooncake/", "third_party/mooncake/") if component == "model-server" else (),
+            input_prefixes=("data-plane/patches/vllm/", "data-plane/model-server/provider-requirements.txt", "deploy/mooncake/", "third_party/mooncake/") if component == "model-server" else (),
         )
         if selected["image"] != build.get("images", {}).get("environment-" + component):
             application_parts[component] = None
@@ -663,12 +672,25 @@ def _build_environments(
         return selected
 
     cancellation = workspaces.origin_builder.cancellation
-    with ThreadPoolExecutor(max_workers=len(previous_revisions)) as builds, cancellation:
+    with ThreadPoolExecutor(max_workers=len(previous_revisions) + 1) as builds, cancellation:
+        preparation = builds.submit(
+            cancellation.run_stage, environments.build,
+            "model-preparation", _COMPONENT_DOCKERFILES["model-server"],
+            target="preparation-environment",
+            arguments={
+                "INFERENCE_ENGINE_IMAGE": "scratch",
+                **{key: value for key, value in arguments.items() if key in {
+                    "BASE_IMAGE_REGISTRY", "UV_IMAGE_REGISTRY", "UV_IMAGE", "UV_DEFAULT_INDEX", "BUILDKIT_SYNTAX_IMAGE",
+                }},
+            },
+            input_prefixes=("data-plane/model-server/provider-requirements.txt",),
+        )
         pending = {
             component: builds.submit(cancellation.run_stage, build_component, component)
             for component in previous_revisions
         }
         selected = {component: future.result() for component, future in pending.items()}
+        preparation.result()
     return _BuiltEnvironments(
         environments=environments, component_environments=selected, compilers=compilers,
         engine_caches=engine_caches, engine_native=engine_native,
@@ -867,6 +889,10 @@ def _publish_applications(
             image=image,
             parts=built.application_parts[component],
             previous_image=prepared.previous_state.get("runtime", {}).get("model_image" if component == "model-server" else "image"),
+            model_preparation_image=(
+                prepared.pending_state["build"]["images"]["environment-model-preparation"]
+                if component == "control-plane" else None
+            ),
         )
         for component, image in images.items()
     ]

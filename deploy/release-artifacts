@@ -110,7 +110,7 @@ main() {
   }
 
   # Translate the package's PEP 440 release spelling to the OCI/Chart SemVer spelling.
-  read -r PYTHON_VERSION OCI_VERSION CONTROL_PLANE_IMAGE FRONTEND_IMAGE MODEL_SERVER_IMAGE MODEL_SERVER_METAX_IMAGE CONTROL_PLANE_CACHE FRONTEND_CACHE MODEL_SERVER_CACHE < <(
+  read -r PYTHON_VERSION OCI_VERSION CONTROL_PLANE_IMAGE FRONTEND_IMAGE MODEL_SERVER_IMAGE MODEL_SERVER_METAX_IMAGE MODEL_PREPARATION_IMAGE CONTROL_PLANE_CACHE FRONTEND_CACHE MODEL_SERVER_CACHE < <(
     "$PYTHON" - "$ROOT" "$REGISTRY" <<'PY'
 from pathlib import Path
 import sys
@@ -138,7 +138,7 @@ if chart_version != oci_version or app_version != oci_version:
     )
 images = [
     environment_image_reference(sys.argv[2], oci_version, component)
-    for component in ("control-plane", "frontend", "model-server", "model-server-metax")
+    for component in ("control-plane", "frontend", "model-server", "model-server-metax", "model-preparation")
 ]
 caches = [
     compiler_cache_reference(sys.argv[2], oci_version, component)
@@ -216,6 +216,11 @@ print(*selected)
         "FRONTEND_IMAGE=$FRONTEND_IMAGE" "IMAGE_TARGET=environment" "IMAGE_OUTPUT=type=docker" \
         "OCI_SOURCE=$SOURCE_URL" \
         "OCI_REVISION=$OCI_REVISION"
+    fi
+    if selected model-server || selected model-server-metax; then
+      build_with_cache model-preparation preparation-environment image-model-server \
+        "MODEL_SERVER_IMAGE=$MODEL_PREPARATION_IMAGE" "INFERENCE_ENGINE_IMAGE=scratch" "IMAGE_TARGET=preparation-environment" "IMAGE_OUTPUT=type=docker" \
+        "OCI_SOURCE=$SOURCE_URL" "OCI_REVISION=$OCI_REVISION"
     fi
     if selected model-server; then
       build_model_server \
@@ -298,6 +303,7 @@ values["applicationFiles"]["releaseURL"] = f"{source}/releases/download/v{python
 values["image"]["repository"] = environment_image_reference(registry, version, "control-plane").rsplit(":", 1)[0]
 values["frontend"]["image"] = environment_image_reference(registry, version, "frontend")
 values["runtime"]["vllm"]["image"] = "auto"
+values["runtime"]["preparationImage"] = environment_image_reference(registry, version, "model-preparation")
 variants = {"model-server": "nvidia", "model-server-metax": "metax"}
 selected = set(components.split(",")) & variants.keys()
 values["runtime"]["vllm"]["environmentImages"] = {
@@ -321,6 +327,10 @@ push_release() {
   selected frontend && push_image "$FRONTEND_IMAGE" frontend
   selected model-server && push_image "$MODEL_SERVER_IMAGE" model-server
   selected model-server-metax && push_image "$MODEL_SERVER_METAX_IMAGE" model-server-metax
+  if selected model-server || selected model-server-metax; then
+    push_image "$MODEL_PREPARATION_IMAGE" model-preparation preparation-environment
+    push_build_cache model-preparation preparation-environment
+  fi
   if selected control-plane && selected frontend && { selected model-server || selected model-server-metax; }; then
     push_image "$CONTROL_PLANE_CACHE" control-plane compiler-cache
     push_image "$FRONTEND_CACHE" frontend compiler-cache
@@ -457,7 +467,7 @@ build_with_cache() {
     if [[ "$target" != source-export ]]; then
       args+=("IMAGE_OUTPUT=")
     fi
-    if [[ "$target" == environment ]]; then
+    if [[ "$target" == environment || "$target" == preparation-environment ]]; then
       args+=("BUILDKIT_INLINE_CACHE=1")
     fi
     run "${args[@]}" "IMAGE_CACHE_TO="

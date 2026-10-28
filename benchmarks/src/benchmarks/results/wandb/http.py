@@ -93,6 +93,7 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         _REQUESTS_PER_SECOND: round(float(throughput["requests_per_second"]), 4),
     }
     for source, label in (
+        ("total_output_tokens", "Total output tokens"),
         ("planned_num", "Prepared requests"),
         ("admitted_num", "Admitted requests"),
         ("not_executed_num", "Not executed requests"),
@@ -312,10 +313,11 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                     })
             sdk_run.log({f"Breakdown/{group_name}": wandb.Table(
                 columns=["Name", "Requests", "Success", "Request throughput (req/s)",
-                         "Output tokens/s", "P95 E2EL (s)", "SLO attainment (%)", "Goodput (req/s)"],
+                         "Total output tokens", "Output tokens/s", "P95 E2EL (s)", "SLO attainment (%)", "Goodput (req/s)"],
                 data=[[
                     name, group["request_num"], group["success_num"],
                     group["throughput"]["requests_per_second"],
+                    group.get("total_output_tokens"),
                     group["throughput"]["generation_tokens_per_second"],
                     group["latency"]["p95"],
                     (group.get("slo") or {}).get("slo_attainment") * 100

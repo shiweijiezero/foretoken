@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""``foretoken perf`` HTTP performance benchmark entry point."""
+"""Dispatch serving-performance workloads through their measurement owners."""
 
 from __future__ import annotations
 
@@ -33,6 +33,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Parse and run one benchmark command for lazy import by the top-level CLI."""
     arguments = tuple(sys.argv[1:] if argv is None else argv)
     options = arguments[:arguments.index("--")] if "--" in arguments else arguments
+    if "--agentx" in options:
+        _run_agentx(arguments)
+        return
     if "--video" in options:
         _run_video(arguments)
         return
@@ -134,10 +137,47 @@ def _run_video(arguments: Sequence[str]) -> None:
         raise SystemExit(str(exc)) from exc
 
 
+def _run_agentx(arguments: Sequence[str]) -> None:
+    """Run the official replay with the existing service, experiment, and sweep owners."""
+    from benchmarks.config.agentx import parse_agentx_arguments
+    from benchmarks.integrations.agentx import AgentXExecutionError
+
+    try:
+        config = parse_agentx_arguments(arguments)
+    except (DeploymentError, OSError, sqlite3.Error, ValueError) as error:
+        raise SystemExit(str(error)) from error
+
+    import wandb
+
+    from benchmarks.model_service import ModelServiceResolver
+    from benchmarks.results.experiment import experiment_output
+    from benchmarks.runs.agentx import run_agentx
+
+    configure_logging(not config.outputs.includes("quiet"))
+    try:
+        recovered = _recover_completed(config.sweep.resume, config.outputs, arguments, config.to_dict())
+        if recovered is not None:
+            if recovered.exit_code:
+                raise SystemExit(recovered.exit_code)
+            return
+        with experiment_output(config, "perf", arguments) as config:
+            if config.sweep.path or len(config.services) > 1 or config.sweep.num_runs > 1:
+                from benchmarks.sweeps.agentx import run_agentx_sweep
+
+                run = run_agentx_sweep(config)
+            else:
+                with ModelServiceResolver().resolve(config.service) as service:
+                    run = run_agentx(config, service)
+            if run.exit_code:
+                raise SystemExit(run.exit_code)
+    except (AgentXExecutionError, DeploymentError, OSError, sqlite3.Error, ValueError, wandb.errors.Error) as error:
+        raise SystemExit(str(error)) from error
+
+
 def _recover_completed(
     resume: str, outputs: BenchmarkOutputConfig, arguments: Sequence[str], configuration: dict[str, Any],
 ) -> BenchmarkRun | None:
-    """Recover completed HTTP, video or composed results before any service acquisition."""
+    """Recover completed measurement outputs before acquiring a model service."""
     if not resume:
         return None
     from benchmarks.results.recording.locks import publication_lock

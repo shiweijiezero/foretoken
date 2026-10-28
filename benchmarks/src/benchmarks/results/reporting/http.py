@@ -372,6 +372,7 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
     )
     lines.extend(
         [
+            f"  Total output tokens (successful requests): {_format_metric(metrics.get('total_output_tokens'), 0)}",
             f"  Request throughput (req/s): {_format_metric(throughput['requests_per_second'])}",
             f"  Input token throughput (tokens/s): {_format_metric(throughput['prompt_tokens_per_second'])}",
             f"  Output token throughput (tokens/s): {_format_metric(generation_tokens_per_second)}",
@@ -403,6 +404,7 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
             display_name = Path(name).name if Path(name).is_absolute() else name
             rows.append([
                 display_name, f"{group['success_num']}/{group['request_num']}",
+                _format_metric(group.get('total_output_tokens'), 0),
                 _format_metric(group['throughput']['requests_per_second'], 2),
                 _format_metric(group['throughput']['generation_tokens_per_second'], 2),
                 _format_metric(group['latency']['p95'], 3),
@@ -410,9 +412,9 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
                 _format_metric(group_slo.get('request_goodput'), 2),
             ])
         lines.append(tabulate(
-            rows, headers=("Name", "Success", "Req/s", "Out tok/s", "P95 E2EL", "SLO %", "Good req/s"),
+            rows, headers=("Name", "Success", "Total output tokens", "Req/s", "Out tok/s", "P95 E2EL", "SLO %", "Good req/s"),
             tablefmt="plain", disable_numparse=True,
-            colalign=("left", "right", "right", "right", "right", "right", "right"),
+            colalign=("left", "right", "right", "right", "right", "right", "right", "right"),
         ))
     if metrics.get("avg_cached_input_tokens") is not None:
         lines.append(
@@ -465,6 +467,7 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
     """Print one summary row for each parameter sweep result."""
     headers = (
         "Method / group / run", "Status", "Concurrency", "Arrival rate", "Requests",
+        "Total output tokens",
         "Output tokens/s", "Output tokens/s/user", "Output tokens/s/GPU", "P99 E2EL (s)",
     )
     rows = []
@@ -472,7 +475,7 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
         method = item["bench"].get("service", {}).get("name", "default")
         identity = f"{method} / {item['parameter_group']} / {item['run_number'] + 1}"
         if "slo_search" in item and "throughput" not in item:
-            rows.append([identity, item["status"], "—", "—", "—", "—", "—", "—", "No passing SLO probe"])
+            rows.append([identity, item["status"], "—", "—", "—", "—", "—", "—", "—", "No passing SLO probe"])
             continue
         parallel = item["max_concurrency"]
         parallel_label = (
@@ -492,6 +495,7 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
         )
         rows.append([
             identity, item["status"], parallel_label, rate_label, str(item["request_num"]),
+            _format_metric(item.get("total_output_tokens"), 0),
             _format_metric(generation_tokens_per_second, 2),
             _format_metric(generation_tokens_per_second_per_concurrency, 2),
             _format_metric(generation_tokens_per_second_per_gpu_value, 2),
@@ -499,5 +503,5 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
         ])
     logger.info("\n{}\n{}\n{}", "========== Parameter Sweep Results =========", tabulate(
         rows, headers=headers, tablefmt="plain", disable_numparse=True,
-        colalign=("left", "left", "right", "right", "right", "right", "right", "right", "right"),
+        colalign=("left", "left", "right", "right", "right", "right", "right", "right", "right", "right"),
     ), "============================================")

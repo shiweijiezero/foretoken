@@ -8,11 +8,14 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
+from foretoken.accelerators.config import NVIDIA_GPU_RESOURCE
 from foretoken.arguments import ClusterCommand
 from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
 from foretoken.platform.networking.rdma_interfaces import is_roce_port
 from foretoken.working_directory import repository_data_directory
 
@@ -163,15 +166,25 @@ def _create_k3d(command: ClusterCommand, root: Path) -> None:
     ]
     _run(arguments)
     _refresh_kubeconfig("k3d", command.name)
-    _run(["kubectl", "apply", "-f", _DEVICE_PLUGIN])
-    _run([
-        "kubectl", "set", "env", "daemonset/nvidia-device-plugin-daemonset",
+    kubectl = Kubectl(context=f"k3d-{command.name}")
+    _run(kubectl.command(["apply", "-f", _DEVICE_PLUGIN]))
+    _run(kubectl.command([
+        "set", "env", "daemonset/nvidia-device-plugin-daemonset",
         "--namespace", "kube-system", f"NVIDIA_VISIBLE_DEVICES={command.gpus}",
-    ])
-    _run([
-        "kubectl", "rollout", "status", "daemonset/nvidia-device-plugin-daemonset",
-        "--namespace", "kube-system", "--timeout=5m",
-    ])
+    ]))
+    timeout = "5m"
+    with kubectl.until(time.monotonic() + timeout_seconds(timeout)) as deadline:
+        _run(kubectl.command([
+            "rollout", "status", "daemonset/nvidia-device-plugin-daemonset",
+            "--namespace", "kube-system", f"--timeout={timeout}",
+        ]))
+        # Pod readiness precedes the node update used by platform GPU discovery.
+        wait_for_object(
+            lambda: kubectl.get("node", f"k3d-{command.name}-server-0"),
+            lambda node: int(node["status"].get("allocatable", {}).get(NVIDIA_GPU_RESOURCE, "0")) > 0,
+            deadline,
+            "NVIDIA GPU resource registration",
+        )
 
 
 def _delete(command: ClusterCommand) -> None:

@@ -135,9 +135,9 @@ async def _run_requests(
             )
             output = run_dir / f"video_{index:04d}_{safe_id or 'sample'}.mp4"
             result = await client.generate(request, index, output)
-            # Retain completed requests before SDK publication so interruption
-            # never discards their media paths, timings, or failure details.
-            await writer.awrite(video_result_record(result, Path(outputs.execution_dir)))
+            # The result lifecycle drains accepted records before publication or
+            # interruption cleanup without holding this request's admission slot.
+            writer.submit(video_result_record(result, Path(outputs.execution_dir)))
             return result
         finally:
             semaphore.release()
@@ -160,6 +160,7 @@ async def _run_requests(
                 results.append(result)
             if count == len(tasks):
                 results.sort(key=lambda item: item.index)
+                await writer.drain()
                 if on_complete is not None:
                     on_complete(results)
             if result is None:

@@ -102,6 +102,8 @@ class CompilerWorkspace(AbstractContextManager):
             self.run(["sh", "-ec", 'mkdir -p "$1"; rm -rf "$1/output"; mkdir "$1/output"', "prepare", self.root], container=self.artifact_container)
             return self
         except BaseException as error:
+            # Report the startup failure and stop peers before retirement can block.
+            self.cancellation.cancel(error)
             self.__exit__(type(error), error, error.__traceback__)
             raise
 
@@ -116,17 +118,18 @@ class CompilerWorkspace(AbstractContextManager):
         """Capture a complete input tree separately from all mutable compiler workspaces."""
         synchronize_inputs(self.command, self.cancellation, self.workspace, self.execution_root + "/inputs.json", files, versions)
 
-    def has_source_state(self, component: str) -> bool:
-        """Report whether a component already owns an incremental source tree in this workspace."""
-        receipt = self.execution_root + "/work/" + component + "/source.json"
-        return bool(self.run(["sh", "-ec", 'if test -f "$1"; then printf ready; fi', "cache", receipt], capture=True))
+    def has_native_state(self, component: str) -> bool:
+        """Report whether a component has initialized its native compiler workspace."""
+        marker = "target" if "rust" in APPLICATION_PARTS[component] else "source.json"
+        path = self.execution_root + "/work/" + component + "/" + marker
+        return bool(self.run(["sh", "-ec", 'if test -e "$1"; then printf ready; fi', "cache", path], capture=True))
 
     def prepare_cache_seed(
         self, builder: ClusterBuilder, component: str, arguments: dict[str, str],
         *, reference: str | None = None,
     ) -> CompilerCache | None:
         """Resolve optional release state, extracting it only for a new private compiler workspace."""
-        if self.has_source_state(component):
+        if self.has_native_state(component):
             return None
         reference = reference or compiler_cache_reference(DEFAULT_PLATFORM_REGISTRY, platform_version(), component)
         image = reference

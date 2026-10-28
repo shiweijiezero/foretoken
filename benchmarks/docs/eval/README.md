@@ -27,6 +27,12 @@ The summary lists task scores, answer filters, sample counts, and standard error
 - `--log_samples` saves individual inputs and answers.
 - `--model_args num_concurrent=4` selects four concurrent API requests.
 
+Text-generation evaluations append complete JSON responses to `lm_eval_http_responses.jsonl` in the result directory as they arrive. For an empty answer, inspect the fields actually returned by the service, such as `finish_reason` and `stop_reason` in `response.choices`, and `response.usage`.
+
+Each row identifies the native `task`, `doc_id`, `request_index` and `sample` for comparison with the framework's sample records. `arguments` contains the input and generation parameters; `response` preserves the JSON before text extraction. Scoring continues to use the original parsed answers and task rules.
+
+Selecting W&B output also uploads the response log. Use `--output local` to keep results local.
+
 ### Candidate likelihood and perplexity
 
 PIQA selects answers by comparing their probabilities. WikiText measures perplexity: lower values mean the model predicts the text more readily. These tasks need a [source-built Foretoken platform](../../../docs/deployment/source.md) or an existing Completions service that returns input-token log probabilities:
@@ -97,6 +103,8 @@ foretoken eval examples/quickstart/qwen3-0.6b \
 
 The resumed invocation writes a new result directory, reuses completed work, and reports the combined scores. The source directory remains unchanged; if interrupted again, resume from the newest directory. Keep model weights, task configuration, generation settings, and sample selection unchanged.
 
+Resuming lm-eval copies existing response logs and appends new responses. An unfinished final record is omitted from the copy with a warning; the source file is unchanged. Older results without raw responses are not backfilled or rerun solely to obtain that evidence. Requests served from native `--use_cache` make no HTTP call in the current run and produce no new response record.
+
 | Evaluation | Reused work |
 | --- | --- |
 | lm-evaluation-harness | Completed text generations, including repeated sampling, and completed likelihood-scoring windows for candidate answers and perplexity |
@@ -115,6 +123,8 @@ Open the result directory printed by the command:
 | --- | --- |
 | `metrics.json` | Task scores, subsets, answer filters, sample counts, and available uncertainty or execution status |
 | `native/` | The framework's reports and any generated sample records |
+| `lm_eval_responses.sqlite` | The default lm-eval generation and likelihood cache used for resume |
+| `lm_eval_http_responses.jsonl` | Directly recorded text-generation responses, with task, question and sample information |
 | `evaluator.log` | The evaluator's execution log |
 | `evaluation_progress.jsonl` | Measured completion counts over time, retained after interruption |
 

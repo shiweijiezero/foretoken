@@ -20,6 +20,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 使用 Foretoken 采集与查看
 
+先用已有指标、日志和 Foretoken 的性能剖析工具，观察实际负载怎样执行。临时增加计时、逐步日志、强制同步或探测请求，都可能改变执行顺序、批次和缓存状态，让测到的表现偏离正常运行。只有现有执行记录（trace）缺少关键信息时，才补充必要的标记或观测代码；这些代码应能关闭或移除，并说明记录了什么、可能怎样影响执行。
+
 - [PyTorch Profiler](https://docs.pytorch.org/tutorials/beginner/profiler.html)：采集模型执行中的 CPU／GPU 事件，查看算子耗时与时间线，使用 `--profile-engine pytorch`。
 - [Nsight Systems](https://docs.nvidia.com/nsight-systems/UserGuide/index.html)：查看 NVIDIA 平台上的任务提交、CUDA 调用、通信与执行重叠，使用 `--profile-engine nsight`。
 - [mcTracer](https://developer.metax-tech.com/doc?category_ids=61)：采集沐曦设备的执行时间线，使用 `--profile-engine mctracer`。
@@ -31,7 +33,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 - 先选少量代表性样本，用 `--profile-duration` 控制时长。研究并发或混合负载时，保留所需的批次特征，缩短观察窗口。
 - 稳态分析在模型加载、编译、图捕获和预热完成后采集；启动耗时结合启动日志单独分析。确认 trace 覆盖了要观察的阶段。
 - 重复输入可能命中前缀缓存，冷预填充与缓存复用分别选择负载。记录生成设置与图执行方式，便于解释差异。
-- 剖析会增加执行和写盘开销。性能对照使用相同负载的普通运行，trace 用于解释原因。
+- 剖析本身也有开销，只采集当前问题需要的事件和时段。正式比较延迟和吞吐时，另跑一次，关闭剖析和临时观测代码，保持相同的负载、预热与缓存条件。如果排查时关闭了 CUDA Graph 或增加了同步，先恢复实际部署要使用的配置；这类排查结果单独标明。
 - 多卡数据按进程、rank、设备和同一轮工作对应，跨节点比较时处理时钟偏差。查看计算与通信、不同 stream 的重叠，再判断耗时影响。
 - 大 trace 先查看大小和事件概况，再按时间段、进程或算子筛选。保留原文件，通过查看器或查询工具提取需要的统计与片段。
 

@@ -38,6 +38,8 @@ foretoken perf examples/quickstart/qwen3-0.6b \
 
 [性能评测示例](docs/perf/README_zh.md)涵盖数据集、多轮对话、请求速率、轨迹回放、参数扫描、SLO 搜索和视频生成。定义与单位见[性能指标](docs/metrics_zh.md)。
 
+使用 `foretoken perf --agentx` 运行[官方 AgentX 会话回放](docs/perf/agentx_zh.md)，测量长上下文前缀复用和并行子 agent 等负载。
+
 ## 评测模型质量
 
 ```bash
@@ -63,7 +65,7 @@ foretoken eval examples/quickstart/qwen3-0.6b \
 | `wandb` | 打印结果、保留本地文件，并在后台发布到 W&B |
 | `plot` | 保存结果并导出 PDF、SVG、PNG 和 CSV |
 | `experiment` | 按实验迭代组织结果，并保存本次运行的源码和命令信息 |
-| `raw` | 性能评测额外保存实际请求和响应内容，并保留本地结果 |
+| `raw` | HTTP 文本性能评测额外保存实际请求和响应内容，并保留本地结果 |
 | `local,wandb,plot` | 保存结果、导出图表，并上传 W&B |
 | `local,quiet` | 保存本地文件，不打印控制台汇总 |
 | `local,wandb,quiet` | 保存并上传结果，不打印控制台汇总 |
@@ -78,7 +80,7 @@ foretoken eval examples/quickstart/qwen3-0.6b \
 | `run.log` | 排查准备、执行过程及错误 |
 | `wandb-sync.log`，启用在线 W&B 时生成 | 查看后台上传进度、运行链接和恢复命令 |
 | `environment.json`、`sources/` | 查看保存在本地的服务配置与可用源码归档 |
-| `raw_output.jsonl`（HTTP）、`raw_results.jsonl`（视频） | 逐条查看已完成请求，中断后也可用于排查 |
+| `raw_output.jsonl`（HTTP）、`raw_results.jsonl`（视频） | 查看已持久化的请求结果，中断后也可用于排查 |
 | `responses.jsonl`，需选择 `--output local,raw` | 查看 HTTP 请求输入和响应内容，包括 reasoning 和工具调用 |
 
 普通模式和 quiet 模式均记录日志；`quiet` 关闭评测进度和汇总输出，仍显示错误、W&B 结果目录和上传日志位置。预热记录使用 `warmup_` 文件名前缀。质量评分、框架报告和性能剖析产物见下方专项指南。
@@ -95,4 +97,4 @@ foretoken perf examples/quickstart/qwen3-0.6b --num-prompts 20 \
 
 延迟和吞吐量图表见[性能结果](docs/perf/wandb_zh.md)，任务得分与框架原始报告见[质量结果](docs/eval/README_zh.md#查看评分)，执行时间线见[查看采集结果](docs/profile/README_zh.md#查看结果)。
 
-使用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照已有结果，添加 `--sync_wandb` 可同步到 W&B。指标与图形设置见[绘图示例](docs/recipes_zh.md#绘制与对照结果)，离线补传见 [W&B 输出](docs/perf/wandb_zh.md#恢复上传)。
+使用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照已有结果，添加 `--sync_wandb` 可同步到 W&B。使用 `foretoken plot --progress CHART.yaml [CHART.yaml ...]` 导出 RSI 进展图。指标、方案对比、进展图与收益估算见[绘图指南](docs/plotting_zh.md)，离线补传见 [W&B 输出](docs/perf/wandb_zh.md#恢复上传)。

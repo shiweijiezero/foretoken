@@ -6,7 +6,7 @@
 
 ## 准备
 
-完成[通用准备](../../README_zh.md#开始使用)后，在仓库根目录执行命令。示例均使用 `examples/quickstart/qwen3-0.6b`。
+完成[通用准备](../../README_zh.md#开始使用)后，在仓库根目录执行命令。常规示例使用 `examples/quickstart/qwen3-0.6b`。
 
 评测 Foretoken 部署时，直接使用 Kustomize 目录，CLI 会自动解析服务地址、模型和 Gateway 路由请求头。
 
@@ -26,6 +26,7 @@ export MODEL_ID=Qwen/Qwen3-0.6B
 | 使用真实对话 | [本地对话](conversations_zh.md)、[Hugging Face 数据集](huggingface_zh.md)、[ShareGPT](sharegpt_zh.md)、[工具数据](tools_zh.md) |
 | 混合数据集或控制请求到达 | [多数据集](multi-dataset_zh.md)、[请求速率与并发](arrival-rate_zh.md) |
 | 回放历史流量 | [StudyChat](studychat_zh.md)、[Mooncake trace](mooncake-trace_zh.md) |
+| 回放 agent 会话 | [AgentX](agentx_zh.md) |
 | 比较负载设置 | [参数扫描](sweep_zh.md)、[SLO 并发搜索](slo_zh.md) |
 | 测量视频生成性能 | [视频负载](video_zh.md) |
 | 比较运行和查看图表 | [W&B 输出](wandb_zh.md) |

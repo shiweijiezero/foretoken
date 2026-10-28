@@ -43,6 +43,7 @@ def publish(
     image: str | None = None,
     parts: list[str] | None = None,
     previous_image: str | None = None,
+    model_preparation_image: str | None = None,
     source_archive: Path | None = None,
     archive_url: str = "",
 ) -> Path:
@@ -63,6 +64,7 @@ def publish(
             and metadata.get("binding") == binding
             and not metadata.get("releaseOwned")
             and metadata.get("image") == image
+            and metadata.get("modelPreparationImage") == model_preparation_image
         ):
             previous_files = metadata["files"]
     inputs = {path.relative_to(source): path for path in source.rglob("*")}
@@ -185,6 +187,7 @@ def publish(
                     "binding": binding, "releaseOwned": release_owned,
                     "files": files, "archive": archive_name, "sources": sources,
                     **({"image": image} if image is not None else {}),
+                    **({"modelPreparationImage": model_preparation_image} if model_preparation_image is not None else {}),
                 }
             )
             + "\n"
@@ -304,6 +307,7 @@ def publish_batch(selection: dict) -> dict[str, str]:
             Path(application["previous"]) if application["previous"] else None,
             reuse_previous=True, sources=application["sources"], image=application["image"],
             parts=application["parts"], previous_image=application["previous_image"],
+            model_preparation_image=application.get("model_preparation_image"),
             source_archive=archive, archive_url=application["archive_url"],
         )
         if retained is not None:

@@ -126,6 +126,7 @@ def _publishers() -> dict[str, Callable[[Any, BenchmarkRun], None]]:
         publish_sweep_wandb,
     )
     from benchmarks.results.wandb.video import publish_video_wandb
+    from benchmarks.results.wandb.agentx import publish_agentx_wandb
 
     return {
         "http": publish_http_wandb, "sweep": publish_sweep_wandb, "slo": publish_slo_wandb,
@@ -133,6 +134,7 @@ def _publishers() -> dict[str, Callable[[Any, BenchmarkRun], None]]:
         "evaluation_comparison": publish_evaluation_comparison_wandb,
         "distribution_comparison": publish_distribution_comparison_wandb,
         "greedy_comparison": publish_greedy_comparison_wandb,
+        "agentx": publish_agentx_wandb,
     }
 
 

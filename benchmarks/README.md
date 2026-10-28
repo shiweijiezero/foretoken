@@ -38,6 +38,8 @@ Performance time values may include a unit such as `s`, `min`, or `h`; unitless 
 
 [Performance examples](docs/perf/README.md) cover datasets, conversations, arrival rates, trace replay, parameter sweeps, SLO searches, and video generation. Definitions and units are in [Performance metrics](docs/metrics.md).
 
+Use `foretoken perf --agentx` for [official AgentX session replay](docs/perf/agentx.md), including long-context prefix reuse and parallel subagents.
+
 ## Evaluate model quality
 
 ```bash
@@ -78,7 +80,7 @@ Local results use a separate directory under `results/` for each run; `--output-
 | `run.log` | Inspect preparation, execution, and errors |
 | `wandb-sync.log`, with online W&B output | Inspect background upload progress, run links, and recovery instructions |
 | `environment.json`, `sources/` | Inspect the service configuration and available source archives, saved locally |
-| `raw_output.jsonl` (HTTP), `raw_results.jsonl` (video) | Inspect requests as they complete, including records retained after interruption |
+| `raw_output.jsonl` (HTTP), `raw_results.jsonl` (video) | Inspect persisted request completions, including records retained after interruption |
 | `responses.jsonl`, with `--output local,raw` | Inspect HTTP inputs and response content, including reasoning and tool calls |
 
 Logs are recorded in both normal and quiet modes. `quiet` suppresses benchmark progress and summaries; errors and W&B result and upload-log locations remain visible. Warmup records use the `warmup_` filename prefix. Quality scores, framework reports, and profiling captures are described in the linked guides below.
@@ -95,4 +97,4 @@ foretoken perf examples/quickstart/qwen3-0.6b --num-prompts 20 \
 
 See [performance results](docs/perf/wandb.md) for latency and throughput charts, [quality results](docs/eval/README.md#read-scores) for task scores and native reports, and [profile viewing](docs/profile/README.md#inspect-results) for retained execution captures.
 
-Use `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results; add `--sync_wandb` to upload them to W&B. See [plotting examples](docs/recipes.md#plot-saved-results) for metric selection and layout, or [W&B output](docs/perf/wandb.md#resume-an-upload) for offline uploads.
+Use `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results; add `--sync_wandb` to upload them to W&B. Use `foretoken plot --progress CHART.yaml [CHART.yaml ...]` to export RSI progress charts. See the [plotting guide](docs/plotting.md) for metric selection, comparisons, progress charts and revenue estimates, or [W&B output](docs/perf/wandb.md#resume-an-upload) for offline uploads.

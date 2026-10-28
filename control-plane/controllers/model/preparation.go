@@ -59,66 +59,213 @@ func (reconciler *GroupReconciler) reconcilePreparation(ctx context.Context, gro
 	if err != nil {
 		return false, err
 	}
-	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
-		return false, fmt.Errorf("set model preparation Job owner: %w", err)
-	}
-	current := new(batchv1.Job)
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); apierrors.IsNotFound(err) {
-		if group.Spec.Artifacts.Cache != nil {
-			affinity, err := reconciler.preparationNodeAffinity(ctx, group)
-			if err != nil {
-				return false, err
-			}
-			desired.Spec.Template.Spec.Affinity = &corev1.Affinity{NodeAffinity: affinity}
-		}
-		if err := runtimeconfig.PlaceRuntimeCache(ctx, reconciler.Client, group.Namespace, group.Spec.Artifacts.Cache, &desired.Spec.Template); err != nil {
-			return false, err
-		}
-		if err := reconciler.Create(ctx, desired); err != nil {
-			return false, fmt.Errorf("create model preparation Job: %w", err)
-		}
-		return false, nil
-	} else if err != nil {
-		return false, fmt.Errorf("get model preparation Job: %w", err)
-	}
-	if !metav1.IsControlledBy(current, group) {
-		return false, fmt.Errorf("model preparation Job %q is not controlled by ModelGroup", current.Name)
-	}
-	for _, condition := range current.Status.Conditions {
-		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
-			// Preserve the failed attempt before retiring its diagnostics. Recovery
-			// continues, but cannot turn an observed failure back into unknown readiness.
-			failure := reconciler.preparationFailure(ctx, current, group.Spec.Timeouts.Startup, condition.Reason, condition.Message)
-			if err := reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(failure)); err != nil {
-				return false, errors.Join(failure, err)
-			}
-			if current.DeletionTimestamp.IsZero() {
-				if err := reconciler.Delete(ctx, current, client.PropagationPolicy(metav1.DeletePropagationForeground), client.Preconditions{UID: &current.UID}); client.IgnoreNotFound(err) != nil {
-					return false, errors.Join(failure, fmt.Errorf("retire failed model preparation Job: %w", err))
-				}
-			}
-			return false, failure
-		}
-		if condition.Type == batchv1.JobComplete && condition.Status == corev1.ConditionTrue {
-			return true, nil
-		}
-	}
-	// Recent Job controllers publish the cause before all Pods finish terminating.
-	for _, condition := range current.Status.Conditions {
-		if condition.Type == batchv1.JobFailureTarget && condition.Status == corev1.ConditionTrue {
-			failure := reconciler.preparationFailure(ctx, current, group.Spec.Timeouts.Startup, condition.Reason, condition.Message)
-			return false, errors.Join(failure, reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(failure)))
-		}
-	}
-	if err := reconciler.startPreparationDeadline(ctx, current, startupSeconds); err != nil {
+	preparation, err := reconciler.preparationJob(ctx, group, desired.Name)
+	if err != nil {
 		return false, err
 	}
-	// Native Job backoff continues recovery without hiding an already failed attempt.
-	if current.Status.Failed > 0 && !meta.IsStatusConditionFalse(group.Status.Conditions, workload.ConditionTargetReady) {
-		failure := reconciler.preparationFailure(ctx, current, group.Spec.Timeouts.Startup, "ContainerFailed", "A preparation container exited unsuccessfully")
-		return false, errors.Join(failure, reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(failure)))
+	runtime, err := reconciler.preparationJob(ctx, group, runtimePreparationName(group))
+	if err != nil {
+		return false, err
 	}
-	return false, nil
+	jobs := []*batchv1.Job{preparation, runtime}
+
+	// Observe both owners before creating another attempt or admitting execution.
+	// Foreground retirement keeps a cancelled sibling from writing into a new attempt.
+	for _, job := range jobs {
+		if job != nil && !job.DeletionTimestamp.IsZero() {
+			return false, reconciler.retirePreparationJobs(ctx, jobs)
+		}
+	}
+	completed := map[string]bool{}
+	for _, job := range jobs {
+		if job == nil {
+			continue
+		}
+		for _, condition := range job.Status.Conditions {
+			if condition.Status != corev1.ConditionTrue {
+				continue
+			}
+			switch condition.Type {
+			case batchv1.JobFailed, batchv1.JobFailureTarget:
+				observedFailure := reconciler.preparationFailure(ctx, job, group.Spec.Timeouts.Startup, condition.Reason, condition.Message)
+				failure := observedFailure
+				if previous := meta.FindStatusCondition(group.Status.Conditions, workload.ConditionTargetReady); previous != nil && previous.ObservedGeneration == group.Generation && previous.Status == metav1.ConditionFalse && (previous.Reason == "ModelPreparationFailed" || previous.Reason == "ModelPreparationDeadlineExceeded") {
+					failure = &modelPreparationFailure{reason: previous.Reason, message: previous.Message}
+				}
+				if err := reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(failure)); err != nil {
+					return false, errors.Join(failure, err)
+				}
+				return false, errors.Join(observedFailure, reconciler.retirePreparationJobs(ctx, jobs))
+			case batchv1.JobComplete:
+				completed[job.Name] = true
+			}
+		}
+		if !completed[job.Name] {
+			if err := reconciler.startPreparationDeadline(ctx, job, startupSeconds); err != nil {
+				return false, err
+			}
+			// Native Job backoff retains the budget across process retries.
+			if job.Status.Failed > 0 && !meta.IsStatusConditionFalse(group.Status.Conditions, workload.ConditionTargetReady) {
+				failure := reconciler.preparationFailure(ctx, job, group.Spec.Timeouts.Startup, "ContainerFailed", "A preparation container exited unsuccessfully")
+				return false, errors.Join(failure, reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(failure)))
+			}
+		}
+	}
+	if preparation == nil {
+		if runtime != nil {
+			return false, reconciler.retirePreparationJobs(ctx, jobs)
+		}
+		image, err := reconciler.preparationEnvironment(ctx, group)
+		if err != nil {
+			return false, err
+		}
+		desired.Spec.Template.Spec.Containers[0].Image = image
+		return false, reconciler.createPreparationJob(ctx, group, desired, "")
+	}
+
+	// Retain the actual environment of in-flight Jobs across platform upgrades.
+	// An original engine-image Job already prepares both artifacts and runtime.
+	if preparation.Spec.Template.Spec.Containers[0].Image == group.Spec.Runtime.Image {
+		return completed[preparation.Name], nil
+	}
+	// Refresh an unstarted pair if its previously eligible nodes disappear.
+	// Active processes retain their original native Job execution budget.
+	for _, job := range jobs {
+		if job == nil || completed[job.Name] || job.Spec.ActiveDeadlineSeconds != nil {
+			continue
+		}
+		nodes, err := reconciler.preparationNodes(ctx, group)
+		if err != nil && !errors.Is(err, errNoPreparationPlacement) {
+			return false, err
+		}
+		required := nodeaffinity.GetRequiredNodeAffinity(&corev1.Pod{Spec: job.Spec.Template.Spec})
+		available := false
+		for index := range nodes {
+			matches, err := required.Match(&nodes[index])
+			if err != nil {
+				return false, fmt.Errorf("evaluate model preparation placement: %w", err)
+			}
+			available = available || matches
+		}
+		if !available {
+			return false, reconciler.retirePreparationJobs(ctx, jobs)
+		}
+	}
+	if runtime == nil {
+		var pods corev1.PodList
+		if err := reconciler.List(ctx, &pods, client.InNamespace(group.Namespace), client.MatchingLabels{"batch.kubernetes.io/controller-uid": string(preparation.UID)}); err != nil {
+			return false, fmt.Errorf("observe model preparation placement: %w", err)
+		}
+		var latest *corev1.Pod
+		for index := range pods.Items {
+			pod := &pods.Items[index]
+			started := firstContainerStart([]corev1.Pod{*pod}, preparation.Spec.Template.Spec.Containers[0].Name)
+			if pod.Spec.NodeName != "" && !started.IsZero() && pod.DeletionTimestamp.IsZero() && pod.Status.Phase != corev1.PodFailed && (latest == nil || pod.CreationTimestamp.After(latest.CreationTimestamp.Time)) {
+				latest = pod
+			}
+		}
+		if latest == nil && !completed[preparation.Name] {
+			return false, nil
+		}
+		preferredNode := ""
+		if latest != nil {
+			preferredNode = latest.Spec.NodeName
+		}
+		desired.Name = runtimePreparationName(group)
+		return false, reconciler.createPreparationJob(ctx, group, desired, preferredNode)
+	}
+	return completed[preparation.Name] && completed[runtime.Name], nil
+}
+
+// preparationEnvironment separates CPU acquisition when both preparation workers
+// can share storage and the serving workload has a unique eligible destination.
+func (reconciler *GroupReconciler) preparationEnvironment(ctx context.Context, group *inferencev1alpha1.ModelGroup) (string, error) {
+	cache := group.Spec.Artifacts.Cache
+	if reconciler.PreparationImage == "" || cache == nil || group.Spec.NodeCount != 1 || group.Spec.Runtime.PreparationVersion < runtimeconfig.SharedModelCachePreparationVersion || groupApplicationURL(group, reconciler.ApplicationFiles) == "" {
+		return group.Spec.Runtime.Image, nil
+	}
+	claim, err := runtimeconfig.ReadPreparedCachePVC(ctx, reconciler.Client, group.Namespace, cache.ClaimName)
+	if err != nil {
+		return "", err
+	}
+	if !slices.Contains(claim.Spec.AccessModes, corev1.ReadWriteMany) {
+		return group.Spec.Runtime.Image, nil
+	}
+	nodes, err := reconciler.preparationNodes(ctx, group)
+	if err != nil {
+		return "", err
+	}
+	if len(nodes) != 1 {
+		return group.Spec.Runtime.Image, nil
+	}
+	// A cached engine needs no second preparation Job. Node status is only a hint:
+	// the ordinary Job still pulls the image if it has since been collected.
+	for _, image := range nodes[0].Status.Images {
+		if slices.Contains(image.Names, group.Spec.Runtime.Image) {
+			return group.Spec.Runtime.Image, nil
+		}
+	}
+	return reconciler.PreparationImage, nil
+}
+
+// preparationJob reads a preparation owner without adopting a same-name replacement.
+func (reconciler *GroupReconciler) preparationJob(ctx context.Context, group *inferencev1alpha1.ModelGroup, name string) (*batchv1.Job, error) {
+	job := new(batchv1.Job)
+	if err := reconciler.Get(ctx, client.ObjectKey{Namespace: group.Namespace, Name: name}, job); apierrors.IsNotFound(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("read model preparation Job: %w", err)
+	}
+	if !metav1.IsControlledBy(job, group) {
+		return nil, fmt.Errorf("model preparation Job %q is not controlled by ModelGroup", name)
+	}
+	return job, nil
+}
+
+// createPreparationJob preserves native scheduling and storage placement for both preparation stages.
+func (reconciler *GroupReconciler) createPreparationJob(ctx context.Context, group *inferencev1alpha1.ModelGroup, job *batchv1.Job, preferredNode string) error {
+	if err := controllerutil.SetControllerReference(group, job, reconciler.Scheme()); err != nil {
+		return fmt.Errorf("set model preparation Job owner: %w", err)
+	}
+	if group.Spec.Artifacts.Cache != nil {
+		affinity, err := reconciler.preparationNodeAffinity(ctx, group)
+		if err != nil {
+			return err
+		}
+		// Prefer the downloader's node for image reuse, without pinning recovery
+		// to a node that may disappear between preparation attempts.
+		if preferredNode != "" {
+			affinity.PreferredDuringSchedulingIgnoredDuringExecution = append(affinity.PreferredDuringSchedulingIgnoredDuringExecution, corev1.PreferredSchedulingTerm{
+				Weight:     100,
+				Preference: corev1.NodeSelectorTerm{MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{preferredNode}}}},
+			})
+		}
+		job.Spec.Template.Spec.Affinity = &corev1.Affinity{NodeAffinity: affinity}
+	}
+	if err := runtimeconfig.PlaceRuntimeCache(ctx, reconciler.Client, group.Namespace, group.Spec.Artifacts.Cache, &job.Spec.Template); err != nil {
+		return err
+	}
+	if err := reconciler.Create(ctx, job); err != nil {
+		return fmt.Errorf("create model preparation Job: %w", err)
+	}
+	return nil
+}
+
+// retirePreparationJobs joins both native Job lifetimes before a replacement attempt.
+func (reconciler *GroupReconciler) retirePreparationJobs(ctx context.Context, jobs []*batchv1.Job) error {
+	var failures []error
+	for _, job := range jobs {
+		if job != nil && job.DeletionTimestamp.IsZero() {
+			if err := reconciler.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationForeground), client.Preconditions{UID: &job.UID}); client.IgnoreNotFound(err) != nil {
+				failures = append(failures, fmt.Errorf("retire model preparation Job: %w", err))
+			}
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func runtimePreparationName(group *inferencev1alpha1.ModelGroup) string {
+	return "prepare-runtime-" + string(group.UID)
 }
 
 // startPreparationDeadline gives the first preparation process its budget; the native Job owns enforcement across retries.
@@ -287,6 +434,25 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 // preparationNodeAffinity restricts a new CPU preparation Job to nodes that can
 // also host its serving Pod. The scheduler still decides placement and PVC binding.
 func (reconciler *GroupReconciler) preparationNodeAffinity(ctx context.Context, group *inferencev1alpha1.ModelGroup) (*corev1.NodeAffinity, error) {
+	nodes, err := reconciler.preparationNodes(ctx, group)
+	if err != nil {
+		return nil, err
+	}
+	var terms []corev1.NodeSelectorTerm
+	for _, node := range nodes {
+		// Node field selectors accept one value; separate terms express eligible alternatives.
+		terms = append(terms, corev1.NodeSelectorTerm{MatchFields: []corev1.NodeSelectorRequirement{{
+			Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{node.Name},
+		}}})
+	}
+	return &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+		NodeSelectorTerms: terms,
+	}}, nil
+}
+
+// preparationNodes shares serving-capacity selection between initial placement and
+// recovery when an unstarted runtime preparation no longer has an eligible node.
+func (reconciler *GroupReconciler) preparationNodes(ctx context.Context, group *inferencev1alpha1.ModelGroup) ([]corev1.Node, error) {
 	var nodes corev1.NodeList
 	if err := reconciler.List(ctx, &nodes, client.MatchingLabels(group.Spec.Accelerator.NodeSelector)); err != nil {
 		return nil, fmt.Errorf("list accelerator nodes for model preparation: %w", err)
@@ -300,20 +466,11 @@ func (reconciler *GroupReconciler) preparationNodeAffinity(ctx context.Context, 
 			return nil, fmt.Errorf("resolve model preparation placement: %w", err)
 		}
 	}
-	var terms []corev1.NodeSelectorTerm
-	for _, node := range nodes.Items {
-		if !modelNodeFitsRequests(node, group.Spec.Accelerator.DeviceResourceName, requests, placement) {
-			continue
-		}
-		// Node field selectors accept one value; separate terms express eligible alternatives.
-		terms = append(terms, corev1.NodeSelectorTerm{MatchFields: []corev1.NodeSelectorRequirement{{
-			Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{node.Name},
-		}}})
-	}
-	if len(terms) == 0 {
+	nodes.Items = slices.DeleteFunc(nodes.Items, func(node corev1.Node) bool {
+		return !modelNodeFitsRequests(node, group.Spec.Accelerator.DeviceResourceName, requests, placement)
+	})
+	if len(nodes.Items) == 0 {
 		return nil, errNoPreparationPlacement
 	}
-	return &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-		NodeSelectorTerms: terms,
-	}}, nil
+	return nodes.Items, nil
 }

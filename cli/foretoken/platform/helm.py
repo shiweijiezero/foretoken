@@ -110,6 +110,7 @@ class Helm(HelmClient):
                 "--set", "image.pullPolicy=" + ("Never" if source_images.image_mode == "import" else "IfNotPresent"),
                 "--set-string", f"frontend.image={source_images.frontend}",
                 "--set-string", f"runtime.vllm.image={source_images.model_server}",
+                "--set-string", f"runtime.preparationImage={source_images.model_preparation}",
             ])
         input_text = json.dumps(stored_values) if stored_values is not None else None
         overrides = stored_values or {}
@@ -312,6 +313,8 @@ class Helm(HelmClient):
                 )
                 images["frontend.image"] = values["frontend"]["image"]
                 images["runtime.vllm.image"] = values["runtime"]["vllm"]["image"]
+                if preparation_image := values["runtime"].get("preparationImage"):
+                    images["runtime.preparationImage"] = preparation_image
                 images["applicationFiles.clientImage"] = values["applicationFiles"]["clientImage"]
                 runtime_backend = GPU_RESOURCE_BACKENDS.get(values["runtime"]["vllm"]["gpu"]["resourceName"])
             if (
@@ -340,7 +343,7 @@ class Helm(HelmClient):
                             images["applicationFiles.clientImage"] = application["image"]
                         if argument.startswith("--gpu-resource-name="):
                             runtime_backend = GPU_RESOURCE_BACKENDS.get(argument.removeprefix("--gpu-resource-name="))
-                        for prefix, path in (("--frontend-image=", "frontend.image"), ("--inference-engine-image=", "runtime.vllm.image")):
+                        for prefix, path in (("--frontend-image=", "frontend.image"), ("--inference-engine-image=", "runtime.vllm.image"), ("--model-preparation-image=", "runtime.preparationImage")):
                             if argument.startswith(prefix):
                                 images[path] = argument.removeprefix(prefix)
         return images, runtime_backend
@@ -355,7 +358,7 @@ class Helm(HelmClient):
         references = {}
         prior_sources = {}
         for path, reference in images.items():
-            if source_mode and path in {"image.repository", "frontend.image", "runtime.vllm.image"}:
+            if source_mode and path in {"image.repository", "frontend.image", "runtime.vllm.image", "runtime.preparationImage"}:
                 continue
             try:
                 explicit = value_at(overrides, path)

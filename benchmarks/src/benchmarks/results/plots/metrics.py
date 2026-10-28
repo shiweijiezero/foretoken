@@ -1,0 +1,161 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+"""Derive offline chart metrics from saved HTTP measurements and native AgentX reports."""
+
+from __future__ import annotations
+
+from collections.abc import Collection
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from benchmarks.config.plot import DEFAULT_INTERACTIVITY, interactivity_percentile
+from benchmarks.results.plots.data import _numeric
+from benchmarks.results.recording.database import read_records
+from benchmarks.results.recording.requests import (
+    load_http_measurements,
+    read_request_records,
+)
+
+
+DERIVED_PLOT_METRICS = frozenset({
+    "total_output_tokens",
+    "generation_tokens_per_second_per_gpu",
+    "total_tokens_per_second_per_gpu",
+    "cached_prompt_tokens_per_second_per_gpu",
+    "uncached_prompt_tokens_per_second_per_gpu",
+})
+
+
+def derived_plot_metrics(selected: Collection[str]) -> set[str]:
+    """Select token totals, normalized rates, and HTTP or AgentX interactivity percentiles."""
+    return {name for name in selected
+            if name in DERIVED_PLOT_METRICS or interactivity_percentile(name) is not None}
+
+
+def enrich_plot_metrics(
+    directory: Path, metrics: dict[str, Any], *, gpu_count: int | None = None,
+    selected: Collection[str] | None = None,
+) -> dict[str, Any]:
+    """Return chart-ready metrics without changing saved HTTP or AgentX measurements.
+
+    Saved measured values retain precedence; unavailable values may be derived.
+    HTTP request-level TPOT supplies decode interactivity; AgentX uses successful
+    profiling requests' native token-interval distribution. Native summary
+    percentiles take precedence over derivation from retained profiling records.
+    HTTP token accounting requires all successful records and their relevant usage.
+    An existing output-token total, including an unavailable value, is preserved.
+    A supplied GPU count fills missing capacity but cannot replace recorded capacity.
+    ``selected`` limits derivation to requested fields; existing values are retained.
+    """
+    throughput = dict(metrics.get("throughput", {}))
+    result = {**metrics, "throughput": throughput}
+    requested = (
+        DERIVED_PLOT_METRICS | {DEFAULT_INTERACTIVITY.key}
+        if selected is None else derived_plot_metrics(selected)
+    )
+    native = {name for name in requested
+              if (choice := interactivity_percentile(name)) is not None and choice[0] == "agentx_interactivity"}
+    if native:
+        from benchmarks.integrations.agentx.reports import enrich_interactivity
+
+        result = enrich_interactivity(directory / "native", result, native)
+    requested -= native
+    percentiles = {name: choice[1] for name in requested
+                   if (choice := interactivity_percentile(name)) is not None}
+    missing = {name for name in requested if name != "total_output_tokens" and _numeric(
+        metrics.get(name) if name in percentiles else throughput.get(name)
+    ) is None}
+    missing_total = "total_output_tokens" in requested and "total_output_tokens" not in metrics
+    if missing_total:
+        missing.add("total_output_tokens")
+    if not missing and gpu_count is None:
+        return result
+
+    missing_percentiles = {name: percentile for name, percentile in sorted(percentiles.items(), key=lambda item: item[1])
+                           if name in missing}
+    normalized_fields = missing - percentiles.keys() - {"total_output_tokens"}
+    recorded_capacity = metrics.get("gpu_count")
+    before = {}
+    if "gpu_count" not in metrics and (normalized_fields or gpu_count is not None):
+        environment = read_records(directory, ("environment.json",)).get("environment.json", {})
+        before = environment.get("before", {})
+    legacy_capacity = before.get("declared_gpu_count")
+    raw_rates = any(
+        _numeric(throughput.get(name.removesuffix("_per_gpu"))) is None
+        for name in normalized_fields
+    )
+    capacity_available = any(value is not None for value in (recorded_capacity, legacy_capacity, gpu_count))
+    raw_needed = (
+        bool(missing_percentiles) or legacy_capacity is not None or raw_rates and capacity_available
+        or missing_total and metrics.get("success_num") != 0
+    )
+    measurements = load_http_measurements(read_request_records(directory)) if raw_needed else []
+    if legacy_capacity is not None:
+        models = {item.model for item in measurements if item.model is not None}
+        if len(models) <= 1 and (not models or not before.get("model") or before["model"] in models):
+            recorded_capacity = legacy_capacity
+    capacity = _gpu_capacity(recorded_capacity, gpu_count)
+    if capacity is not None:
+        result["gpu_count"] = capacity
+    successful = [item for item in measurements if item.succeeded]
+    complete = bool(successful) and len(successful) == metrics.get("success_num")
+    if missing_total:
+        result["total_output_tokens"] = 0 if metrics.get("success_num") == 0 else None
+    duration = _numeric(metrics.get("benchmark_time"))
+    rates = {
+        "generation_tokens_per_second": _numeric(throughput.get("generation_tokens_per_second")),
+        "total_tokens_per_second": _numeric(throughput.get("total_tokens_per_second")),
+        "cached_prompt_tokens_per_second": _numeric(throughput.get("cached_prompt_tokens_per_second")),
+        "uncached_prompt_tokens_per_second": _numeric(throughput.get("uncached_prompt_tokens_per_second")),
+    }
+    interactivities = dict.fromkeys(missing_percentiles)
+    if complete:
+        # One-token responses have no decode interval; missing usage cannot
+        # establish whether an unmeasured interval should belong in the sample.
+        outputs = [_numeric(item.output_tokens) for item in successful]
+        outputs_complete = all(value is not None and value >= 0 for value in outputs)
+        if missing_total and outputs_complete:
+            result["total_output_tokens"] = sum(int(item.output_tokens) for item in successful)
+        if missing_percentiles and all(value is not None for value in outputs):
+            decode = [item for item in successful if item.output_tokens > 1]
+            tpots = [_numeric(item.tpot) for item in decode]
+            if tpots and all(value is not None and value >= 0 for value in tpots):
+                quantiles = np.percentile(tpots, list(missing_percentiles.values()), method="inverted_cdf")
+                interactivities.update({name: 1 / float(value) if value > 0 else None
+                                        for name, value in zip(missing_percentiles, quantiles)})
+
+        if duration is not None and duration > 0:
+            inputs = [_numeric(item.input_tokens) for item in successful]
+            cached = [_numeric(item.cached_input_tokens) for item in successful]
+            inputs_complete = all(value is not None and value >= 0 for value in inputs)
+            if outputs_complete and rates["generation_tokens_per_second"] is None:
+                rates["generation_tokens_per_second"] = sum(outputs) / duration
+            if inputs_complete and outputs_complete and rates["total_tokens_per_second"] is None:
+                # Prompt usage includes cached tokens already.
+                rates["total_tokens_per_second"] = (sum(inputs) + sum(outputs)) / duration
+            if inputs_complete and all(
+                value is not None and 0 <= value <= total
+                for value, total in zip(cached, inputs)
+            ):
+                rates["cached_prompt_tokens_per_second"] = sum(cached) / duration
+                rates["uncached_prompt_tokens_per_second"] = (sum(inputs) - sum(cached)) / duration
+
+    result.update(interactivities)
+    for name, rate in rates.items():
+        field = f"{name}_per_gpu"
+        if field in missing:
+            throughput[field] = rate / capacity if rate is not None and capacity is not None else None
+    return result
+
+
+def _gpu_capacity(recorded: Any, supplied: int | None) -> int | None:
+    """Resolve a single explicit GPU capacity for normalized offline metrics."""
+    for value in (recorded, supplied):
+        if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 1):
+            raise ValueError(f"GPU count must be a positive integer, got {value!r}")
+    if recorded is not None and supplied is not None and recorded != supplied:
+        raise ValueError(f"Supplied GPU count {supplied} conflicts with recorded GPU count {recorded}")
+    return recorded if recorded is not None else supplied

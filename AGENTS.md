@@ -51,6 +51,12 @@ Keep control-plane ownership and data-plane execution separate. API clients own 
 - Catch only errors a caller can handle. Do not hide programming errors or broken invariants behind empty results, broad exceptions, or silent defaults.
 - Every first-party public production function needs a concise doc comment stating its purpose, intended caller or consumer, output, and important ownership or lifecycle. Apply the same rule to private functions that own a complete stage or are not self-explanatory. Comment large blocks, multi-stage flows, non-obvious algorithms, and critical boundaries. Do not narrate the code, the PR, or the implementation history.
 
+## Deployment and iteration
+
+For development, validation and RSI, prefer existing compatible runtime and compiler images, the installed platform, and retained build caches. Apply current code through the [source deployment workflow](docs/deployment/source.md): reuse the environment and incrementally compile and publish changed applications. Let the native build path prepare missing or changed environments when dependencies, base images or build requirements change. Confirm the updated code is active before testing or measuring it.
+
+Parallel agents with the same environment should share image references while keeping each candidate's checkout, writable build state and deployment instance separate. Reuse the node's image cache instead of creating an image copy per agent; other nodes fetch the required images into their own caches. Keep candidate workspaces and caches available across iterations.
+
 ## Testing
 
 Do not add tests by default. A human contributor must first review the motivation and identify:

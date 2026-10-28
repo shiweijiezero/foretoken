@@ -178,30 +178,11 @@ foretoken perf "$BASELINE" "$CANDIDATE" \
 
 ## Plot saved results
 
-Create figures and comparison tables from saved results without rerunning inference. Run on the machine holding the results and replace these paths with your result directories:
+Replace these paths with saved result directories to redraw one run or compare approaches:
 
 ```bash
-# Redraw one directory.
 foretoken plot results/baseline
-
-# Compare two directories.
 foretoken plot results/baseline results/candidate
 ```
 
-You can also select an experiment directory or a folder containing several runs. The output includes PDF, SVG, PNG and CSV files. One input writes to its `plots/` subdirectory; multiple inputs or `--base` write to `./plots`. Use `--output-dir` to choose another location.
-
-Add `--sync_wandb` to [upload saved results to W&B](perf/wandb.md#resume-an-upload).
-
-For performance results, select a reference approach with `--base` to generate measured values and relative changes:
-
-```bash
-foretoken plot results/candidate --base results/baseline
-```
-
-`--base` accepts a relative or absolute path to one result or iteration directory, including its repeated measurements. The base is loaded automatically.
-
-`comparison-base.csv` compares each candidate with the base under matching workloads: means, repeat counts and standard deviations, failures, condition differences, and original result paths. Available success and actual token-length metrics accompany selected speed metrics. Values retain their saved units; standard deviation is unavailable for a single repeat.
-
-Change is `(candidate mean / base mean - 1) × 100%`; lower latency and higher throughput indicate improvement. Missing workloads or metrics and a zero base leave the percentage empty, with the reason in `status`. Review environment differences and missing records alongside the results; warmup settings alone do not establish cache state.
-
-Select metrics with `--metric generation_tokens_per_second ttft_p95_seconds`. `--method` also accepts multiple names, and `--columns 2` produces wider figures. For score definitions, see [quality results](eval/README.md#read-scores).
+The [plotting guide](plotting.md) covers metric axes, labeled operating points, baseline changes, and revenue estimates, with PDF, SVG, PNG, and CSV output.

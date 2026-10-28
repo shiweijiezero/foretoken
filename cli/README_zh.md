@@ -212,6 +212,8 @@ foretoken perf --url http://localhost:8000/v1/chat/completions \
 
 URL 方式需要完整请求地址，并显式提供提示词或数据集。`--output local` 将每次结果保存到 `results/` 下，无需 W&B 账号。数据集、并发数、请求到达速率和参数扫描见[性能评测](../benchmarks/docs/perf/README_zh.md)。
 
+添加 `--agentx`，可运行[官方 AgentX 回放](../benchmarks/docs/perf/agentx_zh.md)，测量长上下文、多轮 agent 负载。
+
 ### eval
 
 通过 lm-evaluation-harness 或 EvalScope 为模型回答评分。下面评测 100 道 GSM8K 数学题：
@@ -231,7 +233,7 @@ foretoken eval examples/quickstart/qwen3-0.6b --name qwen \
 foretoken plot results
 ```
 
-图表写入 `results/plots/`。传入具体运行目录，可选择或对比特定结果。更多用法见[绘图选项](../benchmarks/docs/recipes_zh.md#绘制与对照结果)和 [W&B 结果补传](../benchmarks/docs/perf/wandb_zh.md#恢复上传)。
+图表写入 `results/plots/`。传入具体运行目录，可选择或对比特定结果。RSI 进展图使用 `foretoken plot --progress CHART.yaml [CHART.yaml ...]`。更多用法见[绘图指南](../benchmarks/docs/plotting_zh.md)和 [W&B 结果补传](../benchmarks/docs/perf/wandb_zh.md#恢复上传)。
 
 ## 性能剖析
 

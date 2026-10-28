@@ -630,7 +630,7 @@ class EditableDeployment:
                 component: image for component in missing
                 if (image := build["images"].get("compiler-cache-" + component))
                 and set(self.state["bundles"][component].get("parts", APPLICATION_PARTS[component])).intersection({"go", "rust"})
-                and not builder.has_source_state(component)
+                and not builder.has_native_state(component)
             }
             cache_seeds = {}
             cache_builder = None
@@ -701,6 +701,10 @@ class EditableDeployment:
                     sources=build_sources(snapshot, component),
                     image=self.state["runtime"][_APPLICATION_IMAGE_KEYS[component]],
                     parts=bundle.get("parts"),
+                    model_preparation_image=(
+                        self.state["build"]["images"].get("environment-model-preparation")
+                        if component == "control-plane" else None
+                    ),
                 ))
             published = origin.publish_batch(
                 builder, publications, references, timeout=timeout,

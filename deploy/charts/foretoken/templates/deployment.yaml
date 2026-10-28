@@ -96,6 +96,9 @@ spec:
             {{- with $modelApplication }}
             - {{ printf "--model-server-application-url=%s" . | quote }}
             {{- end }}
+            {{- with .Values.runtime.preparationImage }}
+            - {{ printf "--model-preparation-image=%s" (include "foretoken.imageWithRegistry" (dict "registry" $.Values.global.imageRegistry "image" .)) | quote }}
+            {{- end }}
             - --leader-elect=true
             - {{ printf "--source-mode=%t" $sourceMode | quote }}
             - --autoscaling-telemetry-config=/etc/foretoken/controller/autoscaling-telemetry.json

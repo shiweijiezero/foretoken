@@ -13,23 +13,20 @@ spec:
   nodes: 1
   resources:
     requests:
-      cpu: "16"
-      memory: 246G
+      cpu: "8"
+      memory: 96G
       gpu:
-        count: 4
+        count: 2
     limits:
-      cpu: "30"
-      memory: 246G
+      cpu: "24"
+      memory: 192G
   timeouts:
     startup: 30m
     drain: 2m
-  kvCache:
-    offload:
-      cpuCacheSize: 128G
   engineArgs:
     dtype: bfloat16
-    tensor-parallel-size: 4
-    max-model-len: 131072
+    tensor-parallel-size: 2
+    max-model-len: 36864
     max-num-seqs: 16
     max-num-batched-tokens: 4096
     async-scheduling: true

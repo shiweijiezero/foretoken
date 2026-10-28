@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Callable, Iterable
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -121,10 +121,10 @@ class HttpBenchmark:
             nonlocal origin
             origin = value
 
-        async def record_completed(response: dict[str, Any]) -> None:
-            """Flush warmup evidence on its own clock before the next conversation turn."""
+        def record_completed(response: dict[str, Any]) -> None:
+            """Accept warmup evidence without delaying the next conversation turn."""
             item = request_measurement(response, origin)
-            await writer.awrite({
+            writer.submit({
                 **{key: value for key, value in response.items() if key != "started_at"},
                 **request_measurement_record(item, stream=benchmark.generation.stream),
             })
@@ -141,6 +141,7 @@ class HttpBenchmark:
             list(workload.episodes(warmup=True)), execute, warmup_load,
             seed=workload.dataset.random_seed, on_start=phase_started,
         )
+        await writer.drain()
         records = sorted(
             (row for item in episodes for row in item.records),
             key=lambda row: row["started_at"],
@@ -185,10 +186,10 @@ class HttpBenchmark:
             if progress is not None:
                 progress.start(value)
 
-        async def record_completed(response: dict[str, Any]) -> None:
-            """Flush each formal completion before live progress or another conversation turn."""
+        def record_completed(response: dict[str, Any]) -> None:
+            """Accept a completion before progress, leaving persistence outside request admission."""
             item = request_measurement(response, origin)
-            await writer.awrite({
+            writer.submit({
                 **{key: value for key, value in response.items() if key != "started_at"},
                 **request_measurement_record(item, stream=benchmark.generation.stream),
             })
@@ -213,6 +214,9 @@ class HttpBenchmark:
                         before_first=profile.start if profile is not None else None,
                         on_start=measurement_started,
                     )
+                    if sampler is not None:
+                        sampler.cancel()
+                    await writer.drain()
                     run = self._complete_measurement(
                         workload, completed, duration, origin, record, outputs,
                         itl, groups, profile,
@@ -323,7 +327,7 @@ class HttpBenchmark:
         phase: str,
         itl: ITLStatistics,
         group_itl: dict[str, dict[str, ITLStatistics]],
-        record_completed: Callable[[dict[str, Any]], Awaitable[None]],
+        record_completed: Callable[[dict[str, Any]], None],
         progress: HttpProgress | None = None,
     ) -> EpisodeResult:
         """Advance one conversation, retaining recorded or generated history and request failures."""
@@ -428,7 +432,7 @@ class HttpBenchmark:
             generated_text = response.pop("generated_text")
             response.pop("tool_calls")
             result.records.append(response)
-            await record_completed(response)
+            record_completed(response)
             if progress is not None:
                 progress.observe(request_measurement(response, progress.origin))
             if not response["success"]:

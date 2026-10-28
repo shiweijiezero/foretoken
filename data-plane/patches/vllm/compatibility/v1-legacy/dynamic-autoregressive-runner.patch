@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -1062,6 +1062,7 @@
+             logits_indices=logits_indices,
+             cu_num_logits=cu_num_logits,
+             cu_num_logits_np=cu_num_logits_np,
++            num_spec_tokens_to_schedule=scheduler_output.num_spec_tokens_to_schedule,
+             has_structured_output_reqs=scheduler_output.has_structured_output_requests,
+             prompt_lens=prompt_lens,
+         )
+@@ -1550,14 +1551,18 @@
+             if self.spec_decode_timing is not None:
+                 assert self.spec_decode_timing_collector is not None
+                 self.spec_decode_timing_collector.end_draft(self.spec_decode_timing)
+-            self.req_states.draft_tokens[input_batch.idx_mapping] = draft_tokens
++            self.req_states.draft_tokens[
++                input_batch.idx_mapping, : draft_tokens.shape[1]
++            ] = draft_tokens
+ 
+         if self.num_speculative_steps > 0:
+             # Spec-decode and diffusion LLMs both use draft tokens but the latter does
+             # not have a speculator (i.e. self.speculator is None)
+             self.draft_tokens_handler.set_draft_tokens(
+                 input_batch,
+-                self.req_states.draft_tokens[input_batch.idx_mapping],
++                self.req_states.draft_tokens[
++                    input_batch.idx_mapping, : input_batch.num_spec_tokens_to_schedule
++                ],
+             )
+ 
+         # Post-step KV connector related operations.
