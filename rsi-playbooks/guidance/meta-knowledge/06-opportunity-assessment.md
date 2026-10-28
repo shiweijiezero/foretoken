@@ -13,7 +13,7 @@ Pareto-Guided Exploration (PGE) helps a team pursue important problems with subs
 
 Identify the limitations that matter most to the target workload and investigate mechanisms that could change them. Explorers keep developing new ideas; the lead gives the primary questions time for core implementation and informative experiments. Quick improvements can use parallel capacity, while research priority follows importance and potential impact.
 
-The opportunity front compares existing candidates. Research on new mechanisms starts from a question, a hypothesis and its key uncertainties. Gain and integration estimates develop through source analysis and prototyping. The lead invests according to the potential of the research direction, giving important untested ideas room to develop.
+Compare existing candidates by their gains and costs. Research on new mechanisms starts from a question, a hypothesis and its key uncertainties. Gain and integration estimates develop through source analysis and prototyping. The lead invests according to the potential of the research direction, giving important untested ideas room to develop.
 
 For example, research questions at different stages can be described as follows:
 

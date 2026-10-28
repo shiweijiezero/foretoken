@@ -90,7 +90,7 @@ Use the [communication guidance](common.md#share-findings-and-keep-working), [ex
 | 22 | Actual progress | What was learned, implemented and measured, where time went, and whether the remaining budget is sufficient. |
 | 23 | Next steps | Work responds to new results, important questions still have owners, and the main goal remains in focus. |
 | 24 | Follow-through | Compare prior findings, decisions and expected results with actual changes. Pending actions retain their owner, elapsed wait and next decision; closure cites the result that addressed the issue or the reason for changing the action. |
-| 25 | Strategy reflection | Compare actual owners, implementation time and experiment access with the lead’s primary research questions. Check whether important mechanisms receive sustained exploration, or whether small ready changes and environment work displace them. Report gains, information learned and remaining uncertainty without choosing future directions. |
+| 25 | Strategy reflection | Compare actual owners, implementation time and experiment access with the lead’s primary research questions. Check whether important mechanisms receive sustained exploration, or whether small ready changes and environment work displace them. Report gains, information learned and remaining uncertainty. |
 
 For items 22–25, use the [PGE opportunity assessment](../../../../rsi-playbooks/guidance/meta-knowledge/06-opportunity-assessment.md) to compare recorded gains, evidence and costs. Update changed entries from available records, reuse applicable assessments, and report trade-offs and time allocation to the lead.
 
