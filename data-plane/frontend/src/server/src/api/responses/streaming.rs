@@ -276,7 +276,7 @@ impl OutputItemStreamer {
         vec![
             output_item_event("response.output_item.added", output_index, item),
             part_event(
-                "response.reasoning_part.added",
+                "response.content_part.added",
                 output_index,
                 &item_id,
                 [(
@@ -415,7 +415,7 @@ impl OutputItemStreamer {
                         [("text", Value::String(text))],
                     ),
                     part_event(
-                        "response.reasoning_part.done",
+                        "response.content_part.done",
                         output_index,
                         &item_id,
                         [(
