@@ -3,21 +3,21 @@
 English | [简体中文](qwen3.5-35b-a3b-muxi_zh.md)
 
 ```text
-Target model: Qwen3.5-35B-A3B 【不可修改】
+Target model: Qwen3.5-35B-A3B [Fixed]
 Starting configuration: examples/rsi/qwen3.5-35b-a3b; two-way tensor parallelism (TP2), four-token multi-token prediction (MTP), a 36,864-token context, and no KV cache offload to host memory; adjustable during optimization
-Optimization objectives: increase output throughput (tokens/s) and reduce time per output token (TPOT) at concurrency 1 and 16 【不可修改】
-Precision: fixed BF16 【不可修改】
+Optimization objectives: increase output throughput (tokens/s) and reduce time per output token (TPOT) at concurrency 1 and 16 [Fixed]
+Precision: fixed BF16 [Fixed]
 Deployment layout: agent-selected within the final single-node GPU budget, including parallelism and any stage separation
-Final deployment budget: at most 2 MetaX GPUs on one node; at most 32 CPU cores and 250G host memory in total for all target model, auxiliary model and frontend workloads 【不可修改】
+Final deployment budget: at most 2 MetaX GPUs on one node; at most 32 CPU cores and 250G host memory in total for all target model, auxiliary model and frontend workloads [Fixed]
 Experiment sizing: service candidates fit the final budget; focused kernel, compilation, or correctness experiments may use fewer resources, including one GPU
-Available resources: at most 6 MetaX GPUs in total for experiments; schedule CPU, memory, and storage within actual host capacity 【不可修改】
-Explorer count: 2 【不可修改】
-Worker count: 4 【不可修改】
-Experimenter count: 3 【不可修改】
-Evaluator count: 1 【不可修改】
-Evaluator check interval: 1h 【不可修改】
-Codex models: Explorer = gpt-6-astra/high; Worker, Experimenter and Evaluator = gpt-6.1-sol/high 【不可修改】
-Claude models: Explorer = Fable/Opus/high; Worker, Experimenter and Evaluator = sonnet/high 【不可修改】
+Available resources: at most 6 MetaX GPUs in total for experiments; schedule CPU, memory, and storage within actual host capacity [Fixed]
+Explorer count: 2 [Fixed]
+Worker count: 4 [Fixed]
+Experimenter count: 3 [Fixed]
+Evaluator count: 1 [Fixed]
+Evaluator check interval: 1h [Fixed]
+Codex models: Explorer = gpt-6-astra/high; Worker, Experimenter and Evaluator = gpt-6.1-sol/high [Fixed]
+Claude models: Explorer = Fable/Opus/high; Worker, Experimenter and Evaluator = sonnet/high [Fixed]
 Maximum parallel experiments: at most 3 two-GPU service candidates; smaller focused experiments share the six-GPU budget
 Parallel scheduling: reserve capacity for platform services, builds, and benchmark clients, then schedule experiments by their actual resource requests and record the achieved parallelism
 Iteration workloads: random only by default, at concurrency 1 and 16; analyze each point as it completes
@@ -25,7 +25,7 @@ Extended validation: StudyChat for multi-turn hypotheses and the final retained 
 Accuracy evaluation: run foretoken eval when an output-affecting change needs new quality evidence, prioritizing candidates considered for retention.
 Allowed changes: implementation and configuration at any layer within fixed requirements, including algorithms, auxiliary models and their weights, composition and execution; develop new mechanisms or use community work
 Measurement budget per iteration: allow 10 minutes by default and use enough samples to answer the question; analyze once they finish. Adjust the budget and request count to the workload, recording the reason and time spent
-Work duration: a total budget of 24 hours from the start of task execution 【不可修改】
+Work duration: a total budget of 24 hours from the start of task execution [Fixed]
 Expected outcome / completion criteria: keep increasing throughput and reducing TPOT without fixed metric thresholds.
   Continue research, implementation and measurement, covering both parameter tuning and source changes. Finish when the research questions are answered and further work offers little value, when time runs out, or when the user asks to stop.
   Explain the evidence for stopping. Distinguish approaches tested without benefit, implementations that could not run, and ideas not yet implemented or tested.

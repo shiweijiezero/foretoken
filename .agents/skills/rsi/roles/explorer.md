@@ -13,7 +13,7 @@ Staffing follows the task's role counts and the [team setup](../SKILL.md#set-up-
 
 ## Understand the problem and explore alternatives
 
-Learn Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then reason from the task objective and requirements marked `【不可修改】` about how computation, state and resources could be organized. The current configuration, source and profiles describe one solution; distinguish essential dependencies from implementation choices.
+Learn Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then reason from the task objective and requirements marked `[Fixed]` about how computation, state and resources could be organized. The current configuration, source and profiles describe one solution; distinguish essential dependencies from implementation choices.
 
 Develop and compare alternative mechanisms, including algorithms, auxiliary models and their weights, composition and execution relationships. Use the [knowledge library](../../../../rsi-playbooks/guidance/knowledge/README.md) and earlier experiments to identify the assumptions behind the current approach and the opportunities their revision could open. Keep this research assigned alongside candidate implementation and troubleshooting so mechanisms outside the current candidate list receive sustained attention.
 

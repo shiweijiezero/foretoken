@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](task-template_zh.md)
 
-Append `【不可修改】` to fixed requirements, for example `Precision: BF16【不可修改】`. Leave other implementation choices to the agent within the task objective and fixed requirements. State the final deployment budget separately from an optional starting configuration; available resources describe the pool actually available to the whole task.
+Append `[Fixed]` to fixed requirements, for example `Precision: BF16 [Fixed]`. Leave other implementation choices to the agent within the task objective and fixed requirements. State the final deployment budget separately from an optional starting configuration; available resources describe the pool actually available to the whole task.
 
 ```text
 Execution entry: <working directory or repository, deployment configuration or service URL; omit if already clear from context>
