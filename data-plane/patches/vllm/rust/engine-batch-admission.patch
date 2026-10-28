@@ -1,6 +1,6 @@
 --- a/rust/src/engine-core-client/src/client.rs
 +++ b/rust/src/engine-core-client/src/client.rs
-@@ -1,7 +1,8 @@
+@@ -1,6 +1,7 @@
  // SPDX-License-Identifier: Apache-2.0
  // SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
@@ -8,9 +8,7 @@
  use std::sync::Arc;
  use std::time::Duration;
 
- use futures::future::{join_all, try_join_all};
-@@ -13,15 +14,16 @@
-
+@@ -14,13 +15,14 @@
  use crate::client::imp::{ClientInner, run_abort_loop, run_output_dispatcher_loop};
  use crate::coordinator::CoordinatorHandle;
  use crate::error::{Error, Result};
@@ -26,24 +24,23 @@
 
  pub(crate) mod imp;
  mod state;
- mod stream;
-@@ -554,8 +556,145 @@
-             completion,
+@@ -555,6 +557,182 @@
          ))
      }
 
 +    /// Admit requests in one operation per routed engine, retaining native per-request streams.
 +    /// An optional worker RPC prepares inputs on each participating engine before admission.
-+    /// Requires EngineCore's `add_requests` utility; streams are returned in input order.
++    /// Existing request updates retain their streams; new streams are returned in input order.
 +    pub async fn call_batch<A>(
 +        &self,
 +        requests: Vec<EngineCoreRequest>,
++        updates: Vec<EngineCoreRequest>,
 +        worker_rpc: Option<(&str, A)>,
 +    ) -> Result<Vec<EngineCoreOutputStream>>
 +    where
 +        A: serde::Serialize + std::fmt::Debug,
 +    {
-+        let (streams, batches) = self.prepare_request_batch(requests)?;
++        let (streams, batches) = self.prepare_request_batch(requests, updates)?;
 +        let calls: Vec<_> = batches
 +            .into_iter()
 +            .map(|(engine, batch)| (engine, (batch, worker_rpc.as_ref())))
@@ -55,10 +52,12 @@
 +    }
 +
 +    /// Atomically prepare and admit a batch routed to exactly one engine.
++    /// A selected engine also permits admission without any new registrations.
 +    /// A confirmed rejection returns None without aborting retained same-ID requests.
 +    pub async fn try_call_batch<A, P>(
 +        &self,
-+        requests: Vec<EngineCoreRequest>,
++        mut requests: Vec<EngineCoreRequest>,
++        engine_index: Option<u32>,
 +        worker_rpc: Option<(&str, A)>,
 +        admission: (&str, P),
 +    ) -> Result<Option<Vec<EngineCoreOutputStream>>>
@@ -66,7 +65,29 @@
 +        A: serde::Serialize + std::fmt::Debug,
 +        P: serde::Serialize + std::fmt::Debug,
 +    {
-+        let (mut streams, batches) = self.prepare_request_batch(requests)?;
++        let selected = engine_index
++            .map(|index| {
++                self.engines
++                    .iter()
++                    .find(|engine| engine.engine_id.engine_index() == Some(index))
++                    .map(|engine| engine.engine_id.clone())
++                    .ok_or_else(|| {
++                        Error::Io(std::io::Error::new(
++                            std::io::ErrorKind::InvalidInput,
++                            format!("unknown engine index {index}"),
++                        ))
++                    })
++            })
++            .transpose()?;
++        if let Some(index) = engine_index {
++            for request in &mut requests {
++                request.data_parallel_rank = Some(index);
++            }
++        }
++        let (mut streams, mut batches) = self.prepare_request_batch(requests, Vec::new())?;
++        if let Some(engine) = selected {
++            batches.entry(engine).or_default();
++        }
 +        if batches.len() != 1 {
 +            for stream in &mut streams {
 +                stream.reject_before_admission();
@@ -98,6 +119,7 @@
 +    fn prepare_request_batch(
 +        &self,
 +        requests: Vec<EngineCoreRequest>,
++        updates: Vec<EngineCoreRequest>,
 +    ) -> Result<(
 +        Vec<EngineCoreOutputStream>,
 +        BTreeMap<EngineId, Vec<Vec<OpaqueValue>>>,
@@ -106,7 +128,11 @@
 +        let mut batches: BTreeMap<EngineId, Vec<Vec<OpaqueValue>>> = BTreeMap::new();
 +        let snapshot = self.coordinator.as_ref().map(|coordinator| coordinator.snapshot());
 +        let prepared: Result<()> = (|| {
-+            for mut request in requests {
++            for (mut request, update) in requests
++                .into_iter()
++                .map(|request| (request, false))
++                .chain(updates.into_iter().map(|request| (request, true)))
++            {
 +                request.client_index = self.config.client_index;
 +                request.validate()?;
 +                if let Some(snapshot) = &snapshot {
@@ -116,21 +142,30 @@
 +                let lora_name = request.lora_request.as_ref().map(|lora| lora.lora_name.clone());
 +                let rank = request.data_parallel_rank;
 +                let (payload, aux_frames) = self.inner.encode_request(request)?;
-+                let (engine_id, rx) =
-+                    self.inner.register_request(request_id.clone(), lora_name, rank)?;
-+                let completion = match self.inner.request_completion(&request_id) {
-+                    Ok(receiver) => RequestCompletion::new(request_id.clone(), receiver),
-+                    Err(error) => {
-+                        self.inner.rollback_request(&request_id);
-+                        return Err(error);
-+                    }
++                let engine_id = if update {
++                    let routes =
++                        self.inner.abortable_request_ids(std::slice::from_ref(&request_id))?;
++                    routes.into_keys().next().ok_or_else(|| Error::RequestStreamClosed {
++                        request_id: request_id.clone(),
++                    })?
++                } else {
++                    let (engine_id, rx) =
++                        self.inner.register_request(request_id.clone(), lora_name, rank)?;
++                    let completion = match self.inner.request_completion(&request_id) {
++                        Ok(receiver) => RequestCompletion::new(request_id.clone(), receiver),
++                        Err(error) => {
++                            self.inner.rollback_request(&request_id);
++                            return Err(error);
++                        }
++                    };
++                    registrations.push((
++                        request_id,
++                        engine_id.engine_index().unwrap_or(0),
++                        rx,
++                        completion,
++                    ));
++                    engine_id
 +                };
-+                registrations.push((
-+                    request_id,
-+                    engine_id.engine_index().unwrap_or(0),
-+                    rx,
-+                    completion,
-+                ));
 +                let frames = std::iter::once(OpaqueValue::Binary(payload))
 +                    .chain(aux_frames.into_iter().map(|frame| OpaqueValue::Binary(frame.to_vec())))
 +                    .collect();
@@ -172,9 +207,7 @@
      /// Abort currently in-flight requests by request ID.
      pub async fn abort(&self, ids: &[String]) -> Result<()> {
          let abortable = self.inner.abortable_request_ids(ids)?;
-
-@@ -586,22 +725,33 @@
-     where
+@@ -587,10 +765,21 @@
          T: serde::de::DeserializeOwned,
          A: serde::Serialize + std::fmt::Debug,
      {
@@ -197,7 +230,7 @@
              "sending utility request"
          );
 
-         // Phase 1: allocate one call id per engine and build the per-engine
+@@ -598,9 +787,9 @@
          // request payloads up-front. Any failure here (registry closed, encode
          // error) must roll back the call ids already allocated so they do not
          // leak in the utility registry until shutdown.
@@ -210,9 +243,7 @@
              let (call_id, rx) = match self.inner.allocate_and_register_utility_call() {
                  Ok(pair) => pair,
                  Err(err) => {
-                     self.inner.unregister_utility_calls(pending_calls.iter().map(|(id, _)| *id));
-@@ -611,9 +761,9 @@
-             let request = match EngineCoreUtilityRequest::new(
+@@ -612,7 +801,7 @@
                  self.config.client_index,
                  call_id,
                  method,
@@ -221,9 +252,7 @@
              ) {
                  Ok(request) => request,
                  Err(err) => {
-                     self.inner.unregister_utility_calls(
-@@ -622,9 +772,9 @@
-                     return Err(err);
+@@ -623,7 +812,7 @@
                  }
              };
              pending_calls.push((call_id, rx));
@@ -232,11 +261,9 @@
          }
 
          // Phase 2: dispatch every utility request concurrently. `try_join_all`
-         // fails fast on the first transport error and drops the remaining send
 --- a/rust/src/engine-core-client/src/client/imp.rs
 +++ b/rust/src/engine-core-client/src/client/imp.rs
-@@ -260,18 +260,28 @@
-         let payload = Bytes::from(encode_msgpack(payload)?);
+@@ -261,16 +261,26 @@
          self.send_encoded_to_engine(engine_id, request_type, payload, Vec::new()).await
      }
 
@@ -268,11 +295,9 @@
      }
 
      async fn send_encoded_to_engine(
-         &self,
 --- a/rust/src/engine-core-client/src/client/stream.rs
 +++ b/rust/src/engine-core-client/src/client/stream.rs
-@@ -106,8 +106,13 @@
-
+@@ -107,6 +107,11 @@
      /// Returns the engine-origin completion handle, which may outlive this consumer stream.
      pub fn completion(&self) -> RequestCompletion {
          self.completion.clone()
@@ -284,4 +309,3 @@
      }
 
      /// Return the engine-core `request_id` bound to this stream.
-     pub fn request_id(&self) -> &str {

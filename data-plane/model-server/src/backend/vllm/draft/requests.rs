@@ -8,12 +8,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use futures::{StreamExt, stream::select_all};
+use futures::{
+    StreamExt,
+    stream::{FuturesUnordered, select_all},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+use vllm_engine_core_client::EngineCoreOutputStream;
 use vllm_engine_core_client::protocol::output::EngineCoreFinishReason;
 use vllm_engine_core_client::protocol::request::EngineCoreRequest;
 use vllm_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
@@ -98,10 +102,11 @@ struct ReservedTurn {
     initial: bool,
 }
 
+/// Scheduler-confirmed Target input returned with a non-terminal device proposal.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NativeRequestState {
-    request_id: String,
+struct NativeTurnCompleted {
+    sequence: u64,
     confirmed_length: usize,
     context_length: usize,
     token_ids_delta: Vec<u32>,
@@ -160,6 +165,35 @@ struct PeerRequests {
     prepared: bool,
     execution: Option<tokio::task::JoinHandle<Result<(), String>>>,
     sessions: HashMap<String, Session>,
+    // Device turns retain cancellation and output ownership across proposal boundaries.
+    streams: HashMap<String, EngineCoreOutputStream>,
+}
+
+/// Collects one device proposal without ending its native request's output ownership.
+async fn collect_device_turn(
+    mut stream: EngineCoreOutputStream,
+    sequence: u64,
+    expected_tokens: usize,
+) -> Result<(EngineCoreOutputStream, NativeTurnCompleted), String> {
+    let mut count = 0;
+    while let Some(output) = stream.next().await {
+        let output = output.map_err(|error| error.to_string())?;
+        count += output.new_token_ids.len();
+        if output.finish_reason.is_some() || count > expected_tokens {
+            return Err("Native Draft ended before its device proposal completed".into());
+        }
+        if let Some(payload) = &output.continuation_output {
+            let completed: NativeTurnCompleted =
+                rmpv::ext::from_value(payload.clone()).map_err(|error| error.to_string())?;
+            if completed.sequence != sequence || count != expected_tokens {
+                return Err(
+                    "Native Draft returned an incomplete or out-of-order device proposal".into(),
+                );
+            }
+            return Ok((stream, completed));
+        }
+    }
+    Err("Native Draft output closed before its device turn completed".into())
 }
 
 /// Retains sessions between bounded turns; the permit serializes use of one worker's IO buffers.
@@ -281,68 +315,70 @@ impl Peer {
                     peer_id: self.spec.peer_id.clone(),
                     initial: request.initial.is_some(),
                 };
-                let mut extra = HashMap::from([
-                    ("dt_session".into(), json!(native_id)),
-                    (
-                        "dt_reserved_turn".into(),
-                        json!({
-                            "turn_sequence": plan.turn_sequence,
-                            "query_tokens": plan.query_tokens,
-                            "seq_len_upper_bound": plan.seq_len_upper_bound,
-                            "feature_offset": plan.feature_offset,
-                            "peer_id": plan.peer_id,
-                            "initial": plan.initial,
-                        }),
-                    ),
-                ]);
-                let (prompt, cache_salt, temperature, seed) =
-                    if let Some(initial) = &request.initial {
-                        extra.extend([
-                            ("dt_generation".into(), json!(confirmed_length)),
-                            ("dt_capture_q".into(), json!(self.spec.return_probabilities)),
-                            ("dt_gpu_output".into(), json!(true)),
-                        ]);
-                        initial_sessions.push((
-                            request.request_id.clone(),
-                            Session {
-                                native_id: native_id.clone(),
-                                pending_tokens: Vec::new(),
-                                confirmed_length,
-                                context_length: 0,
-                            },
-                        ));
+                if !state.streams.contains_key(&native_id) {
+                    let mut extra = HashMap::from([
+                        ("dt_session".into(), json!(native_id)),
                         (
-                            initial.prompt_token_ids.clone(),
-                            initial.cache_salt.clone(),
-                            if self.spec.return_probabilities {
-                                initial.temperature
-                            } else {
-                                0.0
-                            },
-                            Some((initial.seed ^ 0x4452414654) & i64::MAX),
-                        )
-                    } else {
-                        (Vec::new(), None, 0.0, None)
-                    };
-                turns.push(EngineCoreRequest {
-                    request_id: native_id.clone(),
-                    external_req_id: Some(native_id.clone()),
-                    prompt_token_ids: Some(prompt),
-                    sampling_params: Some(EngineCoreSamplingParams {
-                        temperature,
-                        seed,
-                        max_tokens: self.spec.num_candidates as u32,
-                        extra_args: Some(extra),
+                            "dt_reserved_turn".into(),
+                            json!({
+                                "turn_sequence": plan.turn_sequence,
+                                "query_tokens": plan.query_tokens,
+                                "seq_len_upper_bound": plan.seq_len_upper_bound,
+                                "feature_offset": plan.feature_offset,
+                                "peer_id": plan.peer_id,
+                                "initial": plan.initial,
+                            }),
+                        ),
+                    ]);
+                    let (prompt, cache_salt, temperature, seed) =
+                        if let Some(initial) = &request.initial {
+                            extra.extend([
+                                ("dt_generation".into(), json!(confirmed_length)),
+                                ("dt_capture_q".into(), json!(self.spec.return_probabilities)),
+                                ("dt_gpu_output".into(), json!(true)),
+                            ]);
+                            initial_sessions.push((
+                                request.request_id.clone(),
+                                Session {
+                                    native_id: native_id.clone(),
+                                    pending_tokens: Vec::new(),
+                                    confirmed_length,
+                                    context_length: 0,
+                                },
+                            ));
+                            (
+                                initial.prompt_token_ids.clone(),
+                                initial.cache_salt.clone(),
+                                if self.spec.return_probabilities {
+                                    initial.temperature
+                                } else {
+                                    0.0
+                                },
+                                Some((initial.seed ^ 0x4452414654) & i64::MAX),
+                            )
+                        } else {
+                            (Vec::new(), None, 0.0, None)
+                        };
+                    turns.push(EngineCoreRequest {
+                        request_id: native_id.clone(),
+                        external_req_id: Some(native_id.clone()),
+                        prompt_token_ids: Some(prompt),
+                        sampling_params: Some(EngineCoreSamplingParams {
+                            temperature,
+                            seed,
+                            max_tokens: self.spec.num_candidates as u32,
+                            extra_args: Some(extra),
+                            ..Default::default()
+                        }),
+                        cache_salt,
+                        arrival_time: SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .expect("system clock predates Unix epoch")
+                            .as_secs_f64(),
+                        resumable: true,
                         ..Default::default()
-                    }),
-                    cache_salt,
-                    arrival_time: SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .expect("system clock predates Unix epoch")
-                        .as_secs_f64(),
-                    resumable: true,
-                    ..Default::default()
-                });
+                    });
+                }
                 previous.push((native_id, confirmed_length));
                 plans.push(plan);
                 offset = offset
@@ -399,10 +435,19 @@ impl Peer {
                 })
             })
             .collect();
+        let engine_index = self
+            .requests
+            .lock()
+            .unwrap()
+            .streams
+            .values()
+            .next()
+            .map(EngineCoreOutputStream::engine_index);
         let streams = client
             .engine()
             .try_call_batch(
                 turns,
+                engine_index,
                 Some(("dt_execute", (&self.spec.peer_id, sequence, rows))),
                 ("prepare_batch_admission", admission),
             )
@@ -411,52 +456,42 @@ impl Peer {
         let Some(streams) = streams else {
             return Ok(false);
         };
-        // Acceptance owns native execution; publish its session identities before
-        // the detached completion task can reconcile their first device anchor.
-        self.requests
-            .lock()
-            .unwrap()
-            .sessions
-            .extend(initial_sessions);
+        // Native acceptance owns every row; retain the same output stream until
+        // a terminal fallback or final cancellation ends that ownership.
+        let streams = {
+            let mut state = self.requests.lock().unwrap();
+            state.sessions.extend(initial_sessions);
+            for stream in streams {
+                state.streams.insert(stream.request_id().to_owned(), stream);
+            }
+            previous
+                .iter()
+                .map(|(id, _)| {
+                    state.streams.remove(id).ok_or_else(|| {
+                        "Accepted device turn has no native output stream".to_owned()
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
         let peer = self.clone();
         let client = client.clone();
         let execution = tokio::spawn(async move {
             let result: Result<(), String> = async {
-                let mut pending: HashMap<_, _> = previous
-                    .iter()
-                    .map(|(id, _)| (id.clone(), 0_usize))
+                let mut pending: FuturesUnordered<_> = streams
+                    .into_iter()
+                    .map(|stream| collect_device_turn(stream, sequence, peer.spec.num_candidates))
                     .collect();
-                let mut output = select_all(streams);
-                while let Some(next) = output.next().await {
-                    let next = next.map_err(|error| error.to_string())?;
-                    let count = pending
-                        .get_mut(&next.request_id)
-                        .ok_or("Native Draft returned an unknown device turn")?;
-                    *count += next.new_token_ids.len();
-                    if let Some(reason) = next.finish_reason {
-                        if reason != EngineCoreFinishReason::Length
-                            || *count != peer.spec.num_candidates
-                        {
-                            return Err(
-                                "Native Draft returned an incomplete device proposal".into()
-                            );
-                        }
-                        pending.remove(&next.request_id);
-                    }
+                let mut confirmed = HashMap::with_capacity(previous.len());
+                while let Some(turn) = pending.next().await {
+                    let (stream, completed) = turn?;
+                    let native_id = stream.request_id().to_owned();
+                    confirmed.insert(native_id.clone(), completed);
+                    peer.requests
+                        .lock()
+                        .unwrap()
+                        .streams
+                        .insert(native_id, stream);
                 }
-                if !pending.is_empty() {
-                    return Err(
-                        "Native Draft output closed before its device turn completed".into(),
-                    );
-                }
-                let confirmed: Vec<Vec<NativeRequestState>> = client
-                    .engine()
-                    .call_utility("scheduler_rpc", ("dt_request_states", (&previous,)))
-                    .await
-                    .map_err(|error| error.to_string())?;
-                let [confirmed]: [Vec<NativeRequestState>; 1] = confirmed
-                    .try_into()
-                    .map_err(|_| "DT confirmation requires exactly one native engine response")?;
                 peer.reconcile_device_turn(&previous, confirmed)
             }
             .await;
@@ -497,16 +532,18 @@ impl Peer {
     fn reconcile_device_turn(
         &self,
         previous: &[(String, usize)],
-        confirmed: Vec<NativeRequestState>,
+        confirmed: HashMap<String, NativeTurnCompleted>,
     ) -> Result<(), String> {
         if confirmed.len() != previous.len() {
             return Err("Native Draft returned incomplete device confirmation state".into());
         }
         let mut state = self.requests.lock().unwrap();
-        for (confirmed, (native_id, before)) in confirmed.into_iter().zip(previous) {
-            if confirmed.request_id != *native_id
-                || confirmed.confirmed_length.checked_sub(*before)
-                    != Some(confirmed.token_ids_delta.len())
+        for (native_id, before) in previous {
+            let confirmed = confirmed
+                .get(native_id)
+                .ok_or("Native Draft did not confirm its retained session")?;
+            if confirmed.confirmed_length.checked_sub(*before)
+                != Some(confirmed.token_ids_delta.len())
                 || confirmed.context_length.checked_add(1) != Some(confirmed.confirmed_length)
                 || confirmed.anchor >= self.spec.vocab_size
                 || confirmed.confirmed_length > self.spec.max_model_len
@@ -700,19 +737,36 @@ impl Peer {
                 results.push((vec![0; self.spec.num_candidates], None));
             }
         }
+        let (requests, updates, mut streams) = {
+            let mut state = self.requests.lock().unwrap();
+            let mut additions = Vec::new();
+            let mut updates = Vec::new();
+            let mut streams = Vec::new();
+            for request in requests {
+                if let Some(stream) = state.streams.remove(&request.request_id) {
+                    updates.push(request);
+                    streams.push(stream);
+                } else {
+                    additions.push(request);
+                }
+            }
+            (additions, updates, streams)
+        };
         let prepare_inputs = !stage_with_execution && (neural || capture_q || gpu_output);
-        if prepare_inputs && requests.is_empty() {
+        if prepare_inputs && pending.is_empty() {
             client
                 .rpc::<(), _>("dt_stage", (&self.spec.peer_id, &staged))
                 .await?;
         }
-        let worker_rpc = (prepare_inputs && !requests.is_empty())
+        let worker_rpc = (prepare_inputs && !pending.is_empty())
             .then_some(("dt_stage", (&self.spec.peer_id, &staged)));
-        let streams = client
-            .engine()
-            .call_batch(requests, worker_rpc)
-            .await
-            .map_err(|error| error.to_string())?;
+        streams.extend(
+            client
+                .engine()
+                .call_batch(requests, updates, worker_rpc)
+                .await
+                .map_err(|error| error.to_string())?,
+        );
         let mut output = select_all(streams);
         while let Some(next) = output.next().await {
             let next = next.map_err(|error| error.to_string())?;
@@ -777,8 +831,8 @@ impl Peer {
             return Ok(());
         }
         let native_ids: Vec<_> = sessions.iter().map(|(_, id)| id).collect();
-        // A completed turn is absent from the client's in-flight registry but remains in Scheduler.
-        // The native utility acknowledges scheduler abort before the Worker fence releases IO state.
+        // Scheduler retains both terminal fallback sessions and live device streams.
+        // Abort native ownership before the Worker fence releases their input history.
         client
             .engine()
             .call_utility::<(), _>("abort_requests", (&native_ids,))
@@ -791,7 +845,8 @@ impl Peer {
             .rpc::<(), _>("dt_forget_sessions", (&native_ids,))
             .await?;
         let mut state = self.requests.lock().unwrap();
-        for (key, _) in sessions {
+        for (key, native_id) in sessions {
+            state.streams.remove(&native_id);
             state.sessions.remove(&key);
         }
         Ok(())

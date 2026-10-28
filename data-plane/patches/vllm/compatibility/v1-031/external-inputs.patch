@@ -36,18 +36,3 @@
                  num_new_tokens = long_prefill_token_threshold
              num_new_tokens = min(
                  num_new_tokens, token_budget, input_budget - draft_slots
---- a/vllm/v1/engine/core.py
-+++ b/vllm/v1/engine/core.py
-@@ -606,8 +606,12 @@
-             for request, request_wave in requests:
-                 self.add_request(request, request_wave)
-             return True if admission is not None else None
-
-+    def scheduler_rpc(self, method: str, args: tuple = ()) -> Any:
-+        """Invoke a scheduler plugin operation on its owning Core thread."""
-+        return getattr(self.scheduler, method)(*args)
-+
-     def abort_requests(self, request_ids: list[str]):
-         """Abort requests from the scheduler."""
-         # TODO: The scheduler doesn't really need to know the
-         # specific finish reason, TBD whether we propagate that

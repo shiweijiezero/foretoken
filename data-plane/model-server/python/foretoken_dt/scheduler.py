@@ -14,6 +14,7 @@ from vllm.v1.core.sched.async_scheduler import AsyncScheduler
 from vllm.v1.core.sched.interface import PauseState
 from vllm.v1.core.sched.output import CachedRequestData
 from vllm.v1.core.sched.scheduler import Scheduler
+from vllm.v1.engine import FinishReason
 from vllm.v1.request import RequestStatus
 
 
@@ -121,18 +122,7 @@ class DraftTurns:
                 previous, "dt_reserved_turn", None
             ) != ReservedDraftTurn(**reserved):
                 raise ValueError("Device turn has no matching native reservation")
-            if not previous.dt_waiting or previous.num_in_flight_tokens:
-                raise ValueError("Device turn arrived before native completion")
-            # Native allocation must not treat unverified private Draft KV as
-            # committed input; the worker retains it and consumes GPU lengths.
-            previous.num_computed_tokens = min(
-                previous.num_computed_tokens, previous.num_prompt_tokens
-            )
-            previous.dt_waiting = False
-            previous.next_decode_eligible_step = 0
-            if previous not in self.running:
-                raise ValueError("Reserved Draft request lost its native worker slot")
-            previous.status = RequestStatus.RUNNING
+            self._activate_reserved_turn(previous)
             return
         if not request.resumable:
             self.finish_requests(request.request_id, RequestStatus.FINISHED_ABORTED)
@@ -161,6 +151,21 @@ class DraftTurns:
             if previous is not None:
                 self._enqueue_waiting_request(current)
             current.status = RequestStatus.WAITING
+
+    def _activate_reserved_turn(self, request):
+        """Resume a parked native slot after its complete device batch owns KV capacity."""
+        if not request.dt_waiting or request.num_in_flight_tokens:
+            raise ValueError("Device turn arrived before native completion")
+        if request not in self.running:
+            raise ValueError("Reserved Draft request lost its native worker slot")
+        # Speculative private KV remains reusable by the worker, but only the
+        # confirmed prefix may count toward native allocation and scheduling.
+        request.num_computed_tokens = min(
+            request.num_computed_tokens, request.num_prompt_tokens
+        )
+        request.dt_waiting = False
+        request.next_decode_eligible_step = 0
+        request.status = RequestStatus.RUNNING
 
     def _make_cached_request_data(self, running_reqs, *args, **kwargs):
         """Publish confirmed suffixes alongside the native incremental block updates."""
@@ -199,15 +204,18 @@ class DraftTurns:
             not plans
             or len(indexed) != len(requests)
             or len(ids) != len(set(ids))
-            or set(indexed) != set(ids)
+            or not set(indexed).issubset(ids)
         ):
             raise ValueError(
                 "External admission plan does not match its complete request batch"
             )
         prepared = []
         for plan in plans:
-            incoming = indexed[plan["request_id"]]
-            request = self.requests.get(incoming.request_id, incoming)
+            request_id = plan["request_id"]
+            incoming = indexed.get(request_id)
+            request = self.requests.get(request_id, incoming)
+            if request is None:
+                raise ValueError("External admission plan has no native request")
             try:
                 turn = ReservedDraftTurn(
                     **{key: value for key, value in plan.items() if key != "request_id"}
@@ -216,22 +224,30 @@ class DraftTurns:
                 raise ValueError(
                     "External admission plan has invalid reservation fields"
                 ) from error
-            supplied = (incoming.sampling_params.extra_args or {}).get(
-                "dt_reserved_turn"
-            )
-            try:
-                matches = supplied is not None and ReservedDraftTurn(**supplied) == turn
-            except TypeError as error:
+            if incoming is not None:
+                supplied = (incoming.sampling_params.extra_args or {}).get(
+                    "dt_reserved_turn"
+                )
+                try:
+                    matches = (
+                        supplied is not None and ReservedDraftTurn(**supplied) == turn
+                    )
+                except TypeError as error:
+                    raise ValueError(
+                        "External admission request has invalid reservation fields"
+                    ) from error
+                if not matches or not incoming.resumable:
+                    raise ValueError(
+                        "External admission request has inconsistent reservation parameters"
+                    )
+            if not request.resumable:
                 raise ValueError(
-                    "External admission request has invalid reservation fields"
-                ) from error
-            if not matches or not incoming.resumable:
-                raise ValueError(
-                    "External admission request has inconsistent reservation parameters"
+                    "External admission requires a resumable native request"
                 )
             if turn.initial:
                 if (
-                    request is not incoming
+                    incoming is None
+                    or request is not incoming
                     or not incoming.prompt_token_ids
                     or turn.query_tokens != incoming.num_prompt_tokens
                     or turn.seq_len_upper_bound != incoming.num_prompt_tokens
@@ -344,6 +360,8 @@ class DraftTurns:
                 if turn.initial:
                     request.dt_waiting = False
                     request.dt_turn = None
+                elif request.request_id not in indexed:
+                    self._activate_reserved_turn(request)
             accepted = True
             yield True
         except BaseException:
@@ -374,26 +392,6 @@ class DraftTurns:
                     and request.request_id not in aborted
                 ):
                     self.kv_cache_manager.free(request)
-
-    def dt_request_states(self, rows):
-        """Expose settled resumable prefixes to the peer owner after native turn completion."""
-        states = []
-        for request_id, previous in rows:
-            request = self.requests[request_id]
-            if not request.dt_waiting or request.num_in_flight_tokens:
-                raise ValueError("Draft request still has native work in flight")
-            extra = request.sampling_params.extra_args
-            prefix = request.prompt_token_ids + [extra["dt_anchor_token"]]
-            states.append(
-                {
-                    "request_id": request_id,
-                    "confirmed_length": len(prefix),
-                    "context_length": len(prefix) - 1,
-                    "token_ids_delta": prefix[previous:],
-                    "anchor": prefix[-1],
-                }
-            )
-        return states
 
     def get_num_new_tokens(self, request):
         """Schedule a reserved input shape without appending padding to the confirmed prefix."""
@@ -517,6 +515,7 @@ class DraftTurns:
 
     def update_from_output(self, scheduler_output, model_runner_output):
         """Retain parked turns after native stop handling removes them from the running list."""
+        completed = {}
         for request_id, confirmed in getattr(
             model_runner_output, "confirmed_turns", {}
         ).items():
@@ -578,7 +577,23 @@ class DraftTurns:
                 if prompt_delta
                 else None
             )
+            completed[request_id] = {
+                "sequence": confirmed.turn_sequence,
+                "confirmed_length": confirmed.confirmed_length,
+                "context_length": confirmed.context_length,
+                "anchor": confirmed.anchor,
+                "token_ids_delta": confirmed.token_ids_delta,
+            }
         outputs = super().update_from_output(scheduler_output, model_runner_output)
+        for client_outputs in outputs.values():
+            for output in client_outputs.outputs:
+                confirmation = completed.get(output.request_id)
+                if (
+                    confirmation is not None
+                    and output.finish_reason == FinishReason.LENGTH
+                ):
+                    output.finish_reason = None
+                    output.continuation_output = confirmation
         for request_id in scheduler_output.num_scheduled_tokens:
             request = self.requests.get(request_id)
             if (
