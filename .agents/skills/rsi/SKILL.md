@@ -36,7 +36,7 @@ Use the task's separate Explorer, Worker, Experimenter and Observer counts; none
 
 The harness's actual concurrency limit still applies, including any slot used by the lead. If it cannot accommodate the requested team, prioritize and stagger assignments within that limit, recording the requested and actual staffing and the reason for the difference. Count each member under one assigned role at a time.
 
-If the task specifies `Agent models` or `Claude models`, treat those mappings as dispatch policy: pass the named model and reasoning effort when creating each member, and record the actual values in the team records. Use the global default only for roles the task leaves unspecified.
+If the task specifies `Codex models` or `Claude models`, treat those mappings as dispatch policy: pass the named model and reasoning effort when creating each member, and record the actual values in the team records. Use the global default only for roles the task leaves unspecified.
 
 [Explorers](roles/explorer.md) continually explore mechanisms, methods and new research questions, and help the team reassess its current direction. They investigate independently and may explore different questions or examine the same question from different angles, sharing findings as their research progresses.
 

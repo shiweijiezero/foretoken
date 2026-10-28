@@ -16,7 +16,7 @@ Worker count: 4
 Experimenter count: 3
 Observer count: 1
 Observer check interval: 1h
-Agent models: Explorer = gpt-6-astra/high; Worker, Experimenter and Observer = gpt-6.1-sol/high
+Codex models: Explorer = gpt-6-astra/high; Worker, Experimenter and Observer = gpt-6.1-sol/high
 Claude models: Explorer = Fable/Opus/high; Worker, Experimenter and Observer = sonnet/high
 Maximum parallel experiments: at most 3 two-GPU service candidates; smaller focused experiments share the six-GPU budget
 Parallel scheduling: reserve capacity for platform services, builds, and benchmark clients, then schedule experiments by their actual resource requests and record the achieved parallelism
