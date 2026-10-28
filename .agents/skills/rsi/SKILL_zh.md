@@ -13,7 +13,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 只有用户要求执行或恢复任务时，团队才启动实验。新任务需要记录起始时间和截止时间；恢复任务时，则先查看已有作业和结果，继续使用原来的时间预算。主 Agent 从任务中识别标注 `【不可修改】` 的固定条件，并区分可调整的实现选择。给定配置作为比较起点；没有起始配置时，先建立初始方案。团队沿用已有的有效结论继续研究，直到任务规定的结束条件满足。
 
-明确任务后，启用本主会话的[接续绑定](continuation_zh.md#启用本次任务)。项目 hook 只作用于这个 RSI 会话；向成员交付后续步骤需要明确登记。运行环境尚未加载或信任 hook 时，说明限制，并直接处理原生成员完成通知。
+任务开始时，启用本主会话的[接续绑定](continuation_zh.md#启用本次任务)，并按配置[启用 Evaluator 定时巡查](#定期检查团队状态)。项目 hook 只作用于这个 RSI 会话；向成员交付后续步骤需要明确登记。运行环境尚未加载或信任 hook 时，说明限制，并直接处理原生成员完成通知。
 
 研发与环境准备同时启动。Experimenter 准备运行环境和起始测量，Explorer 搜索并分析资料，Worker 推进关键实现和当前能做的本地验证。环境尚未就绪时，优先继续不依赖它的实现和探索；需要真实环境的验证留到就绪后完成。
 
@@ -27,7 +27,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 主 Agent 围绕最重要的问题和具有大幅改善潜力的机制组织研究组合，为主攻方向配置持续负责人及研究、实现和实验预算，独立备选与小改进可以并行。不能仅凭就绪、便宜或立即有正收益决定研究优先级。成员在这些分工内持续推进，主 Agent 随证据变化调整整个研究组合。交接与执行见[团队协作说明](roles/common_zh.md)。
 
-分别采用 task 中的 Explorer、Worker、Experimenter 和 Evaluator 数量，都不包含主 Agent。前三项指各角色的并行成员数；未填写时由主 Agent 安排，没有专属成员的职责交给主 Agent 或其他成员承担，这不增加人数，也不构成独立审查。Evaluator 数量指每轮新建的巡查 Agent 数，省略或留空时默认 1。明确填写的数量都应遵守，包括 0；Evaluator 设为 0 表示关闭巡查，不能把主 Agent 自查算作独立巡查。
+分别采用 task 中的 Explorer、Worker、Experimenter 和 Evaluator 数量，都不包含主 Agent。前三项指各角色的并行成员数；Explorer 省略或留空时默认 4，Worker 和 Experimenter 未填写时由主 Agent 安排。没有专属成员的职责交给主 Agent 或其他成员承担，这不增加人数，也不构成独立审查。Evaluator 数量指每轮新建的巡查 Agent 数，省略或留空时默认 1。明确填写的数量都应遵守，包括 0；Evaluator 设为 0 表示关闭巡查，不能把主 Agent 自查算作独立巡查。
 
 运行环境的实际并发上限仍然有效，主 Agent 占用的名额也应计入。无法同时容纳用户要求的团队时，按优先级分批安排，记录要求人数、实际人数及差异原因。每名成员在同一时刻只按一个分配的角色计数。
 
@@ -47,7 +47,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 定期检查团队状态
 
-按任务文件中的 `Evaluator 数量` 和 `Evaluator 巡查间隔` 安排巡查；例如 `1` 和 `1h` 表示每小时创建一名新 Evaluator。未填写间隔时，主 Agent 先补齐，将提醒记入[团队记录](../../../rsi-playbooks/experiment-records_zh.md#保存团队与会话记录)，并以任务开始时间为基准。提醒只负责创建 Evaluator；成员接续使用原生完成通知和 hook。没有提醒工具时，使用带超时的等待，并注明只在会话运行期间有效。
+任务开始时，主 Agent 在研发和环境准备前，按 `Evaluator 数量` 和 `Evaluator 巡查间隔` 创建并启用定时提醒；数量为 0 时不启用。间隔未填写时先补齐。首轮巡查安排在任务开始一个间隔后，将提醒标识和下次巡查时间记入[团队记录](../../../rsi-playbooks/experiment-records_zh.md#保存团队与会话记录)。恢复任务时重新启用已有提醒，沿用原计时起点。提醒只负责创建 Evaluator；成员接续使用原生完成通知和 hook。没有提醒工具时，使用带超时的等待，并注明只在会话运行期间有效。
 
 按 [Evaluator 说明](roles/evaluator_zh.md)每轮创建不继承历史的新 Agent。巡查占用普通并发名额，排期时要留出运行机会。人数超过可用名额时分批完成；名额已满或上一轮未结束时，记录延迟，稍后补做，不堆积轮次或打断实验。
 

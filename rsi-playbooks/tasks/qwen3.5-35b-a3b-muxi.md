@@ -11,12 +11,12 @@ Deployment layout: agent-selected within the final single-node GPU budget, inclu
 Final deployment budget: at most 2 MetaX GPUs on one node; at most 32 CPU cores and 250G host memory in total for all target model, auxiliary model and frontend workloads [Fixed]
 Experiment sizing: service candidates fit the final budget; focused kernel, compilation, or correctness experiments may use fewer resources, including one GPU
 Available resources: at most 6 MetaX GPUs in total for experiments; schedule CPU, memory, and storage within actual host capacity [Fixed]
-Explorer count: 2 [Fixed]
+Explorer count: 4 [Fixed]
 Worker count: 4 [Fixed]
 Experimenter count: 3 [Fixed]
 Evaluator count: 1 [Fixed]
 Evaluator check interval: 1h [Fixed]
-Codex models: Explorer = gpt-6-astra/high; Worker, Experimenter and Evaluator = gpt-6.1-sol/high [Fixed]
+Codex models: Explorer and Evaluator = gpt-6-astra/high; Worker and Experimenter = gpt-6.1-sol/high [Fixed]
 Claude models: Explorer = Fable/Opus/high; Worker, Experimenter and Evaluator = sonnet/high [Fixed]
 Maximum parallel experiments: at most 3 two-GPU service candidates; smaller focused experiments share the six-GPU budget
 Parallel scheduling: reserve capacity for platform services, builds, and benchmark clients, then schedule experiments by their actual resource requests and record the achieved parallelism
