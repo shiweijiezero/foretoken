@@ -121,15 +121,15 @@ def runtime_constraints(source_packages: set[str]) -> dict[str, str]:
 
 
 def repair_installed_dependencies() -> None:
-    """Repair unused OTel remnants before vLLM 0.31 image dependency installation."""
-    if Version(importlib.metadata.version("vllm")).release[:2] != (0, 31):
+    """Remove unused OTel exporter remnants that conflict with the image's retained SDK."""
+    if Version(importlib.metadata.version("vllm")).release[:2] not in {(0, 31), (0, 32)}:
         return
     installed = {
         canonicalize_name(distribution.metadata["Name"]): distribution
         for distribution in importlib.metadata.distributions()
     }
     common = installed.get("opentelemetry-exporter-otlp-common")
-    if common is None or common.version != "0.66b0":
+    if common is None:
         return
     sdk = installed.get("opentelemetry-sdk")
     if sdk is None:
