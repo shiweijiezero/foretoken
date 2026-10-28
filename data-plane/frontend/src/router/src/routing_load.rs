@@ -5,8 +5,7 @@
 
 use crate::{RouteCandidate, RouteTargetId, RouterRequest, RoutingLoadSnapshot};
 use foretoken_kv_indexer::KvPrefixIndexer;
-use foretoken_model_protocol::ModelServerRole;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 /// Shared routing reservations retained by RuntimeBuilder across serving-snapshot updates.
@@ -26,9 +25,17 @@ impl RoutingLoadState {
 
 pub(crate) type ReservationKey = (RouteTargetId, u32);
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ActiveSequence {
+    request: Option<Arc<vllm_llm::GenerateRequest>>,
+    prefix_shareable: bool,
+    prefill_tokens: usize,
+    output_tokens: usize,
+}
+
 #[derive(Default)]
 pub(crate) struct RoutingReservations {
-    requests: BTreeMap<ReservationKey, BTreeMap<String, usize>>,
+    requests: BTreeMap<ReservationKey, BTreeMap<String, ActiveSequence>>,
 }
 
 impl RoutingReservations {
@@ -40,9 +47,17 @@ impl RoutingReservations {
         RoutingLoadSnapshot {
             requests: requests.len() as i64,
             tokens: requests.values().fold(0_i64, |tokens, request| {
-                tokens.wrapping_add(*request as i64)
+                tokens.wrapping_add(request.prefill_tokens as i64)
             }),
         }
+    }
+
+    /// Copies active sequences for the scorer's block projection while the routing lock is held.
+    pub(crate) fn active_sequences(&self, key: &ReservationKey) -> Vec<ActiveSequence> {
+        self.requests
+            .get(key)
+            .map(|requests| requests.values().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Reserves a selected stage before dispatch; the owning session or stream must release it.
@@ -50,23 +65,33 @@ impl RoutingReservations {
         &mut self,
         request: &RouterRequest,
         candidate: &RouteCandidate,
-        kv: &dyn KvPrefixIndexer,
+        prefill_tokens: usize,
     ) {
         let key = (
             candidate.route_target_id.clone(),
             candidate.data_parallel_rank,
         );
-        // Reserve estimated prompt-token computation until the stage's first response.
-        // Encoder has no token-generation workload.
-        let uncached_tokens = if candidate.role == ModelServerRole::Encoder {
-            0
-        } else {
-            uncached_tokens(request, candidate, kv)
-        };
-        self.requests
-            .entry(key)
-            .or_default()
-            .insert(request.request_id().to_owned(), uncached_tokens);
+        self.requests.entry(key).or_default().insert(
+            request.request_id().to_owned(),
+            ActiveSequence {
+                request: request.generate_request.clone(),
+                prefix_shareable: request.reads_prefix_cache()
+                    && candidate.prefix_cache_enabled == Some(true),
+                prefill_tokens,
+                output_tokens: 0,
+            },
+        );
+    }
+
+    /// Records stream-observed output against the stage until its reservation is released.
+    pub(crate) fn record_output_tokens(&mut self, key: &ReservationKey, id: &str, count: usize) {
+        if let Some(request) = self
+            .requests
+            .get_mut(key)
+            .and_then(|requests| requests.get_mut(id))
+        {
+            request.output_tokens = request.output_tokens.saturating_add(count);
+        }
     }
 
     /// Releases prompt-token load when the first response reaches the frontend.
@@ -76,7 +101,7 @@ impl RoutingReservations {
             .get_mut(key)
             .and_then(|requests| requests.get_mut(id))
         {
-            *request = 0;
+            request.prefill_tokens = 0;
         }
     }
 
@@ -89,6 +114,89 @@ impl RoutingReservations {
             }
         }
     }
+}
+
+/// Projects active KV allocations in token units, sharing only reusable complete prefixes.
+/// Partial prompt tails and generated tokens remain private to each sequence.
+pub(crate) fn potential_decode_tokens(
+    sequences: &[ActiveSequence],
+    request: &RouterRequest,
+    block_size: usize,
+    assume_kv_reuse: bool,
+    track_output_blocks: bool,
+) -> usize {
+    let mut shared_blocks = BTreeSet::new();
+    let mut private_tokens = 0;
+    for sequence in sequences {
+        let Some(active) = &sequence.request else {
+            continue;
+        };
+        let output_tokens = if track_output_blocks {
+            sequence.output_tokens
+        } else {
+            0
+        };
+        private_tokens += allocated_tokens(
+            &mut shared_blocks,
+            active,
+            block_size,
+            assume_kv_reuse && sequence.prefix_shareable,
+            output_tokens,
+        );
+    }
+    if let Some(incoming) = &request.generate_request {
+        private_tokens += allocated_tokens(
+            &mut shared_blocks,
+            incoming,
+            block_size,
+            assume_kv_reuse && request.reads_prefix_cache(),
+            0,
+        );
+    }
+    shared_blocks.len() * block_size + private_tokens
+}
+
+/// Adds shareable prefix blocks and returns the sequence's private allocation in tokens.
+fn allocated_tokens(
+    blocks: &mut BTreeSet<[u8; 32]>,
+    request: &vllm_llm::GenerateRequest,
+    block_size: usize,
+    share_prefix: bool,
+    output_tokens: usize,
+) -> usize {
+    let tokens = &request.prompt_token_ids;
+    let total = tokens
+        .len()
+        .saturating_add(output_tokens)
+        .div_ceil(block_size)
+        * block_size;
+    if !share_prefix {
+        return total;
+    }
+    let identity = serde_json::to_vec(&(
+        request
+            .cache_salt
+            .as_deref()
+            .filter(|salt| !salt.is_empty()),
+        request.lora_request.as_ref().map(|lora| lora.lora_int_id),
+        request
+            .mm_features
+            .as_ref()
+            .map(|_| request.request_id.as_str()),
+    ))
+    .expect("cache identity contains only strings and integers");
+    let mut hash = blake3::Hasher::new();
+    hash.update(&(identity.len() as u64).to_le_bytes());
+    hash.update(&identity);
+    // The final prompt token must be recomputed even on a complete prefix hit.
+    let reusable_tokens = tokens.len().saturating_sub(1) / block_size * block_size;
+    for block in tokens[..reusable_tokens].chunks_exact(block_size) {
+        for token in block {
+            hash.update(&token.to_le_bytes());
+        }
+        blocks.insert(*hash.finalize().as_bytes());
+    }
+    total - reusable_tokens
 }
 
 /// Estimates prompt-token computation from the observation owner's reusable token count.

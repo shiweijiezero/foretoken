@@ -123,8 +123,14 @@ impl Leader {
         .await?;
         health.set_process_alive(true);
         let client_health = client.subscribe_health();
-        let (max_concurrent_requests, metadata) =
-            runtime_metadata(&config, &client, prepared_tokenizer, kv_transfer.as_ref())?;
+        let (max_concurrent_requests, metadata) = runtime_metadata(
+            &config,
+            &client,
+            prepared_tokenizer,
+            kv_transfer.as_ref(),
+            startup_deadline,
+        )
+        .await?;
         let kv_events =
             start_kv_events(kv_events, &config, &client, startup_deadline, background).await;
         if !*client_health.borrow() {
@@ -418,11 +424,12 @@ impl Leader {
 }
 
 /// Project engine-ready facts into the metadata and acceptance capacity exposed by this ingress.
-fn runtime_metadata(
+async fn runtime_metadata(
     config: &RuntimeConfig,
     client: &EngineCoreClient,
     prepared_tokenizer: Option<PreparedTokenizer>,
     kv_transfer: Option<&RuntimeKvTransferMetadata>,
+    startup_deadline: Instant,
 ) -> io::Result<(Option<u64>, RuntimeMetadataResponse)> {
     let max_concurrent_requests =
         client
@@ -456,6 +463,13 @@ fn runtime_metadata(
         },
         model_dtype: client.reported_model_dtype(),
         effective_max_model_len: client.max_model_len(),
+        prefix_cache_enabled: Some(prefix_cache_enabled(client, startup_deadline).await?),
+        kv_block_size: client
+            .ready_responses()
+            .first()
+            .and_then(|ready| ready.block_size)
+            .and_then(|size| u32::try_from(size).ok())
+            .and_then(std::num::NonZeroU32::new),
         max_logprobs: client
             .ready_responses()
             .first()
@@ -465,6 +479,26 @@ fn runtime_metadata(
         capabilities,
     };
     Ok((max_concurrent_requests, metadata))
+}
+
+/// Reads the resolved native setting before publishing routing metadata for this ingress.
+async fn prefix_cache_enabled(
+    client: &EngineCoreClient,
+    startup_deadline: Instant,
+) -> io::Result<bool> {
+    let remaining = startup_deadline.saturating_duration_since(Instant::now());
+    tokio::time::timeout(
+        remaining,
+        client.call_utility_consensus("get_prefix_cache_enabled", ()),
+    )
+    .await
+    .map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            "Engine prefix-cache metadata exceeded the startup deadline",
+        )
+    })?
+    .map_err(io::Error::other)
 }
 
 /// Start optional KV observation after the publisher is ready; its failure leaves generation available.

@@ -206,6 +206,9 @@ pub struct PreparedTokenizer {
     pub files: std::collections::BTreeMap<String, String>,
 }
 
+/// Metadata revision exposing KV allocation facts to requesting frontends.
+pub const KV_ROUTING_METADATA_VERSION: u8 = 2;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeMetadataResponse {
@@ -214,6 +217,12 @@ pub struct RuntimeMetadataResponse {
     #[serde(default)]
     pub model_dtype: Option<ModelDtype>,
     pub effective_max_model_len: u32,
+    /// KV cache block width reported by the engine when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_block_size: Option<std::num::NonZeroU32>,
+    /// Resolved native prefix-cache setting; absent when the engine cannot report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_cache_enabled: Option<bool>,
     /// Engine-configured logprob limit; -1 permits the complete model vocabulary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_logprobs: Option<i32>,

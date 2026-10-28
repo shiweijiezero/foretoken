@@ -43,6 +43,7 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 | 按请求体中的 `session_id`，优先将同一会话的请求发往同一模型副本 | `session_affinity` |
 | 优先选择按请求长度归一化后预填充与解码总延迟较低的目标 | `least_latency`，必须搭配 `picker.algorithm: max` |
 | 优先选择加权请求长度较小的目标 | `throughput` |
+| 平衡缓存抵扣后的预填充工作量与活跃输入块负载 | `kv_cost`，必须搭配 `picker.algorithm: max` |
 | 按指定端点观测值排序 | `endpoint_attribute` |
 | 所有目标得分相同 | `uniform` |
 
@@ -71,6 +72,33 @@ spec:
 在编码和解码阶段，`kv_least_loaded` 只按负载评分。这些权重控制路由偏好；即使只按负载评分或设置 `cacheWeight: 0`，Mooncake 和 NIXL 仍可使用 [Decode 到 Prefill 的复用](../../../../docs/features/inference-parameters_zh.md#分离预填充与解码并复用-kv)。
 
 无法取得某个目标的前缀匹配结果时，该目标仍可参与路由，但不获得缓存偏好。支持的缓存及状态访问见 [KV 前缀索引](../kv-indexer/README_zh.md)。
+
+## 平衡预填充与 KV 负载
+
+选择 `kv_cost` 并搭配 `max`，即可综合当前前端副本内尚未完成的预填充工作与活跃 KV 分配量：
+
+```yaml
+spec:
+  routerPipeline:
+    scorer:
+      algorithm: kv_cost
+    picker:
+      algorithm: max
+```
+
+成本统一以 token 为单位，支持不同引擎块大小，并抵扣可复用前缀。在 `scorer.parameters` 中设置以下选项；数值参数接受有限非负数。
+
+| 参数 | 默认值 | 作用 |
+| --- | --- | --- |
+| `overlap_score_credit` | `1.0` | 设备本地前缀的抵扣倍率；设为 `0` 时只按负载评分，也不为本算法查询缓存。 |
+| `overlap_score_credit_decay` | `0.0` | 根据目标超出最低可选预填充负载的部分相对于当前输入长度的比例，衰减设备抵扣；`0` 表示不衰减。 |
+| `prefill_load_scale` | `1.0` | 缓存抵扣后，待处理和新输入预填充 token 的权重。 |
+| `decode_active_request_weight` | `0.0` | 每个活跃请求额外计入的 token 等效成本。 |
+| `host_cache_hit_weight` | `0.75` | 主机缓存超出设备命中前缀部分的抵扣权重。 |
+| `disk_cache_hit_weight` | `0.25` | 磁盘缓存超出更快本地缓存部分的抵扣权重。 |
+| `shared_cache_multiplier` | `0.0` | 共享缓存超出设备命中前缀部分的抵扣倍率。 |
+| `router_track_prefill_tokens` | `true` | 在 Aggregate 和 Prefill 目标上计入尚未完成的输入工作。 |
+| `router_track_output_blocks` | `false` | 随流式输出扩展各活跃序列的分配量估计。 |
 
 ## 根据得分选择目标
 

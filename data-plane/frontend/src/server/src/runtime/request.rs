@@ -581,6 +581,9 @@ impl RuntimeGeneration {
                     session.response_started();
                     response_started = true;
                 }
+                if let Ok(output) = &output {
+                    session.output_tokens_generated(output.token_ids.len());
+                }
                 let terminal = output.as_ref().map_or(true, |output| output.finish_reason.is_some());
                 if terminal { session.stage_complete(); }
                 yield output;

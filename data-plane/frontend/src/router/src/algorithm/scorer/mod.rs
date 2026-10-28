@@ -26,6 +26,7 @@ declare_router_algorithms! {
     session_affinity_scorer => SessionAffinityScorer = "session_affinity",
     two_tier_scorer => TwoTierScorer = "two_tier",
     least_latency_scorer => LeastLatencyScorer = "least_latency",
+    kv_cost_scorer => KvCostScorer = "kv_cost",
     kv_cache_utilization_scorer => KvCacheUtilizationScorer = "kv_cache_utilization",
     kv_least_loaded_scorer => KvLeastLoadedScorer = "kv_least_loaded",
     least_loaded_scorer => LeastLoadedScorer = "least_loaded",
@@ -105,6 +106,30 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
     /// Requests the registry's daily request-length history only while this scorer is active.
     fn needs_request_length_history(&self) -> bool {
         false
+    }
+
+    /// Reports whether streaming output must update this scorer's active KV-block projection.
+    fn tracks_output_blocks(&self) -> bool {
+        false
+    }
+
+    /// Requests active sequence snapshots for block-based decode load projection.
+    fn needs_active_sequences(&self) -> bool {
+        false
+    }
+
+    /// Returns prompt work to reserve after selection until the first response.
+    fn prefill_token_load(
+        &self,
+        request: &RouterRequest,
+        candidate: &RouteCandidate,
+        kv_prefix_indexer: &dyn KvPrefixIndexer,
+    ) -> usize {
+        if candidate.role == ModelServerRole::Encoder {
+            0
+        } else {
+            crate::routing_load::uncached_tokens(request, candidate, kv_prefix_indexer)
+        }
     }
 
     /// Applies algorithm-owned parameters once while building the configured pipeline.

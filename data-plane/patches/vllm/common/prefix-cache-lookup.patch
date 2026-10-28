@@ -59,8 +59,12 @@
      def from_engine_core_request(
 --- a/vllm/v1/engine/core.py
 +++ b/vllm/v1/engine/core.py
-@@ -435,2 +435,47 @@
+@@ -435,2 +435,51 @@
  
++    def get_prefix_cache_enabled(self) -> bool:
++        """Report the resolved scheduler prefix-cache setting to routing observers."""
++        return self.scheduler.kv_cache_manager.enable_caching
++
 +    def get_prefix_cache_hit(
 +        self,
 +        prompt_token_ids: list[int],

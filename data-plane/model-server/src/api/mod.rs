@@ -34,7 +34,7 @@ use foretoken_model_protocol::{
 };
 
 #[derive(Deserialize)]
-struct TelemetryQuery {
+struct ObservationQuery {
     version: Option<u8>,
 }
 
@@ -283,14 +283,25 @@ async fn metrics(State(state): State<AppState>) -> Response {
     }
 }
 
-async fn metadata(State(state): State<AppState>) -> Json<RuntimeMetadataResponse> {
-    Json(state.metadata)
+/// Exposes KV allocation facts only to frontends requesting the extended metadata revision.
+async fn metadata(
+    State(state): State<AppState>,
+    Query(query): Query<ObservationQuery>,
+) -> Json<RuntimeMetadataResponse> {
+    let mut metadata = state.metadata;
+    if query.version == Some(foretoken_model_protocol::KV_ROUTING_METADATA_VERSION) {
+        metadata.version = foretoken_model_protocol::KV_ROUTING_METADATA_VERSION;
+    } else {
+        metadata.kv_block_size = None;
+        metadata.prefix_cache_enabled = None;
+    }
+    Json(metadata)
 }
 
 /// Returns legacy observations unless the frontend requests latency-moment telemetry.
 async fn telemetry(
     State(state): State<AppState>,
-    Query(query): Query<TelemetryQuery>,
+    Query(query): Query<ObservationQuery>,
 ) -> Json<TelemetryResponse> {
     Json(telemetry_response(
         &state,
