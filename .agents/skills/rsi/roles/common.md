@@ -29,7 +29,7 @@ For example, an Explorer who finds a potentially faster method can send the find
 
 Use messages for short findings, questions and coordination. Put long explanations, full evidence or anything several people need to read in a shared file, then send a brief summary and its exact path. Give the background once and describe later changes without copying the whole document into messages. The [records guide](../../../../rsi-playbooks/experiment-records.md#share-documents-and-code) explains where files live and who writes them. Notify everyone when a change affects the whole team, and alert the executor immediately if an ongoing experiment will produce invalid results.
 
-Observers gather evidence by reading work and session records rather than asking members for updates. They send their findings to the lead, who arranges any corrections; the team does not wait for the check to finish.
+Observers gather evidence by reading work and session records rather than asking members for updates. Their findings identify the existing owner of each correction; the lead arranges changes to scope, resources or assignments. The team continues while findings are delivered through the [Observer workflow](observer.md#return-useful-corrections-then-finish).
 
 While waiting for a reply, continue work that does not need that answer. If progress really is blocked, explain what is missing and who can provide it. Routine updates do not need replies, and completion notifications remove the need to keep asking for status. Transfers of GPUs or running jobs still need someone to accept them. The lead follows the shared records and steps in when direction, scope or resources need to change.
 
@@ -63,9 +63,11 @@ When a measurement finishes, continue ready work or stop unused serving processe
 
 Existing sweeps can run fixed workload groups and repetitions continuously. Task-owned remote sessions or an existing job manager preserve logs and exit status so jobs can be checked after a disconnect. When reading results, distinguish whether measurement finished, whether requests succeeded and whether the task's requirements were met.
 
-After each group of measurements, the Experimenter updates the records and resource state, sends the outcome and result links directly to the Worker and assigned reviewer, and continues already authorized work. The Worker interprets the measurements and advances the same research question. If priorities, budgets or comparison conditions need to change, the lead resolves that decision while unaffected work continues.
+The Experimenter owns a run through result delivery and resource release. The lead names the Worker, independent reviewer and report writer when assigning the comparison. As each run finishes, the Experimenter reads its outcome, makes the original results accessible at the agreed location and sends the same finding and links directly to all three recipients. This includes diagnostic controls saved outside a benchmark's `runs/` directory. See [complete the experiment notes](../../../../rsi-playbooks/experiment-records.md#complete-the-experiment-notes) for delivery contents and remote recovery.
 
-Experimenters maintain their iteration notes, and the lead assigns one writer to update the report. Summaries link to the original data so conclusions can be traced. Reviewed results remain useful while their inputs and conditions still apply. See the [experiment records guide](../../../../rsi-playbooks/experiment-records.md) for the record layout.
+The Worker interprets the result and continues the implementation question; the reviewer checks the claim; the writer updates the existing report with the measured result and any pending judgment. These stages can proceed together without a new lead assignment after every point. If a recipient is idle, use the harness's native follow-up that starts their next turn, or ask the lead to do so when only it has that capability. Sending a message or recording a queued step alone does not establish that the recipient resumed.
+
+The Experimenter or an explicitly accepting successor remains responsible for undelivered results. Record missing access and the person taking the next action in the existing iteration notes. The lead resolves changes to priorities, budgets, comparison conditions and retention while unaffected work continues. Reviewed results remain useful while their inputs and conditions still apply.
 
 ## Review claims independently
 

@@ -33,7 +33,7 @@ Compare throughput with actual request concurrency and timing. When request late
 
 GPU collection continues throughout the experiment. The Experimenter reuses [collectors](../SKILL.md#collect-gpu-usage) covering the assigned devices, with one collection owner chosen by the lead for each device set. Utilization is interpreted alongside build, measurement and waiting periods, and missing intervals are reported. When collection spans several experiments, it is handed over with the resources and stopped when no longer needed.
 
-As each evaluation finishes, record its actual outcome and resource state in the iteration notes. Send the outcome and original-result links to the Worker and assigned reviewer; notify the lead when a decision or intervention is needed. The lead chooses one author for the report, and other members send their contributions to that author. The [experiment records guide](../../../../rsi-playbooks/experiment-records.md) explains what to retain.
+As each evaluation finishes, complete the [result delivery](common.md#return-results-as-work-finishes) to the Worker, reviewer and report writer. Read diagnostic assertions and native quality results as well as command exits. When using remote scratch storage, preserve the results at the agreed location and confirm recipients can read them; large traces may stay remote with an accessible path. Keep any unfinished transfer with its run in the iteration notes.
 
 ## Continue with ready work
 
@@ -41,4 +41,4 @@ When GPUs are free, check the records for approaches ready to test. Ask the resp
 
 After an evaluation, run the next suitable experiment. If none is ready, stop idle serving processes, confirm exit and release the GPUs. Keep workspaces, model files and build caches needed for later work, following the task's cleanup arrangements. Record time spent building, measuring and waiting, along with any difficulties, and tell the person who can resolve them. If new results make a waiting experiment no longer worthwhile, raise that with the lead.
 
-On pause, deadline or handoff, the Experimenter stops or transfers owned jobs and collectors, confirms resource state and preserves results. Independent review and working-agent counts follow the team guidance.
+On pause, deadline or handoff, the Experimenter stops or transfers owned jobs and collectors, confirms resource state and preserves results. A successor first checks the recorded remote job and its outputs, including work that finished after an agent interruption, before deciding to restart or measure again. Independent review and working-agent counts follow the team guidance.

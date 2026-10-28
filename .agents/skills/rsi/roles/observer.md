@@ -15,6 +15,8 @@ The lead [creates new Observers](../SKILL.md#arrange-periodic-team-checks) at th
 
 The first check covers work since task start; later checks cover changes since the previous round and revisit its open findings. Reuse unchanged background evidence, reading earlier records when needed to judge the current period.
 
+Handoffs, summaries and previous reviews found in the work records are audit material, not inherited agent context. Use them to locate claims and check their sources. Reading such material does not invalidate a fresh check or require another Observer.
+
 ## Read the work without interrupting it
 
 Use project paths, timestamps, session IDs and parent/child relationships to identify the lead and member sessions. Follow the [session-reading workflow](../../../../rsi-playbooks/experiment-records.md#read-session-evidence), pairing tool inputs with results and opening the cited code, data and resource observations. Record the source locations.
@@ -102,4 +104,4 @@ Name each requirement and locate evidence by session time, file line, run or fie
 
 Link recurring findings to their first note. Compare the prior decision and expected result with actual changes, elapsed waiting and remaining dependencies. Keep the next action or decision with an owner until its outcome is verified or the lead explains a changed decision.
 
-Before delivery, reconcile the checklist IDs and members. Send the lead the key findings and note path, raising urgent issues promptly with evidence. The lead records actions and owners or reasons for declining suggestions. Finish the check; the team continues while the next fresh Observer checks follow-through.
+Before delivery, reconcile the checklist IDs and members. Send the lead the key findings and note path, raising urgent issues promptly with evidence. Link a concrete correction to its existing owner so the lead can route it without another investigation; use direct delivery when the assignment already permits it. The owner records the resulting change in the existing work record. The lead handles changes to priorities, resources and assignments, or explains why a suggestion is declined. Finish the check; the next fresh Observer checks the resulting evidence rather than treating a sent message as closure.

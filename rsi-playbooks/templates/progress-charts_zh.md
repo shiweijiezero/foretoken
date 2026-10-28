@@ -56,6 +56,17 @@ foretoken plot --progress results/my-experiment/figures/progress*.yaml
 
 失败尝试显示在独立底栏，`value` 设为 null，并移除 `checkpoint` 或设为 false。更正原先的无效结果时，按此调整数据并修改状态，重新绘图，在迭代笔记中链接更正依据。
 
+命令完成不等于 `valid`，应采用任务实际的可比性与质量判断。候选可能已有可用速度测量，但质量仍待审或未通过；在报告表中保留数值，测量条件可比时，也可用命名 reference 展示。Reference 不进入历史最佳曲线或里程碑。例如：
+
+```yaml
+references:
+  - label: 候选速度；质量待审
+    source: ../iterations/candidate/notes/analysis.md
+    points: [{x: 3, value: 119}]
+```
+
+审查确认失败后，记录 `incorrect` 尝试并在报告解释；reference 可以更新标注，继续保留观察到的速度。分数下降或决定不保留，并不自动表示未满足任务质量要求。硬件、负载或测量条件不同的数据分别对照，不放进同一条加速比曲线。
+
 ## 阅读与维护
 
 指标越大越好时，改善倍数为 `value / baseline`；越小越好时为 `baseline / value`。baseline 为 `1×`，倍数越大表示改善越大。
@@ -64,4 +75,4 @@ foretoken plot --progress results/my-experiment/figures/progress*.yaml
 
 搜索图展示全部有效值，以及从 baseline 起始的历史最佳阶梯线；当前保留版本由报告说明。
 
-恢复任务时沿用同一份数据和 baseline 原点，没有新测量的更新保留已有点。
+恢复任务时沿用同一份数据和 baseline 原点，保留早期已采用版本与失败尝试。仅更换会话或时间窗口不改变对照条件；后续对照复测用命名 reference 表示，没有新测量的更新保留已有点。

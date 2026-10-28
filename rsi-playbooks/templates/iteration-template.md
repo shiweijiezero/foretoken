@@ -27,7 +27,9 @@ Summarize the Worker's delivered changes, linking the checkout, revision or chan
 
 ## Measurements and interpretation
 
-Append a concise finding for each run, linking results under `../runs/<run>/` and the full analysis. State whether the hypothesis was supported and how failures or interruptions affect the conclusion. Keep workload and sample-size rationale, comparisons, and detailed explanations of the observed differences in the linked analysis.
+Append a concise finding for each run, linking its original results and full analysis. Include diagnostic controls outside `runs/` and the accessible remote location when applicable. Distinguish command completion, measured request outcomes, required correctness or quality checks and the current interpretation. For example: "The control finished with exit 0 and both requests completed; the saved output comparison differs, so the Worker is investigating reuse state." Link the evidence for each conclusion and name who receives the result for analysis, review and report updates.
+
+Keep workload and sample-size rationale, comparisons, and detailed explanations of the observed differences in the linked analysis.
 
 ## Time spent
 

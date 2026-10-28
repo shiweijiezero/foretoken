@@ -56,6 +56,17 @@ Reference values use the same metric and baseline; trajectory points share the c
 
 Failures appear in a separate lower strip. Set their `value: null` and omit `checkpoint` or set it to false. To invalidate an earlier result, make those changes and update its status, then regenerate the charts and link the correction in the iteration notes.
 
+A completed command does not establish `valid`: use the task's actual comparison and quality judgment. A candidate can have a usable speed measurement while quality review is pending or has failed. Preserve that value in the report table and, when its measurement conditions are comparable, in a named reference. References do not enter the best-so-far curve or milestones. For example:
+
+```yaml
+references:
+  - label: Candidate speed; quality review pending
+    source: ../iterations/candidate/notes/analysis.md
+    points: [{x: 3, value: 119}]
+```
+
+If review confirms a failure, record an `incorrect` attempt and explain it in the report; the reference may retain the observed speed with an updated label. A lower score or a decision not to retain a candidate does not automatically mean it failed the task's quality requirements. Different hardware, workloads or measurement conditions belong in separate comparisons, not a shared speedup curve.
+
 ## Read and maintain the charts
 
 Improvement is `value / baseline` for `higher`, or `baseline / value` for `lower`. The baseline is `1×`; larger ratios mean improvement.
@@ -64,4 +75,4 @@ Milestones connect the baseline with valid points marked `checkpoint: true`. Eac
 
 The search view plots all valid values and a best-so-far step curve starting at the baseline. The report identifies the currently retained version.
 
-On resumption, reuse the same data and baseline origin. Keep existing points when an update contains no new measurements.
+On resumption, reuse the same data and baseline origin, including earlier adopted versions and failed attempts. A new session or time window alone does not change comparison conditions. Keep later control measurements as named references and retain existing points when an update contains no new measurements.

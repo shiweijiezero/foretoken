@@ -10,7 +10,7 @@ State the retained approach, measured gains, quality trade-offs and unfinished v
 
 Place the comparison tables in this summary, one per task type, such as random requests, multi-turn conversations or answer quality. Start with `baseline`, then give each approach its own row. Use short names that describe the change, such as "Finer prefix matching" or "Larger token batches"; name combined changes explicitly. Link each name to its explanation below.
 
-Choose columns for the task's conditions and metrics, with units and improvement directions. State workload and concurrency beside the table. When hardware or measurement stages differ, group their rows clearly and give each group its own baseline; calculate changes only within comparable groups.
+Choose columns for the task's conditions and metrics, with units and improvement directions. State workload and concurrency beside the table. Retain the initial configuration as the task's baseline across sessions and time windows. When hardware, workload or measurement conditions change, group those rows with their applicable controls; calculate changes only within comparable groups. Label later control measurements and explain which one each percentage uses.
 
 ### Task type
 
@@ -22,6 +22,8 @@ Replace this heading and the metric columns with those of the actual task. The r
 | [Finer prefix matching](#finer-prefix-matching) | Measured value | Percentage change | Measured value | Percentage change |
 
 State the repeat count `n` and statistic used. Show a single value for one measurement; for repeats, include the mean and variability or link their detailed values. Keep regressions and use “—” for unmeasured or undefined entries, with a reason. Quality scores retain the evaluator's sample counts and error estimates. Source results follow the [experiment records guide](../experiment-records.md#analyze-results).
+
+Alongside the values, state whether each approach is retained, rejected or still under investigation and link the relevant interpretation. Separate ordinary quality evaluations from instrumented diagnostics and tool validation. Mention comparison differences where they affect a row, such as changed clients, background builds or output lengths.
 
 ## Optimization progress
 
