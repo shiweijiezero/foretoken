@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -130,8 +130,10 @@ class _InstallPlan:
 
 @dataclass(frozen=True)
 class _PreparedInstallation:
-    """Ready dependency outputs whose source artifacts remain borrowed from the command's ExitStack."""
+    """Ready dependencies, chart and publications borrowed from the command's ExitStack."""
 
+    chart: Path
+    publication_deadline: float | None
     source_images: SourceImages | None
     prometheus: PrometheusRef
     log_endpoint: str
@@ -187,29 +189,35 @@ class PlatformLifecycle:
         prepared = self._prepare_installation(
             command, plan, artifacts, execution, source_build_arguments,
         )
-        self._helm.install_platform(
-            release=plan.platform,
-            source_images=prepared.source_images,
-            values=command.values,
-            gateway=plan.gateway_config,
-            observability_labels=plan.monitoring.labels,
-            observability_prometheus=f"{prepared.prometheus.namespace}/{prepared.prometheus.name}",
-            grafana_anonymous_access=plan.monitoring.anonymous_access,
-            log_endpoint=prepared.log_endpoint,
-            log_storage_statefulset=prepared.log_storage_statefulset,
-            gpu_resource_name=plan.runtime.gpu_resource_override,
-            rdma_resource_names=plan.rdma.resource_names,
-            rdma_managed=plan.rdma.managed,
-            rdma_node_names=plan.rdma.node_names,
-            rdma_networks=self._rdma_networks,
-            gpu_nodes=plan.runtime.selection.nodes if plan.runtime.selection is not None else (),
-            download_proxy_url=prepared.download_proxy,
-            stored_values=plan.stored_values,
-            kubectl=self._kubectl,
-            application_files=self._application_files,
-            timeout=command.timeout,
-        )
-        self._finish_install(command, plan, prepared)
+        # Release publication has a native expiry; final selection must finish
+        # within that original budget even when dependency preparation is slower.
+        with (
+            self._kubectl.until(prepared.publication_deadline)
+            if prepared.publication_deadline is not None else nullcontext()
+        ):
+            self._helm.install_platform(
+                release=plan.platform,
+                chart=prepared.chart,
+                source_images=prepared.source_images,
+                values=command.values,
+                gateway=plan.gateway_config,
+                observability_labels=plan.monitoring.labels,
+                observability_prometheus=f"{prepared.prometheus.namespace}/{prepared.prometheus.name}",
+                grafana_anonymous_access=plan.monitoring.anonymous_access,
+                log_endpoint=prepared.log_endpoint,
+                log_storage_statefulset=prepared.log_storage_statefulset,
+                gpu_resource_name=plan.runtime.gpu_resource_override,
+                rdma_resource_names=plan.rdma.resource_names,
+                rdma_managed=plan.rdma.managed,
+                rdma_node_names=plan.rdma.node_names,
+                rdma_networks=self._rdma_networks,
+                gpu_nodes=plan.runtime.selection.nodes if plan.runtime.selection is not None else (),
+                download_proxy_url=prepared.download_proxy,
+                stored_values=plan.stored_values,
+                kubectl=self._kubectl,
+                timeout=command.timeout,
+            )
+            self._finish_install(command, plan, prepared)
 
     def _uninstall(self, command: UninstallCommand) -> None:
         """Fence new instances before draining existing ones and removing their platform dependencies."""
@@ -452,45 +460,59 @@ class PlatformLifecycle:
             self._kubectl.run(["create", "namespace", plan.platform.namespace])
         workers = ThreadPoolExecutor(max_workers=5)
         dependencies: Future[None] = Future()
-        source_artifacts = artifacts.enter_context(ExitStack())
+        application_artifacts = artifacts.enter_context(ExitStack())
 
         def prepare_network() -> None:
             """Prepare address allocation before the Gateway controller uses it."""
             self._load_balancer.apply(plan.load_balancer, command.timeout)
             self._gateway.apply_before_platform(plan.gateway, command.timeout)
 
-        def prepare_source() -> tuple[SourceImages | None, str]:
-            """Prepare downloads and source artifacts within the source worker's context stack."""
+        def prepare_applications() -> tuple[SourceImages | None, str, Path, float | None]:
+            """Keep the selected chart and publication alive through the final platform upgrade."""
             download_proxy = self._model_distribution.apply(
                 plan.model_distribution,
                 plan.runtime.selection.resource_name if plan.runtime.selection is not None else "",
                 command.timeout,
             )
-            if command.editable is None:
-                return None, download_proxy
+            source_mode = command.editable is not None
+            chart_source = (
+                str(Path(command.editable).expanduser().resolve() / "deploy/charts/foretoken")
+                if source_mode else self._helm.config.platform.source
+            )
+            chart = application_artifacts.enter_context(self._helm.prepared_chart(
+                chart_source, None if source_mode else self._helm.config.platform.version,
+            ))
             # Server-side chart rendering needs the Gateway and LWS APIs, while
-            # native compilation remains independent of monitoring readiness.
+            # application publication remains independent of monitoring readiness.
             network.result()
             leader_worker.result()
-            merged = (*((plan.stored_values,) if plan.stored_values is not None else ()), *plan.values)
-            rendered = self._helm.render_source_origin(
-                Path(command.editable).expanduser().resolve(), command.values, command.timeout,
+            rendered = self._helm.render_application_origin(
+                chart, command.values, command.timeout, source_mode=source_mode,
                 stored_values=plan.stored_values, download_proxy_url=download_proxy,
+                gpu_resource_name=plan.runtime.gpu_resource_override,
+                rdma_managed=plan.rdma.managed, rdma_node_names=plan.rdma.node_names,
             )
-            origin = self._application_files.prepare(rendered, command.timeout)
+            origin, publication_deadline = application_artifacts.enter_context(self._application_files.adopt(rendered, command.timeout))
+            if not source_mode:
+                return None, download_proxy, chart, publication_deadline
             assert origin is not None
+            merged = (*((plan.stored_values,) if plan.stored_values is not None else ()), *plan.values)
             context = prepare_source_images(
                 command, plan.platform.namespace, merged, plan.runtime.source_base_image,
                 origin=origin, build_metax_runtime=plan.runtime.build_metax,
                 runtime_backend=plan.runtime.selection.backend if plan.runtime.selection else "nvidia",
                 saved_arguments=source_build_arguments, before_delivery=dependencies.result, cancellation=execution,
             )
-            return source_artifacts.enter_context(context), download_proxy
+            images = application_artifacts.enter_context(context)
+            chart = application_artifacts.enter_context(self._helm.prepared_chart(
+                str(images.inputs / "deploy/charts/foretoken"), None,
+            ))
+            return images, download_proxy, chart, publication_deadline
 
         try:
             network = workers.submit(execution.run_stage, prepare_network)
             leader_worker = workers.submit(execution.run_stage, self._leader_worker.apply, plan.leader_worker, command.timeout)
-            source = workers.submit(execution.run_stage, prepare_source)
+            applications = workers.submit(execution.run_stage, prepare_applications)
             prometheus = workers.submit(execution.run_stage, self._monitoring.prepare_prometheus, plan.monitoring, command.timeout)
             # Default log charts use core APIs; retained customizations may need
             # monitoring APIs before their existing resources can be restored.
@@ -512,8 +534,8 @@ class PlatformLifecycle:
             leader_worker.result()
             _report_plan("LeaderWorkerSet", "Ready", plan.leader_worker.detail)
             dependencies.set_result(None)
-            images, download_proxy = source.result()
-            return _PreparedInstallation(images, selected_prometheus, log_endpoint, log_statefulset, download_proxy)
+            images, download_proxy, chart, publication_deadline = applications.result()
+            return _PreparedInstallation(chart, publication_deadline, images, selected_prometheus, log_endpoint, log_statefulset, download_proxy)
         except BaseException as error:
             if not dependencies.done():
                 dependencies.set_exception(error)

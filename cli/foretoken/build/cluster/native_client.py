@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Load the installed CLI's trusted node client independently of editable workload sources."""
+"""Load the installed CLI's trusted OCI client independently of editable workload sources."""
 
 from __future__ import annotations
 

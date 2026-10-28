@@ -31,7 +31,8 @@ from foretoken.arguments import InstallCommand
 from foretoken.build.cluster.builder import ClusterBuilder, registry_credentials
 from foretoken.build.cluster.compiler import APPLICATION_PARTS, CompilerWorkspace
 from foretoken.build.cluster.images import image_tools_image, node_image_store
-from foretoken.build.cluster.storage import ensure_build_volumes, local_build_nodes
+from foretoken.build.cluster.native_client import client_compiler_image, client_module
+from foretoken.build.cluster.storage import ensure_build_volumes, ensure_shared_build_cache, local_build_nodes
 from foretoken.build.inputs import (
     BuildInputs,
     build_sources,
@@ -636,13 +637,21 @@ class EditableDeployment:
             cache_builder = None
             if cache_images:
                 tools = image_tools_image(build["arguments"], build.get("registry_mirrors", {}))
+                client_cache = ensure_shared_build_cache(
+                    self.kubectl, namespace, origin.node, build["configuration"], builder.owner,
+                    role="node-client",
+                )
                 cache_builder = cache_resources.enter_context(ClusterBuilder(
                     self.kubectl, namespace, builder.claim, builder.mount, build["configuration"]["image"],
                     build["binding"], timeout, tools_image=tools, execution_claim=builder.execution_claim,
+                    client_cache_claim=client_cache, client_build_arguments=build["arguments"],
                     node=origin.node, pull_secrets=origin.pull_secrets,
                     registry_mirrors=build.get("registry_mirrors", {}), cancellation=builder.cancellation,
                     credentials=registry_credentials(
-                        [tools, build["configuration"]["image"], *cache_images.values()],
+                        [
+                            tools, build["configuration"]["image"], *cache_images.values(),
+                            client_compiler_image(client_module(), build["arguments"], build.get("registry_mirrors", {})),
+                        ],
                         registries=[build["arguments"].get("UV_IMAGE_REGISTRY", "")],
                     ),
                 ))

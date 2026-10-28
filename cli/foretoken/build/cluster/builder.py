@@ -62,8 +62,8 @@ class ClusterBuilder(AbstractContextManager):
         timeout: str,
         *,
         tools_image: str,
+        client_cache_claim: str,
         execution_claim: str = "",
-        client_cache_claim: str = "",
         client_build_arguments: dict[str, str] | None = None,
         node: str = "",
         containerd_socket: str = "",
@@ -97,8 +97,8 @@ class ClusterBuilder(AbstractContextManager):
         self.workspace = f"{self.execution_root}/workspace"
         self.client_cache_claim = client_cache_claim
         self.client_build_arguments = client_build_arguments or {}
-        self.client_module = client_module() if containerd_socket else {}
-        self.client_image = client_compiler_image(self.client_module, self.client_build_arguments, self.registry_mirrors) if containerd_socket else ""
+        self.client_module = client_module()
+        self.client_image = client_compiler_image(self.client_module, self.client_build_arguments, self.registry_mirrors)
         self.image_store = NodeImageStore(kubectl, namespace, self.name, binding)
         self.lease = ""
         self.platform = ""
@@ -185,15 +185,18 @@ class ClusterBuilder(AbstractContextManager):
             output = {"type": "oci", "attrs": {"name": image, "oci-mediatypes": "true", "tar": "false"}}
         else:
             output = {"type": "image", "attrs": {"name": image, "push": str(push).lower()}}
-        if self.containerd_socket and output_directory is None:
+        if self.containerd_socket or output_directory is not None:
             request = {
-                **self.image_store.client_request(self.lease, self.platform),
+                **(self.image_store.client_request(self.lease, self.platform) if output_directory is None else {"platform": self.platform}),
                 "buildkit_address": "unix://" + self.runtime_root + "/runtime/buildkit/buildkitd.sock",
                 "frontend_attrs": frontend, "inputs": inputs,
                 "local_dirs": {"context": self.workspace, "dockerfile": self.workspace},
                 "output": output, "metadata_file": metadata, "cache_imports": cache_imports,
             }
-            self.run([CLIENT_BINARY, "solve"], container="images", input_text=json.dumps(request), capture=capture)
+            self.run(
+                [CLIENT_BINARY, "solve"], container="builder" if output_directory is not None else "images",
+                input_text=json.dumps(request), capture=capture,
+            )
         else:
             args = [
                 "buildctl", "build", "--frontend", "dockerfile.v0",
@@ -342,18 +345,17 @@ class ClusterBuilder(AbstractContextManager):
             )
             self.cancellation.check()
             pod_uid = json.loads(created.stdout)["metadata"]["uid"]
-            if self.client_module:
-                self.kubectl.run(
-                    ["create", "-f", "-"],
-                    input_text=json.dumps({
-                        "apiVersion": "v1", "kind": "ConfigMap",
-                        "metadata": {
-                            "name": self.name, "namespace": self.namespace,
-                            "ownerReferences": [{"apiVersion": "v1", "kind": "Pod", "name": self.name, "uid": pod_uid}],
-                        },
-                        "data": self.client_module,
-                    }),
-                )
+            self.kubectl.run(
+                ["create", "-f", "-"],
+                input_text=json.dumps({
+                    "apiVersion": "v1", "kind": "ConfigMap",
+                    "metadata": {
+                        "name": self.name, "namespace": self.namespace,
+                        "ownerReferences": [{"apiVersion": "v1", "kind": "Pod", "name": self.name, "uid": pod_uid}],
+                    },
+                    "data": self.client_module,
+                }),
+            )
             if self.credentials:
                 self.kubectl.run(
                     ["create", "-f", "-"],
@@ -441,9 +443,7 @@ class ClusterBuilder(AbstractContextManager):
         if result.returncode:
             self.cancellation.check()
             detail = (result.stderr or result.stdout or "").strip()
-            if (container == "builder" and args[0] == "buildctl") or (
-                container == "images" and args[:2] == [CLIENT_BINARY, "solve"]
-            ):
+            if (container == "builder" and args[0] == "buildctl") or args[:2] == [CLIENT_BINARY, "solve"]:
                 # Daemon diagnostics can explain an otherwise bare exit code, but
                 # must not postpone a known build failure or replace its cause.
                 diagnostic_timeout = min(5.0, timeout_seconds(self.timeout))
@@ -740,53 +740,54 @@ fi
                 },
                 "volumeMounts": [{"name": "cache", "mountPath": self.mount}],
             })
+        # The installed CLI supplies the client for file exports and optional
+        # node operations. Editable workloads cannot change its code or compiler cache.
+        client_directory = str(Path(CLIENT_BINARY).parent)
+        client_source = "/opt/foretoken-build-client-source"
+        client_cache = "/var/cache/foretoken-build-client"
+        go_flags = "-mod=readonly -modcacherw"
+        if jobs := os.environ.get("BUILD_JOBS"):
+            go_flags += " -p=" + jobs
+        spec["volumes"] += [
+            {"name": "client-source", "configMap": {"name": self.name}},
+            {"name": "client-binary", "emptyDir": {}},
+            {"name": "client-cache", "persistentVolumeClaim": {"claimName": self.client_cache_claim}},
+        ]
+        spec["initContainers"].append({
+            "name": "build-client", "image": self.client_image,
+            "workingDir": client_source,
+            "terminationMessagePolicy": "FallbackToLogsOnError",
+            "command": [
+                "sh", "-ec",
+                (
+                    'mkdir -p "$TMPDIR"; go build -trimpath -o "$1" .; '
+                    'cp /etc/ssl/certs/ca-certificates.crt "$2/ca-certificates.crt"; rm -rf "$TMPDIR"'
+                ),
+                "compile", CLIENT_BINARY, client_directory,
+            ],
+            "env": [
+                {"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"},
+                {"name": "CGO_ENABLED", "value": "0"},
+                {"name": "GOTOOLCHAIN", "value": "local"},
+                {"name": "GOWORK", "value": "off"},
+                {"name": "GOFLAGS", "value": go_flags},
+                {"name": "GOCACHE", "value": client_cache + "/build"},
+                {"name": "GOMODCACHE", "value": client_cache + "/modules"},
+                {"name": "TMPDIR", "value": client_directory + "/tmp"},
+                *({"name": key, "value": value} for key, value in self.client_build_arguments.items() if key in {"GOPROXY", "GOSUMDB"}),
+            ],
+            "securityContext": {
+                "runAsUser": 0, "runAsGroup": 1000,
+                "allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]},
+            },
+            "volumeMounts": [
+                {"name": "client-source", "mountPath": client_source, "readOnly": True},
+                {"name": "client-binary", "mountPath": client_directory},
+                {"name": "client-cache", "mountPath": client_cache},
+            ],
+        })
+        container["volumeMounts"].append({"name": "client-binary", "mountPath": client_directory, "readOnly": True})
         if self.containerd_socket:
-            # The installed CLI supplies this client. Editable workloads cannot
-            # write its source, binary or compiler cache, or reach the node socket.
-            client_directory = str(Path(CLIENT_BINARY).parent)
-            client_source = "/opt/foretoken-build-client-source"
-            client_cache = "/var/cache/foretoken-build-client"
-            go_flags = "-mod=readonly -modcacherw"
-            if jobs := os.environ.get("BUILD_JOBS"):
-                go_flags += " -p=" + jobs
-            spec["volumes"] += [
-                {"name": "client-source", "configMap": {"name": self.name}},
-                {"name": "client-binary", "emptyDir": {}},
-                {"name": "client-cache", "persistentVolumeClaim": {"claimName": self.client_cache_claim}},
-            ]
-            spec["initContainers"].append({
-                "name": "build-client", "image": self.client_image,
-                "workingDir": client_source,
-                "terminationMessagePolicy": "FallbackToLogsOnError",
-                "command": [
-                    "sh", "-ec",
-                    (
-                        'mkdir -p "$TMPDIR"; go build -trimpath -o "$1" .; '
-                        'cp /etc/ssl/certs/ca-certificates.crt "$2/ca-certificates.crt"; rm -rf "$TMPDIR"'
-                    ),
-                    "compile", CLIENT_BINARY, client_directory,
-                ],
-                "env": [
-                    {"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"},
-                    {"name": "CGO_ENABLED", "value": "0"},
-                    {"name": "GOTOOLCHAIN", "value": "local"},
-                    {"name": "GOWORK", "value": "off"},
-                    {"name": "GOFLAGS", "value": go_flags},
-                    {"name": "GOCACHE", "value": client_cache + "/build"},
-                    {"name": "GOMODCACHE", "value": client_cache + "/modules"},
-                    {"name": "TMPDIR", "value": client_directory + "/tmp"},
-                    *({"name": key, "value": value} for key, value in self.client_build_arguments.items() if key in {"GOPROXY", "GOSUMDB"}),
-                ],
-                "securityContext": {
-                    "runAsUser": 0, "runAsGroup": 1000,
-                    "allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]},
-                },
-                "volumeMounts": [
-                    {"name": "client-source", "mountPath": client_source, "readOnly": True},
-                    {"name": "client-binary", "mountPath": client_directory},
-                    {"name": "client-cache", "mountPath": client_cache},
-                ],
-            })
             images, volumes = images_container_spec(self.tools_image, self.containerd_socket)
             images["securityContext"]["runAsUser"] = SOURCE_BUILD_UID
             # Native registry authentication needs a writable home inside this
@@ -859,8 +860,8 @@ fi
         if self.containerd_socket:
             self.image_store.release_leases()
             self.lease = self.name
-            machine = self.run(["uname", "-m"], capture=True).strip()
-            self.platform = "linux/" + {"x86_64": "amd64", "aarch64": "arm64"}[machine]
+        machine = self.run(["uname", "-m"], capture=True).strip()
+        self.platform = "linux/" + {"x86_64": "amd64", "aarch64": "arm64"}[machine]
         self.run([
             "sh", "-ec", 'rm -rf -- "$1/transfers" "$1/output" "$1/images" "$1/images.json"',
             "prepare", self.root,

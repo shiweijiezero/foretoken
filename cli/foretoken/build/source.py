@@ -522,7 +522,7 @@ def _prepare_workspaces(
             kubectl, namespace, node, prepared.compiler_configuration,
             {"apiVersion": "v1", "kind": "PersistentVolumeClaim", "name": origin.claim, "uid": origin.claim_uid},
             role="node-client",
-        ) if socket else ""
+        )
         builder = contexts.enter_context(ClusterBuilder(
             kubectl, namespace, claim, "/var/cache/foretoken", prepared.compiler_configuration["image"],
             settings["binding"], timeout,

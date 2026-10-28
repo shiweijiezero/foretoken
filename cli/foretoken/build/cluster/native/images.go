@@ -20,11 +20,11 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-// retainGraph holds selected platform content through the operation lease, exposing only those digests to BuildKit.
+// retainGraph leases the manifest graph selected by containerd and BuildKit, excluding unused index alternatives.
 func retainGraph(ctx context.Context, node *containerd.Client, descriptor ocispec.Descriptor, matcher platforms.MatchComparer) (map[digest.Digest]struct{}, error) {
 	leaseID, _ := leases.FromContext(ctx)
 	allowed := make(map[digest.Digest]struct{})
-	children := images.FilterPlatforms(images.ChildrenHandler(node.ContentStore()), matcher)
+	children := images.LimitManifests(images.FilterPlatforms(images.ChildrenHandler(node.ContentStore()), matcher), matcher, 1)
 	handler := images.HandlerFunc(func(ctx context.Context, current ocispec.Descriptor) ([]ocispec.Descriptor, error) {
 		if _, exists := allowed[current.Digest]; exists {
 			return nil, images.ErrSkipDesc

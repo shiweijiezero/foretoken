@@ -34,7 +34,6 @@ from foretoken.platform.types import PlatformGatewayConfig, ReleaseRef
 if TYPE_CHECKING:
     from foretoken.build.source import SourceImages
     from foretoken.platform.networking.rdma import RDMANetworkLifecycle
-    from foretoken.platform.storage.application_files import PlatformApplicationFiles
 
 
 class Helm(HelmClient):
@@ -44,6 +43,7 @@ class Helm(HelmClient):
         self,
         *,
         release: ReleaseRef,
+        chart: Path,
         source_images: SourceImages | None,
         values: tuple[str, ...],
         gateway: PlatformGatewayConfig,
@@ -61,20 +61,14 @@ class Helm(HelmClient):
         download_proxy_url: str,
         stored_values: dict[str, Any] | None,
         kubectl: Kubectl,
-        application_files: PlatformApplicationFiles,
         timeout: str,
     ) -> None:
         """Install resolved platform intent while storage owners retain bootstrap and publication lifetimes."""
         started = time.monotonic()
         logger.info("Installing platform release {}", release.display_name)
         source_mode = source_images is not None
-        chart = (
-            str(source_images.inputs / "deploy" / "charts" / "foretoken")
-            if source_images is not None else self.config.platform.source
-        )
-        chart_version = None if source_mode else self.config.platform.version
         args = self.upgrade_args(
-            release, chart, timeout,
+            release, str(chart), timeout,
             labels=((self.config.install_source_label, "source" if source_mode else "release"),),
         )
         if stored_values is not None:
@@ -116,69 +110,67 @@ class Helm(HelmClient):
         overrides = stored_values or {}
         for value in load_platform_values(values):
             overrides = merge_values(overrides, value)
-        with self.prepared_chart(chart, chart_version) as prepared:
-            args[3] = str(prepared)
-            self._set_platform_image_sources(args, overrides, source_mode, input_text)
-            rendered = self.render_chart(args, input_text=input_text)
-            configuration = next(
-                document for document in rendered
-                if document["kind"] == "ConfigMap"
-                and document["metadata"].get("labels", {}).get("foretoken.io/platform") == "configuration"
+        if source_mode:
+            self._set_platform_image_sources(args, overrides, True, input_text)
+        rendered = self.render_chart(args, input_text=input_text)
+        configuration = next(
+            document for document in rendered
+            if document["kind"] == "ConfigMap"
+            and document["metadata"].get("labels", {}).get("foretoken.io/platform") == "configuration"
+        )
+        if "deployment-template.json" not in configuration["data"]:
+            raise DeploymentError("The selected platform chart does not support deployment instances")
+        template = json.loads(configuration["data"]["deployment-template.json"])
+        defaults = json.loads(configuration["data"]["deploymentValues"])
+        allocation_names = rdma_resource_names or (
+            (defaults["rdma"]["resourceName"],) if defaults["rdma"]["resourceName"] else ()
+        )
+        network_nodes = (
+            tuple(node for node in gpu_nodes if node["metadata"]["name"] in rdma_node_names)
+            if rdma_managed else tuple(
+                node for node in gpu_nodes
+                if any(nodes_with_rdma_allocation((node,), name) for name in allocation_names)
             )
-            if "deployment-template.json" not in configuration["data"]:
-                raise DeploymentError("The selected platform chart does not support deployment instances")
-            template = json.loads(configuration["data"]["deployment-template.json"])
-            defaults = json.loads(configuration["data"]["deploymentValues"])
-            allocation_names = rdma_resource_names or (
-                (defaults["rdma"]["resourceName"],) if defaults["rdma"]["resourceName"] else ()
-            )
-            network_nodes = (
-                tuple(node for node in gpu_nodes if node["metadata"]["name"] in rdma_node_names)
-                if rdma_managed else tuple(
-                    node for node in gpu_nodes
-                    if any(nodes_with_rdma_allocation((node,), name) for name in allocation_names)
-                )
-            )
-            runtime_pod = next(
-                document["spec"]["template"]["spec"] for document in rendered
-                if document["kind"] == "Deployment"
-                and document["metadata"].get("labels", {}).get("app.kubernetes.io/name") == "foretoken-deployment-manager"
-            )
-            # Native inspection consumes the same application that Helm will install.
-            # Hold publication through inspection and final release selection.
-            with application_files.adopt(rendered, timeout):
-                networks, ipam_config, bindings = rdma_networks.prepare(
-                    release, network_nodes,
-                    defaults["applicationFiles"]["clientImage"], defaults["imagePullSecrets"], runtime_pod,
-                    (stored_values or {}).get("rdma", {}).get("preparedNetworks", []),
-                    overrides.get("rdma", {}).get("networks"), timeout,
-                    resource_names=allocation_names,
-                    resource_count=defaults["rdma"]["resourceCount"],
-                    bindings=defaults["rdma"]["bindings"],
-                    runtime_class_name=defaults["runtime"]["vllm"]["gpu"]["runtimeClassName"],
-                )
-                args.extend([
-                    "--set-json", "rdma.preparedBindings=" + json.dumps(bindings),
-                    "--set-json", "rdma.preparedNetworks=" + json.dumps(networks),
-                    "--set-string", "rdma.ipamConfigFile=" + ipam_config,
-                ])
-                default_claim = release.name + "-data"
-                directories = prepare_directory_bindings(
-                    kubectl, template["directories"],
-                    source_images.source_root if source_images is not None else Path.cwd(),
-                    default_claim, timeout,
-                )
-                args.extend(["--set-json", "workload.cache.directories=" + json.dumps(directories)])
-                if default_claim in directories:
-                    try:
-                        value_at(overrides, "workload.cache.claimName")
-                    except KeyError:
-                        args.extend(["--set-string", "workload.cache.claimName=" + default_claim])
-                self.run(args, input_text=input_text)
-                self.set_platform_retiring(
-                    kubectl, self.platform_configuration(), retiring=False,
-                    clear_source_build=not source_mode,
-                )
+        )
+        runtime_pod = next(
+            document["spec"]["template"]["spec"] for document in rendered
+            if document["kind"] == "Deployment"
+            and document["metadata"].get("labels", {}).get("app.kubernetes.io/name") == "foretoken-deployment-manager"
+        )
+        # The installation owner holds the prepared publication through native
+        # inspection and Helm's final application selection.
+        networks, ipam_config, bindings = rdma_networks.prepare(
+            release, network_nodes,
+            defaults["applicationFiles"]["clientImage"], defaults["imagePullSecrets"], runtime_pod,
+            (stored_values or {}).get("rdma", {}).get("preparedNetworks", []),
+            overrides.get("rdma", {}).get("networks"), timeout,
+            resource_names=allocation_names,
+            resource_count=defaults["rdma"]["resourceCount"],
+            bindings=defaults["rdma"]["bindings"],
+            runtime_class_name=defaults["runtime"]["vllm"]["gpu"]["runtimeClassName"],
+        )
+        args.extend([
+            "--set-json", "rdma.preparedBindings=" + json.dumps(bindings),
+            "--set-json", "rdma.preparedNetworks=" + json.dumps(networks),
+            "--set-string", "rdma.ipamConfigFile=" + ipam_config,
+        ])
+        default_claim = release.name + "-data"
+        directories = prepare_directory_bindings(
+            kubectl, template["directories"],
+            source_images.source_root if source_images is not None else Path.cwd(),
+            default_claim, timeout,
+        )
+        args.extend(["--set-json", "workload.cache.directories=" + json.dumps(directories)])
+        if default_claim in directories:
+            try:
+                value_at(overrides, "workload.cache.claimName")
+            except KeyError:
+                args.extend(["--set-string", "workload.cache.claimName=" + default_claim])
+        self.run(args, input_text=input_text)
+        self.set_platform_retiring(
+            kubectl, self.platform_configuration(), retiring=False,
+            clear_source_build=not source_mode,
+        )
         logger.info("Platform release {} ready in {:.1f}s", release.display_name, time.monotonic() - started)
 
     def platform_release(self) -> ReleaseRef:
@@ -223,12 +215,14 @@ class Helm(HelmClient):
             "--type=merge", "--output=json", "--patch", json.dumps(patch),
         ]).stdout)
 
-    def render_source_origin(
-        self, root: Path, values: tuple[str, ...], timeout: str,
-        *, stored_values: dict[str, Any] | None, download_proxy_url: str,
+    def render_application_origin(
+        self, chart: Path, values: tuple[str, ...], timeout: str,
+        *, source_mode: bool, stored_values: dict[str, Any] | None,
+        download_proxy_url: str, gpu_resource_name: str | None,
+        rdma_managed: bool, rdma_node_names: tuple[str, ...],
     ) -> tuple[dict[str, Any], ...]:
-        """Render bootstrap storage, leaving user values interpretation to the selected Helm chart."""
-        args = self.upgrade_args(self.platform_release(), str(root / "deploy/charts/foretoken"), timeout)
+        """Select images and render bootstrap storage from the installation's retained chart."""
+        args = self.upgrade_args(self.platform_release(), str(chart), timeout)
         merged = stored_values or {}
         for value in load_platform_values(values):
             merged = merge_values(merged, value)
@@ -238,14 +232,19 @@ class Helm(HelmClient):
         for path in values:
             args.extend(["--values", path])
         args.extend([
-            "--set", "development.enabled=true",
-            "--set-string", "observability.mode=disabled", "--set-string", "applicationFiles.releaseURL=",
+            "--set", "development.enabled=" + str(source_mode).lower(),
+            "--set", "frontend.enabled=false", "--set-string", "observability.mode=disabled",
+            "--set-string", "global.imageRegistry=",
+            "--set", "rdma.managed=" + str(rdma_managed).lower(),
+            "--set-json", "rdma.nodeNames=" + json.dumps(rdma_node_names),
         ])
+        if source_mode:
+            args.extend(["--set-string", "applicationFiles.releaseURL="])
+        if gpu_resource_name is not None:
+            args.extend(["--set-string", "runtime.vllm.gpu.resourceName=" + gpu_resource_name])
         self._add_download_proxy(args, download_proxy_url)
-        with self.prepared_chart(args[3], None) as chart:
-            args[3] = str(chart)
-            self._set_platform_image_sources(args, merged, True, input_text)
-            return self.render_chart(args, input_text=input_text)
+        self._set_platform_image_sources(args, merged, source_mode, input_text)
+        return self.render_chart(args, input_text=input_text)
 
     def stop_platform_tasks(self, kubectl: Kubectl, timeout: str) -> None:
         """Stop native maintenance and failed bootstrap jobs before retiring their files and storage."""
