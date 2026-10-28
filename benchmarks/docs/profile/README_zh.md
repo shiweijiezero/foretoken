@@ -9,6 +9,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 采集一段短负载的 CPU/GPU 执行过程，定位耗时与瓶颈。NVIDIA 和[沐曦 GPU](../../../docs/deployment/metax_zh.md) 均可使用 PyTorch Profiler，NVIDIA 另支持 Nsight Systems，沐曦另支持 mcTracer。
 
+已有采集结果仍能回答当前问题时，直接复用。需要新采集时，用 `--profile-duration` 限定窗口，并在剖析工具支持过滤时，只选择当前问题需要的事件、进程和 rank。
+
 采集结果保存在持久存储（RuntimeCache）中，快速开始示例已配置。更新平台后，先对已有模型服务执行 `foretoken deploy`，再开始采集。CLI 安装与 W&B 登录见[通用准备](../../README_zh.md#开始使用)。
 
 ## 同时运行 benchmark 和采集
@@ -98,7 +100,11 @@ foretoken perf examples/feature/profile/nsight --name nsight \
 
 ## 清理
 
-不再需要该部署及采集记录时清理：
+采集负责人停止记录并完成导出，随后分析和交付发现。分析记录保存命令、代码与工具版本、关键时间区间和 rank，以及原始文件位置。远端采集默认只向本地同步摘要、关键图和原件索引；分析或复查需要完整 trace 时再复制。
+
+分析和交付完成后，及时清理重复副本，以及已无后续用途的临时、不完整或大型 trace 文件。保留复核结论或调查未解问题所需的原始证据。清理范围限于本任务产物；用户数据、共享原件和其他任务文件须经其负责人同意后再删除。
+
+不再需要该部署时，执行：
 
 ```bash
 foretoken delete examples/quickstart/qwen3-0.6b

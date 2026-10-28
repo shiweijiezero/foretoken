@@ -35,7 +35,7 @@ When capturing:
 - Repeated inputs may hit the prefix cache. Choose separate workloads for cold prefill and cache reuse. Record generation settings and graph execution mode to explain differences.
 - Profiling also adds overhead, so collect only the events and time window needed for the question. Compare latency and throughput in separate runs with profiling and temporary instrumentation disabled, keeping workload, warmup and cache conditions the same. If diagnosis required disabling CUDA Graph or adding synchronization, restore the intended deployment settings first and label the diagnostic results separately.
 - Match multi-GPU data by process, rank, device, and the same unit of work, accounting for clock skew across nodes. Inspect compute/communication overlap and overlap between streams before judging the impact of a cost.
-- For large traces, inspect file size and an event overview first, then filter by interval, process, or operator. Preserve the original file and extract relevant statistics and slices through a viewer or query tool.
+- For large traces, inspect file size and an event overview first, then filter by interval, process, or operator. Keep the original during analysis and extract relevant statistics and slices through a viewer or query tool. After delivery, apply the [trace retention and cleanup guidance](../../../benchmarks/docs/profile/README.md#clean-up).
 
 ## Follow hotspots into the source
 

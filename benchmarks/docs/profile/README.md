@@ -9,6 +9,8 @@ English | [简体中文](README_zh.md) · [Evaluation and profiling](../../READM
 
 Record a short workload to inspect CPU/GPU execution and locate bottlenecks. Use PyTorch Profiler on NVIDIA or [MetaX GPUs](../../../docs/deployment/metax.md), Nsight Systems on NVIDIA, or mcTracer on MetaX.
 
+Reuse existing captures while they still answer the current question. For a new capture, bound the recording window with `--profile-duration` and select only the events, processes and ranks needed where the profiler supports filtering.
+
 Captures are saved in persistent RuntimeCache storage, already configured by the Quick Start. After updating the platform, run `foretoken deploy` for existing model services before capturing. CLI installation and W&B sign-in are covered by the [shared setup](../../README.md#get-started).
 
 ## Capture a benchmark workload
@@ -98,7 +100,11 @@ For external traffic, use `foretoken deploy examples/feature/profile/nsight --na
 
 ## Clean up
 
-When the deployment and capture records are no longer needed, clean up with:
+The capture owner stops recording and completes export, then analyzes and delivers the findings. Keep the commands, code and tool versions, relevant time ranges and ranks, and raw-file locations with the analysis. For remote captures, synchronize the summary, key figures and source index locally by default; copy complete traces only when analysis or review needs them.
+
+After analysis and delivery, promptly remove redundant copies and temporary, partial or large trace files that are no longer needed. Retain the raw evidence needed to check conclusions or investigate unresolved questions. Clean up only task-owned outputs; obtain the owner's agreement before removing user data, shared originals or another task's files.
+
+When the deployment is no longer needed, remove it with:
 
 ```bash
 foretoken delete examples/quickstart/qwen3-0.6b
