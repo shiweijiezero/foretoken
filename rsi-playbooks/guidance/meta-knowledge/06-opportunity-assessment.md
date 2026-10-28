@@ -13,7 +13,7 @@ Update changed entries at Observer checks. Reuse applicable evidence and unchang
 
 ## Start with a comparison
 
-Use one row per research question and candidate revision. Identify its workload, reference, current stage, source links and the owner's recorded estimate of remaining work. Missing estimates stay `U` (unknown); use `N/A` for an inapplicable dimension. The Observer reports missing decisions to the lead.
+Group measurements by research question; give a candidate its own row when its mechanism, gain or cost materially differs. Identify the workload, reference, candidate revision, current stage, source links and the owner's recorded estimate of remaining work. Missing estimates stay `U` (unknown); use `N/A` for an inapplicable dimension. The Observer reports missing decisions to the lead.
 
 For example, these synthetic estimates use one throughput workload, a common baseline, the same service-validation milestone and eight remaining wall hours. Other resource costs are assumed equal and within budget.
 
