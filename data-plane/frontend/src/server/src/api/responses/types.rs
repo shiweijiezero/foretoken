@@ -382,6 +382,8 @@ pub struct ResponseUsage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InputTokensDetails {
     pub cached_tokens: usize,
+    #[serde(default)]
+    pub cache_write_tokens: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

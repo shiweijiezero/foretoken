@@ -151,6 +151,8 @@ pub struct TokenOutput {
     pub token_ids: Vec<u32>,
     pub logprobs: Option<Logprobs>,
     pub cached_token_count: usize,
+    #[serde(default)]
+    pub cache_write_token_count: usize,
     pub finish_reason: Option<FinishReason>,
     pub kv_transfer_params: Option<serde_json::Value>,
     pub ec_transfer_params: Option<serde_json::Value>,
@@ -171,6 +173,7 @@ impl From<GenerateOutput> for TokenOutput {
             token_ids: output.token_ids,
             logprobs: output.logprobs,
             cached_token_count: output.cached_token_count,
+            cache_write_token_count: output.cache_write_token_count,
             finish_reason: output.finish_reason,
             kv_transfer_params: output.kv_transfer_params,
             ec_transfer_params: output.ec_transfer_params,

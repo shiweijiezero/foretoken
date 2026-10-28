@@ -724,6 +724,7 @@ pub(super) fn build_usage(usage: &vllm_llm::TokenUsage) -> ResponseUsage {
         input_tokens: usage.prompt_token_count,
         input_tokens_details: InputTokensDetails {
             cached_tokens: usage.cached_token_count,
+            cache_write_tokens: usage.cache_write_token_count,
         },
         output_tokens: usage.output_token_count,
         output_tokens_details: OutputTokensDetails {
