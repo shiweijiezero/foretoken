@@ -126,6 +126,8 @@ The Observer reports the period and task-to-date shares spent on environment wor
 
 Pareto dominance means no worse on every compared objective and strictly better on at least one. Use the raw gain vector and additional cost dimensions for the main opportunity comparison. The lead fixes the workload set, milestone scope and resource dimensions before comparing. F, E and I accompany the front as evidence annotations, rather than expanding it until every direction is non-dominated.
 
+A direction demonstrated to violate the task’s requirements stays in the assessment with its counterevidence, outside the currently feasible opportunity set. Unresolved feasibility stays unknown rather than being classified as a failure. Distinguish a repairable prototype defect from a disproven mechanism.
+
 Do not sum or multiply the ordinal scores into a priority, or interpret `G × F × E / cost` as expected return. A high-confidence small gain and a less certain large opportunity can both deserve consideration. Missing information remains visible outside any claimed fully comparable set.
 
 For bounded estimates, call A robustly dominant over B only when A's lower gain bound is at least B's upper gain bound for every required benefit, and A's upper cost bound is at most B's lower cost bound for every compared cost, with one strict inequality. This is relative to the stated assumptions, not a statistical guarantee. If the bound inequalities do not establish dominance, leave the relationship unresolved. Touching bounds can satisfy the comparison when another dimension is strictly better; unknown values or incompatible conditions cannot establish dominance. Coarse score ties do not imply equal raw values. Give the dominating row and dimensions when declaring dominance.
