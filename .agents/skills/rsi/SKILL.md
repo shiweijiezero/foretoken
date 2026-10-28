@@ -50,11 +50,11 @@ The lead maintains the requested roles as members finish stages, using native co
 
 ## Arrange periodic team checks
 
-Use the task's `Observer count` and `Observer check interval`. For example, `1` and `1h` means one new Observer each hour. If checks are enabled without an interval, the lead fills it in, then records the next check time and reminder in the [team records](../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records). Schedule that reminder at the check interval, anchored to the task's start time. It prompts the lead to create new Observers; member continuation uses native completion notifications and hooks rather than another recurring wake-up. Without a reminder tool, check the time using bounded waits and note that this works only while the session is active.
+Use the task's `Observer count` and `Observer check interval`; for example, `1` and `1h` create one new Observer each hour. If the interval is missing, the lead fills it in, records the reminder in the [team records](../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records), and anchors it to the task start. The reminder creates Observers; member continuation uses native completion hooks. Without a reminder tool, use bounded waits and record that the schedule runs only while the session is active.
 
 Follow the [Observer instructions](roles/observer.md) to create new agents without inherited history each round. Checks use ordinary agent slots, so make room in the schedule. Complete a round in batches if it exceeds available slots. If slots are full or the previous round is unfinished, record the delay and run it later without stacking rounds or interrupting experiments.
 
-On an Observer's completion notification, the lead records its actual start and completion, reads the report, and records each decision, owner and next observable outcome in the existing team records, including reasons for deferring or declining an action. Dispatch ready independent work before preparing summaries. Revisit priorities and remaining budget when a finding persists across checks. Check existing reminders and rounds before resuming a task. On pause, stop, deadline or completion, disable reminders and end active checks.
+On an Observer's completion notification, record its start and completion, read the report, record decisions, owners and next outcomes, and dispatch ready independent work. Revisit priorities when a finding persists. On pause, stop, deadline or completion, disable reminders and end active checks.
 
 ## Isolate candidate workspaces and execution
 
