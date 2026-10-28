@@ -213,6 +213,10 @@ pub async fn spawn_engine_attempt(
             managed_engine
                 .python_args
                 .push("--worker-cls=foretoken_mctracer.Worker".into());
+        } else if config.launch.profiling.engine == profiling::Engine::Pytorch {
+            managed_engine
+                .python_args
+                .push("--worker-extension-cls=foretoken_pytorch.WorkerExtension".into());
         }
     }
 

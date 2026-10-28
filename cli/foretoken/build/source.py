@@ -648,7 +648,7 @@ def _build_environments(
             dependency_arguments["INFERENCE_ENGINE_IMAGE"] = engine_image
         selected = environments.build(
             component, _COMPONENT_DOCKERFILES[component], target="environment", arguments=dependency_arguments,
-            input_prefixes=("data-plane/patches/vllm/", "data-plane/model-server/provider-requirements.txt", "deploy/mooncake/", "third_party/mooncake/") if component == "model-server" else (),
+            input_prefixes=("data-plane/patches/vllm/", "data-plane/model-server/provider-requirements.txt", "data-plane/model-server/profiling/", "deploy/mooncake/", "third_party/mooncake/") if component == "model-server" else (),
         )
         if selected["image"] != build.get("images", {}).get("environment-" + component):
             application_parts[component] = None

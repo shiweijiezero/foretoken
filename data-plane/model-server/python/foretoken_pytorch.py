@@ -16,17 +16,35 @@ class Capture(TorchProfilerWrapper):
     def __init__(self, config: Any, worker_name: str, local_rank: int, activities: list[str]) -> None:
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="profile-export")
         self._export: Future[None] | None = None
+        self._completed: Any = None
         self._finished = False
         self._export_error: str | None = None
         self.prefix = worker_name
         self.path = Path(config.torch_profiler_dir) / f"{worker_name}.pt.trace.json"
         super().__init__(config, worker_name, local_rank, activities, self._trace_ready)
 
+    def start(self) -> None:
+        """Keep a capture from restarting while its completed profile still owns export work."""
+        if self._completed is not None or self._export is not None or self._finished:
+            raise RuntimeError("The capture already owns a completed profile")
+        super().start()
+
     def _trace_ready(self, profile: Any) -> None:
-        """Transfer the completed native profile to this capture's retained export job."""
-        if self._export is not None or self._finished:
+        """Retain the result while the native wrapper finishes its stop and optional summaries."""
+        if self._completed is not None or self._export is not None or self._finished:
             raise RuntimeError("A capture must produce exactly one completed trace")
-        self._export = self._pool.submit(self._write_trace, profile.profiler.kineto_results)
+        self._completed = profile.profiler.kineto_results
+
+    def stop(self) -> None:
+        """Confirm the native stop before exporting its completed result on the owned worker."""
+        super().stop()
+        self._start_export()
+
+    def _start_export(self) -> None:
+        """Transfer the completed result only after the entire native stop has returned."""
+        if not self._running and self._completed is not None:
+            self._export = self._pool.submit(self._write_trace, self._completed)
+            self._completed = None
 
     def _write_trace(self, result: Any) -> None:
         """Use Kineto's exact writer with the GIL released, retaining its original format."""
@@ -44,7 +62,7 @@ class Capture(TorchProfilerWrapper):
         if self._export is not None and self._export.done():
             try:
                 self._export.result()
-            except Exception as error:
+            except (OSError, RuntimeError) as error:
                 self._export_error = str(error)
             self._export = None
             self._finished = True
@@ -60,6 +78,7 @@ class Capture(TorchProfilerWrapper):
     def shutdown(self) -> None:
         """Stop recording and join the owned exporter before the worker can exit."""
         super().shutdown()
+        self._start_export()
         self._pool.shutdown(wait=True)
         self.status()
 

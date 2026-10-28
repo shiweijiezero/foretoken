@@ -284,7 +284,7 @@ impl Leader {
         let mut server = (!matches!(stop, Stop::Server(_))).then(|| tokio::spawn(self.server));
         let deadline = Instant::now() + self.config.launch.drain_timeout();
         // Preparing diagnostics alone must not force-stop requests; only an active native capture does.
-        let mut engine_stopped = matches!(stop, Stop::Engine(_))
+        let mut engine_stopped = matches!(stop, Stop::Engine(_) | Stop::Profiling(_))
             || self
                 .profiler
                 .as_ref()
@@ -293,6 +293,24 @@ impl Leader {
             stop_failed_engine(&self.engine, &self.backend, &self.health, deadline).await?;
             if let Some(profiler) = &mut self.profiler {
                 profiler.engine_stopped("runtime terminated").await;
+            }
+        }
+        if !engine_stopped && let Some(profiler) = &mut self.profiler {
+            match tokio::time::timeout_at(deadline.into(), profiler.finish_stopped_export()).await {
+                Ok(Ok(())) => {}
+                result => {
+                    let reason = match result {
+                        Ok(Err(error)) => error,
+                        Err(_) => "profile export exceeded the runtime drain deadline".into(),
+                        Ok(Ok(())) => unreachable!(),
+                    };
+                    if matches!(stop, Stop::Signal) {
+                        *stop = Stop::Profiling(reason.clone());
+                    }
+                    stop_failed_engine(&self.engine, &self.backend, &self.health, deadline).await?;
+                    profiler.engine_stopped(&reason).await;
+                    engine_stopped = true;
+                }
             }
         }
         // Separate utility polling lets client shutdown wake queries and release their read guards.

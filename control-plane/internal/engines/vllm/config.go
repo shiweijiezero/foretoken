@@ -418,6 +418,9 @@ func compileEngineArgs(template inferencev1alpha1.NormalizedPoolTemplate) (infer
 	}
 	if template.RuntimeCache != nil {
 		reserved["profiler-config"] = "Foretoken profiling owns capture configuration and output storage"
+		if template.Profiling == nil || template.Profiling.Engine == "pytorch" {
+			reserved["worker-extension-cls"] = "PyTorch profiling supplies the recording and export utilities"
+		}
 	}
 	if template.Profiling != nil && template.Profiling.Engine == "mctracer" {
 		reserved["worker-cls"] = "mcTracer profiling supplies the instrumented worker"

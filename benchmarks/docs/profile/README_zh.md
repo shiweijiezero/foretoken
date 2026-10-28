@@ -23,6 +23,8 @@ foretoken perf examples/quickstart/qwen3-0.6b \
 
 Benchmark 采集支持生成式、轨迹回放、多轮和多数据集 HTTP 负载，也支持 SLO 探测和 HTTP 参数扫描。每个扫描点和重复运行都会在该运行目录保存自己的 `profile.json`。通过 Foretoken Kustomize 目录指定需要采集的服务。
 
+PyTorch 先停止录制，再导出已完成的 trace。命令会等待导出和保存结束；导出错误会将本次采集标为失败。
+
 ## 查看结果
 
 在本地电脑使用目标集群的 kubeconfig 执行：
