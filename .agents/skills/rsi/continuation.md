@@ -37,9 +37,11 @@ python -I .agents/skills/rsi/scripts/continuation.py queue \
 
 Use the member's native ID returned by the harness. If Codex returns only a task name, the member can include its own `CODEX_THREAD_ID` in its first progress update. Keep `RSI_SESSION` set to the lead's ID when registering that member. Claude teammates may use their explicit teammate name. Observers and one-time review agents remain unregistered and end normally.
 
-At `SubagentStop`, the hook consumes the registered step and asks the same member to continue. Claude's `TeammateIdle` uses the same pending work. A step is delivered once; another stop does not repeat it. When a registered member finishes without another step, the lead receives one reminder at its next `Stop` to check role targets and arrange work through the native agent tools.
+At `SubagentStop`, the hook consumes the registered step and asks the same member to continue. Claude's `TeammateIdle` uses the same pending work. A step is delivered once; another stop does not repeat it.
 
-Use `status` with the same harness and root session to inspect pending steps. `queue` does not start or resume an agent. Give an idle member its current assignment through the harness's native follow-up tool; queue only a different step to run afterward.
+When a member finishes without a queued step, the lead receives a reminder after its next tool returns (`PostToolUse`), or at `Stop` if the turn ends first. Completions received before that boundary share one reminder. The lead reads the delivered evidence, arranges the next useful assignment and updates existing records. An Observer ends normally; its completion prompts the lead to record the check and act on its findings.
+
+Use `status` with the same harness and root session to inspect pending steps and the last recorded decisions. These do not mirror native activity: a member resumed through the harness may still have an earlier `waiting` decision. Its next completion still notifies the lead. `queue` does not start or resume an agent. Give an idle member its current assignment through the harness's native follow-up tool; queue only a different step to run afterward.
 
 ## Wait, pause or finish
 

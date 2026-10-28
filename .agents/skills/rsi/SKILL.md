@@ -18,7 +18,7 @@ Before starting, every role [learns how Foretoken works](roles/common.md#learn-t
 
 The team starts experiments only when the user requests execution or resumption. A new task records its start and deadline; a resumed task first checks existing jobs and results and keeps the original time budget. A supplied configuration is a starting point that can evolve with evidence. If none is supplied, the team records an initial approach for comparison. The team builds on existing findings and continues until the task's end conditions are met.
 
-Activate this root session's [continuation binding](continuation.md#enable-the-task) after establishing the task. Project hooks then act only on this RSI session and its registered members. If the harness has not loaded or trusted them, report that limitation and handle native completion notifications directly.
+Activate this root session's [continuation binding](continuation.md#enable-the-task) after establishing the task. Project hooks then act only on this RSI session; queued member continuation requires explicit registration. If the harness has not loaded or trusted them, report that limitation and handle native completion notifications directly.
 
 Start research and implementation alongside environment preparation. The Experimenter prepares the runtime and initial measurements, Explorers search and analyze sources, and Workers develop key changes and run available local checks. While the environment is unavailable, prioritize implementation and exploration that can proceed independently; complete environment-dependent validation when it is ready.
 
@@ -50,11 +50,11 @@ The lead maintains the requested roles as members finish stages, using native co
 
 ## Arrange periodic team checks
 
-Use the task's `Observer count` and `Observer check interval`. For example, `1` and `1h` means one new Observer each hour. If checks are enabled without an interval, the lead fills it in, then records the next check time and reminder in the [team records](../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records). The reminder goes to the lead, which creates the new agents. Without a reminder tool, check the time using bounded waits and note that this works only while the session is active.
+Use the task's `Observer count` and `Observer check interval`. For example, `1` and `1h` means one new Observer each hour. If checks are enabled without an interval, the lead fills it in, then records the next check time and reminder in the [team records](../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records). Schedule that reminder at the check interval, anchored to the task's start time. It prompts the lead to create new Observers; member continuation uses native completion notifications and hooks rather than another recurring wake-up. Without a reminder tool, check the time using bounded waits and note that this works only while the session is active.
 
 Follow the [Observer instructions](roles/observer.md) to create new agents without inherited history each round. Checks use ordinary agent slots, so make room in the schedule. Complete a round in batches if it exceeds available slots. If slots are full or the previous round is unfinished, record the delay and run it later without stacking rounds or interrupting experiments.
 
-The lead reads the report and records each decision, owner and next observable outcome in the existing team records, including reasons for deferring or declining an action. Revisit priorities and remaining budget when a finding persists across checks. Check existing reminders and rounds before resuming a task. On pause, stop, deadline or completion, disable reminders and end active checks.
+On an Observer's completion notification, the lead records its actual start and completion, reads the report, and records each decision, owner and next observable outcome in the existing team records, including reasons for deferring or declining an action. Dispatch ready independent work before preparing summaries. Revisit priorities and remaining budget when a finding persists across checks. Check existing reminders and rounds before resuming a task. On pause, stop, deadline or completion, disable reminders and end active checks.
 
 ## Isolate candidate workspaces and execution
 

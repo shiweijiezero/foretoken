@@ -37,9 +37,11 @@ python -I .agents/skills/rsi/scripts/continuation.py queue \
 
 使用运行环境返回的成员原生 ID。如果 Codex 只返回任务名，成员可在首次进度更新中附上自己的 `CODEX_THREAD_ID`。登记该成员时，`RSI_SESSION` 仍使用主 Agent 的 ID。Claude 队友也可使用明确的 teammate name。Observer 和一次性审查成员不登记，完成后正常结束。
 
-`SubagentStop` 发生时，hook 取出已登记的下一步，让同一成员继续；Claude 的 `TeammateIdle` 使用同一份待办。每条指令只交付一次，之后结束时不会重复。已登记的成员完成后没有下一步时，主 Agent 在下一次 `Stop` 收到一次提醒，核对角色目标并通过原生工具接续工作。
+`SubagentStop` 发生时，hook 取出已登记的下一步，让同一成员继续；Claude 的 `TeammateIdle` 使用同一份待办。每条指令只交付一次，之后结束时不会重复。
 
-使用相同的 harness 和主会话 ID 调用 `status`，可查看尚待交付的指令。`queue` 不会启动或恢复 Agent。空闲成员的当前任务应通过原生 follow-up 工具交付，只有之后的另一项工作才交给 `queue`。
+成员完成后没有待交付步骤时，主 Agent 在下一次工具返回（`PostToolUse`）后收到提醒；若先结束回合，则由 `Stop` 提醒。在此之前收到的多个完成事件合并为一次提醒。主 Agent 读取交付证据、安排下一项有价值的工作，并更新已有记录。Observer 正常结束，其完成事件提醒主 Agent 登记巡查并处理发现。
+
+使用相同的 harness 和主会话 ID 调用 `status`，可查看尚待交付的指令和上次登记的决定。这些不代表原生活动状态：通过运行环境恢复的成员可能仍留有先前的 `waiting` 决定，其下一次完成仍会通知主 Agent。`queue` 不会启动或恢复 Agent。空闲成员的当前任务应通过原生 follow-up 工具交付，只有之后的另一项工作才交给 `queue`。
 
 ## 等待、暂停与结束
 

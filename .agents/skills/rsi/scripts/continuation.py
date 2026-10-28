@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Continue explicitly assigned RSI work at native agent stop events."""
+"""Continue RSI assignments and deliver pending decisions at native tool boundaries."""
 
 from __future__ import annotations
 
@@ -158,13 +158,41 @@ class Continuation:
             )
 
     def status(self, harness: str, session: str) -> dict[str, Any]:
-        """Describe this task's hook state without interpreting native agent activity."""
+        """Return the last continuation decisions, not a mirror of native agent activity."""
         task = dict(self.session(harness, session))
         task["members"] = [dict(row) for row in self.db.execute(
             "SELECT agent,role,state,next_step,reason FROM members WHERE harness=? AND session=? ORDER BY role,agent",
             (harness, session),
         )]
         return task
+
+    def review(self, task: sqlite3.Row, event_name: str) -> dict[str, Any]:
+        """Deliver pending completion decisions once to the lead without replacing tool results."""
+        identity = (task["harness"], task["session"])
+        self.db.execute(
+            "UPDATE sessions SET review_pending=0 WHERE harness=? AND session=?", identity
+        )
+        members = self.db.execute(
+            "SELECT agent,role,state,next_step FROM members WHERE harness=? AND session=? AND state!='working'",
+            identity,
+        ).fetchall()
+        detail = "; ".join(f"{row['agent']} ({row['role']}): {row['state']}" +
+                           (f"; queued work: {row['next_step']}" if row['next_step'] else "") for row in members)
+        message = (
+            f"Process the new RSI member delivery or dependency for {task['task']}. "
+            "Read the native completion notice and its evidence. For an unfinished responsibility, "
+            "give the owner its next substantive question through the native follow-up tool, "
+            "or record the actual missing result and resume condition. "
+            "Keep exploration assigned when a member moves into implementation or review. "
+            "Record an Observer's actual completion, findings, action owners and next check time; "
+            "update the existing report when results or decisions change. "
+            "Use native activity for role counts; bindings describe previous decisions, not current activity."
+        )
+        if detail:
+            message += f" Last recorded member decisions: {detail}."
+        if event_name == "PostToolUse":
+            return {"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": message}}
+        return {"decision": "block", "reason": message}
 
     def hook(self, harness: str, event: dict[str, Any]) -> dict[str, Any]:
         """Continue pending work once, or leave ordinary chats and released tasks untouched."""
@@ -197,10 +225,8 @@ class Continuation:
                     "SELECT * FROM members WHERE harness=? AND session=? AND agent=?",
                     (*identity, event["teammate_name"]),
                 ).fetchone()
-            if member is None or member["state"] != "working":
-                return {}
-            agent = member["agent"]
-            if member["next_step"] and not event.get("stop_hook_active"):
+            if member is not None and member["state"] == "working" and member["next_step"] and not event.get("stop_hook_active"):
+                agent = member["agent"]
                 self.db.execute(
                     "UPDATE members SET next_step=NULL WHERE harness=? AND session=? AND agent=?",
                     (*identity, agent),
@@ -212,33 +238,19 @@ class Continuation:
                     "If this step genuinely depends on unavailable results, release your binding as waiting "
                     "with the missing evidence and resume condition."
                 )}
-            self.db.execute(
-                "UPDATE members SET state='needs_assignment' WHERE harness=? AND session=? AND agent=?",
-                (*identity, agent),
-            )
+            if member is not None and member["state"] == "working":
+                self.db.execute(
+                    "UPDATE members SET state='needs_assignment' WHERE harness=? AND session=? AND agent=?",
+                    (*identity, member["agent"]),
+                )
+            # Native follow-up can resume a waiting member without changing its last binding decision.
+            # Unregistered Observers also deliver results, but never receive queued continuation.
             self.db.execute(
                 "UPDATE sessions SET review_pending=1 WHERE harness=? AND session=?", identity
             )
-        elif kind == "Stop" and task["review_pending"] and not event.get("stop_hook_active"):
-            self.db.execute(
-                "UPDATE sessions SET review_pending=0 WHERE harness=? AND session=?", identity
-            )
-            members = self.db.execute(
-                "SELECT agent,role,state,reason,next_step FROM members WHERE harness=? AND session=? AND state!='working'",
-                identity,
-            ).fetchall()
-            if not members:
-                return {}
-            detail = "; ".join(f"{row['agent']} ({row['role']}): {row['state']}" +
-                               (f" — {row['reason']}" if row['reason'] else "") +
-                               (f"; queued work: {row['next_step']}" if row['next_step'] else "") for row in members)
-            return {"decision": "block", "reason": (
-                f"Before ending this RSI turn, reconcile member assignments for {task['task']}. "
-                f"Members awaiting a decision: {detail}. "
-                "Use native agent state and the task's role targets to resume useful work, "
-                "or record the real dependency and the decision to wait or end the direction. "
-                "Update the existing task records; do not create work merely to fill slots."
-            )}
+        elif kind in {"PostToolUse", "Stop"} and task["review_pending"] and not event.get("agent_id"):
+            if kind == "PostToolUse" or not event.get("stop_hook_active"):
+                return self.review(task, kind)
         return {}
 
 
