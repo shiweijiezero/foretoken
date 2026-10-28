@@ -23,8 +23,6 @@ foretoken perf examples/quickstart/qwen3-0.6b \
 
 Benchmark capture supports generated, trace-replay, multi-turn, and multi-dataset HTTP workloads, including SLO probes and HTTP parameter sweeps. Each sweep point and repetition stores its capture metadata in that point's `profile.json`. Pass a Foretoken Kustomize directory to select the service to capture.
 
-PyTorch stops recording before exporting the completed trace. The command waits for export and publication; an export error marks the capture as failed.
-
 ## Inspect results
 
 Run on your local computer with a kubeconfig for the target cluster:
