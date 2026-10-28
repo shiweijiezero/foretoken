@@ -552,7 +552,11 @@ impl Supervisor {
                 }));
             }
             let result = self.export.as_mut().expect("native export exists").await;
-            self.export_result = Some(result.map_err(|error| error.to_string())??);
+            self.export_result = Some(match result {
+                Ok(Ok(result)) => result,
+                Ok(Err(error)) => ExportResult::Failed(error),
+                Err(error) => ExportResult::Failed(error.to_string()),
+            });
             self.export = None;
         }
         let mut record = self
