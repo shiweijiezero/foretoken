@@ -46,13 +46,15 @@
              return
  
          self._active_iteration_count += 1
-@@ -193,7 +205,8 @@
+@@ -193,7 +205,9 @@
          """Ensure profiler is stopped when shutting down."""
          logger.info_once("Shutting down profiler")
-         if self._running:
+-        if self._running:
 -            self.stop()
-+            self._call_stop()
-+        self._active = False
++        with self._lifecycle_lock:
++            if self._running:
++                self._call_stop()
++            self._active = False
  
      @property
      def has_cuda_graph_session(self) -> bool:
