@@ -14,17 +14,17 @@
 Explorer 数量：2
 Worker 数量：4
 Experimenter 数量：3
-Observer 数量：1
-Observer 巡查间隔：1h
-Codex 模型：Explorer = gpt-6-astra/high；Worker、Experimenter、Observer = gpt-6.1-sol/high
-Claude 模型：Explorer = Fable/Opus/high；Worker、Experimenter、Observer = sonnet/high
+Evaluator 数量：1
+Evaluator 巡查间隔：1h
+Codex 模型：Explorer = gpt-6-astra/high；Worker、Experimenter、Evaluator = gpt-6.1-sol/high
+Claude 模型：Explorer = Fable/Opus/high；Worker、Experimenter、Evaluator = sonnet/high
 最大并行实验数：最多 3 个双卡服务候选；更小规模的局部实验共享六卡预算
 并行安排：先为平台服务、构建和评测客户端预留资源，再按各组实际资源请求安排实验，并记录并行度
 迭代负载：默认只测 random，并发 1 和 16；每个测量点完成后立即分析，不等整组结束
 扩展验证：StudyChat 用于多轮相关假设和最终保留方案，复用已有同条件对照；质量评测按需安排
 精度评测：针对可能影响回答质量的改动按需执行 foretoken eval，优先评测准备保留的候选方案；已有结果的适用条件未变时复用结果，避免每次性能测量后都重复评分。
 可改动范围：在上述精度与资源约束内，可以修改各层的实现与配置
-每轮测量时间预算：perf／eval 测量默认 10 分钟，以加快迭代；Agent 根据实际负载调整测量预算和请求数，记录调整原因与实际耗时
+每轮测量时间预算：默认预留 10 分钟，按足以判断问题的样本安排测量，完成即分析；按实际负载调整预算与请求数，记录依据和耗时
 工作时间：从开始执行任务计时，总预算 24 小时
 预期／结束条件：持续提高吞吐、降低 TPOT，不设固定指标阈值。
   持续研究、实现和验证，包括参数调整与源码改进。研究问题已有答案且进一步投入价值有限时，可以结束；时间用尽或用户要求停止时结束。
@@ -65,7 +65,7 @@ foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-nvidia --dataset ran
   --min-prompt-length 128 --max-prompt-length 4096 \
   --min-output-length 128 --max-output-length 512 \
   --max-concurrency "$concurrency" --num-prompts 80 --warmup-requests 4 \
-  --random-seed 0 --temperature 0 --output experiment,raw,plot,wandb \
+  --random-seed 0 --temperature 0 --output experiment,raw,wandb \
   --output-dir results/qwen3.5-35b-a3b-nvidia --iteration baseline
 
 ```

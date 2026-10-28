@@ -54,7 +54,7 @@ results/decode/parallelism/
 │   └── progress-search.png
 ├── team/                      # Agent-maintained team and observation notes
 │   ├── README.md              # Task, reminders and follow-up decisions
-│   └── observations/          # One dated note per Observer check
+│   └── observations/          # One dated note per Evaluator check
 └── iterations/tp2/
     ├── notes/
     │   ├── iteration.md       # Summaries, document links and decisions
@@ -75,9 +75,9 @@ Records are saved on the machine running the evaluation. Relative paths start fr
 
 ### Share documents and code
 
-Store each approach's complete proposals, plans and analyses in `<output-dir>/iterations/<name>/notes/`. For example, `plan.md` explains the problem and evidence, the proposed approach and alternatives, key trade-offs, and the implementation and validation plan; `analysis.md` explains the measured results. Members can begin these documents before measurement and reuse the same name with `--iteration` when running experiments.
+Keep each approach's question, hypothesis, results and decisions in `<output-dir>/iterations/<name>/notes/iteration.md`. A short experiment needs only this note and links to its original results. Reuse the approach name with `--iteration` when running follow-up measurements.
 
-Use a summary table in `iteration.md` to introduce each topic and link its full document. Keep dated reviews and decisions below the table. `report.md` is the overall entry point: it links the iteration notes and summarizes goals, comparisons and findings across iterations.
+Split out a longer proposal, analysis or independently authored review only when it needs its own document, then link it from `iteration.md`. Keep dated findings and decisions in the note. `report.md` summarizes goals, comparisons and conclusions across approaches and links these records.
 
 The lead provides all members with a readable experiment directory, its host and absolute path. Use that absolute `--output-dir` across checkouts sharing a filesystem, with `--iteration` distinguishing candidates. For records on hosts without shared storage, link their actual locations and access instructions from the report.
 
@@ -91,13 +91,13 @@ Supporting research, scripts, preparation logs and cleanup records also belong u
 
 ## Keep team and session records
 
-The lead keeps the check schedule in `<output-dir>/team/README.md` and links each Observer note under `team/observations/`. Existing task records hold action owners, decisions and expected results. Keep unresolved findings linked to their first note, update their progress there, and have the report link to this current state. Each observation preserves the evidence and judgment from that check.
+The lead keeps the check schedule in `<output-dir>/team/README.md` and links each Evaluator note under `team/observations/`. Existing task records hold action owners, decisions and expected results. Keep unresolved findings linked to their first note, update their progress there, and have the report link to this current state. Each observation preserves the evidence and judgment from that check.
 
 Task records describe intent, ownership and decisions. Read actual agent activity from the native harness, hook bindings from continuation status, and jobs from their execution owner. When a report needs a snapshot, include its observation time and source. Avoid maintaining another live-state copy in each task, member and report file. An action closes when its owner links the resulting change or explains the decision to stop, not merely when a follow-up message was sent.
 
 ### Read session evidence
 
-Start from the task and experiment directory to find the lead and member sessions. Use working directories, times, session IDs and parent/child relationships to identify the relevant records. The Observer finds these itself and reads them without asking members to report progress.
+Start from the task and experiment directory to find the lead and member sessions. Use working directories, times, session IDs and parent/child relationships to identify the relevant records. The Evaluator finds these itself and reads them without asking members to report progress.
 
 Use a read-only history interface with full items and tool output when available: [Codex thread history](https://learn.chatgpt.com/docs/app-server) or [Claude session interfaces](https://code.claude.com/docs/en/agent-sdk/sessions). Original files are commonly stored in:
 

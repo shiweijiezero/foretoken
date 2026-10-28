@@ -54,7 +54,7 @@ results/decode/parallelism/
 │   └── progress-search.png
 ├── team/                      # Agent 维护的团队与巡查记录
 │   ├── README.md              # 任务、提醒与处理决定
-│   └── observations/          # 每轮 Observer 的独立巡查笔记
+│   └── observations/          # 每轮 Evaluator 的独立巡查笔记
 └── iterations/tp2/
     ├── notes/
     │   ├── iteration.md       # 摘要、文档链接与决定
@@ -75,9 +75,9 @@ results/decode/parallelism/
 
 ### 通过文档共享方案与代码
 
-每个方案的完整说明、计划和分析统一写入 `<output-dir>/iterations/<name>/notes/`。例如，`plan.md` 充分说明问题与依据、方案和备选方法、关键取舍、实现与验证计划，`analysis.md` 展开实测结果的解释。讨论方案时即可创建这些文档，后续运行实验时用同一名称指定 `--iteration`。
+每个方案的问题、假设、结果和决定保存在 `<output-dir>/iterations/<name>/notes/iteration.md`。简短实验只需这一份笔记及原始结果链接；补测时用 `--iteration` 沿用方案名。
 
-`iteration.md` 用摘要表介绍各项内容，并链接完整文件，表格之后保留注明时间的审查与决定。`report.md` 作为整体入口，链接各迭代笔记，汇总目标、方案对比和跨迭代结论。
+方案、分析较长或由其他成员独立撰写审查时，再单独成文并从 `iteration.md` 链接。笔记保留注明时间的发现与决定；`report.md` 汇总跨方案的目标、比较和结论，链接这些记录。
 
 主 Agent 提供全体成员可读取的实验目录，注明所在主机和绝对路径。共享文件系统上的不同 checkout 使用同一绝对 `--output-dir`，通过 `--iteration` 区分候选；跨主机没有共享存储时，在报告中链接实际记录位置及访问方式。
 
@@ -97,7 +97,7 @@ results/decode/parallelism/
 
 ### 读取会话证据
 
-从任务文件和实验目录查找主 Agent 与成员会话，结合工作目录、时间、session ID 和父子关系确认记录范围。Observer 自行定位并只读检查，无需成员重新汇报进度。
+从任务文件和实验目录查找主 Agent 与成员会话，结合工作目录、时间、session ID 和父子关系确认记录范围。Evaluator 自行定位并只读检查，无需成员重新汇报进度。
 
 有只读历史接口时，读取完整条目和工具输出，例如 [Codex 会话历史](https://learn.chatgpt.com/docs/app-server)或 [Claude 会话接口](https://code.claude.com/docs/en/agent-sdk/sessions)。原始文件通常位于：
 

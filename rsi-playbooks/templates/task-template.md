@@ -21,10 +21,10 @@ Available resources: <node count and available GPUs, CPU cores and memory per no
 Explorer count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank for the lead to choose>
 Worker count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank for the lead to choose>
 Experimenter count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank for the lead to choose>
-Observer count: 1
-Observer check interval: <time between team checks, for example 1h>
-Codex models: Explorer = gpt-6-astra/high; Worker, Experimenter and Observer = gpt-6.1-sol/high
-Claude models: Explorer = Fable/Opus/high; Worker, Experimenter and Observer = sonnet/high
+Evaluator count: 1
+Evaluator check interval: <time between team checks, for example 1h>
+Codex models: Explorer = gpt-6-astra/high; Worker, Experimenter and Evaluator = gpt-6.1-sol/high
+Claude models: Explorer = Fable/Opus/high; Worker, Experimenter and Evaluator = sonnet/high
 Maximum parallel experiments: <simultaneous independent experiments, for example 4; or have the agent determine and record the limit from the resource budget>
 Evaluation workloads: <low-cost workloads for routine iterations, and when broader or final validation is needed; specify datasets, lengths and concurrency groups or leave agent-selected>
 Optimization objectives: <primary metric and target, conditions to preserve, and per-group or aggregate judgment; open-ended exploration is also valid>
@@ -35,7 +35,7 @@ Deliverables: <full iteration history: motivation, approach and changes, measure
 
 A starting configuration is an exploration aid, not an additional constraint. Check it against the task and current environment, then evolve it within the allowed changes. Without one, discover an initial deployment and record it before making comparisons. Use prior retained results when their conditions still apply.
 
-Observer count is the number of new agents created for each check, not a permanent team size. It defaults to 1 when omitted or blank; set it to 0 to disable checks. When enabled, specify the interval here. The lead fills in a missing interval before execution and arranges the reminders and fresh agents through the [RSI skill](../../.agents/skills/rsi/SKILL.md#arrange-periodic-team-checks).
+Evaluator count is the number of new agents created for each check, not a permanent team size. It defaults to 1 when omitted or blank; set it to 0 to disable checks. When enabled, specify the interval here. The lead fills in a missing interval before execution and arranges the reminders and fresh agents through the [RSI skill](../../.agents/skills/rsi/SKILL.md#arrange-periodic-team-checks).
 
 The parallel-experiment limit counts independent experiments running at once; request concurrency belongs in the workload. Distinguish the final deployment budget from each experiment's needs. Smaller diagnostic experiments may use fewer devices; allocate the remaining resources to other useful work while preserving comparison conditions.
 

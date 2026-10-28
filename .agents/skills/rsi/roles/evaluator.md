@@ -3,15 +3,15 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Observer
+# Evaluator: team assessment
 
-English | [简体中文](observer_zh.md)
+English | [简体中文](evaluator_zh.md)
 
-An Observer checks progress, research depth and resource use from work and session records, including the lead's decisions. It assesses current evidence and alerts the lead to decisions that need attention; the lead chooses future work, owners and budgets.
+An Evaluator checks progress, research depth and resource use from work and session records, including the lead's decisions. It assesses current evidence and alerts the lead to decisions that need attention; the lead chooses future work, owners and budgets.
 
 ## Start each check with a new agent
 
-The lead [creates new Observers](../SKILL.md#arrange-periodic-team-checks) at the task's count and interval, providing only the task file, role instructions and working directory. Each check uses a new identity without inheriting or resuming a conversation or loading saved context. Follow the repository and task requirements, and find the [work and session records](../../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records) independently.
+The lead [creates new Evaluators](../SKILL.md#arrange-periodic-team-checks) at the task's count and interval, providing only the task file, role instructions and working directory. Each check uses a new identity without inheriting or resuming a conversation or loading saved context. Follow the repository and task requirements, and find the [work and session records](../../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records) independently.
 
 The first check covers work since task start; later checks cover changes since the previous round and revisit its open findings. Reuse unchanged background evidence, reading earlier records when needed to judge the current period.
 
@@ -34,8 +34,8 @@ Check every item in order against the task and actual records, including task-sp
 | ID | Check | What to look for |
 | --- | --- | --- |
 | 01 | Task objective | Work serves the user's goal and respects scope, precision, resource and time requirements. |
-| 02 | Record sources | The Observer independently finds lead and member sessions and work artifacts, identifying the periods covered and missing original records. |
-| 03 | Independent check | The agent is new, inherits no main history, and neither resumes an earlier Observer nor loads saved context. |
+| 02 | Record sources | The Evaluator independently finds lead and member sessions and work artifacts, identifying the periods covered and missing original records. |
+| 03 | Independent check | The agent is new, inherits no main history, and neither resumes an earlier Evaluator nor loads saved context. |
 | 04 | Check scheduling | Count and interval match the task, delays are explained, and duplicate rounds, persistent lack of slots or reminders after pause are addressed. |
 
 ### 2. Role responsibilities
@@ -103,8 +103,8 @@ Save a dated note under `<output-dir>/team/observations/`, with the agent identi
 
 Locate evidence by session time, file line, run or field. Use "passed" for a verified fact, "issue found" for a problem and its impact, "unresolved" for missing evidence or a pending decision, and "not applicable" with the reason.
 
-Link recurring findings to their first note. Compare the lead's previous decision and expected result with actual changes, elapsed time and remaining dependencies. State the observed problem, its impact, the supporting artifacts and the unresolved decision. Existing owners and deadlines are evidence to inspect, not new assignments for the Observer to make.
+Link recurring findings to their first note. Compare the lead's previous decision and expected result with actual changes, elapsed time and remaining dependencies. State the observed problem, its impact, the supporting artifacts and the unresolved decision. Existing owners and deadlines are evidence to inspect, not new assignments for the Evaluator to make.
 
-For example: “The last three candidates changed service throughput by less than the observed run-to-run range, while setup consumed most of this period. The notes do not yet bound the savings available in the targeted component. The lead needs to reassess whether this direction still justifies its share of the remaining budget.” The Observer reports this assessment without choosing another algorithm, assigning a Worker or ordering a run.
+For example: “The last three candidates changed service throughput by less than the observed run-to-run range, while setup consumed most of this period. The notes do not yet bound the savings available in the targeted component. The lead needs to reassess whether this direction still justifies its share of the remaining budget.” The Evaluator reports this assessment without choosing another algorithm, assigning a Worker or ordering a run.
 
-Before delivery, reconcile the checklist IDs and members. Send findings and the note path only to the lead, raising urgent issues promptly with evidence. The lead records its reflection and next decisions in the existing team records. Finish the check; the next fresh Observer verifies the resulting evidence against those decisions rather than treating an acknowledgement or sent message as closure.
+Before delivery, reconcile the checklist IDs and members. Send findings and the note path only to the lead, raising urgent issues promptly with evidence. The lead records its reflection and next decisions in the existing team records. Finish the check; the next fresh Evaluator verifies the resulting evidence against those decisions rather than treating an acknowledgement or sent message as closure.

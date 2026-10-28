@@ -11,9 +11,9 @@ A Worker turns an idea into a code or configuration change and hands that candid
 
 ## Learn the framework first
 
-Every role, including the Observer, starts with the [project README](../../../../README.md), architecture guidance, relevant component documentation and maintained examples. Learn how the control plane, data plane, inference engines and benchmark tools work together to deploy services, execute requests and produce results.
+Research and execution members start with the [project README](../../../../README.md), architecture guidance, relevant component documentation and maintained examples. Learn how the control plane, data plane, inference engines and benchmark tools work together to deploy services, execute requests and produce results.
 
-Then study the source, configuration and earlier experiments for the assigned question to identify reusable facilities and affected call paths. Use locations supplied by the lead and check originals against the implementation. Keep related work with members who understand it; they reuse established context and evidence, reading changed material or what a new judgment needs. Refresh affected knowledge when versions or scope change. [Observers](observer.md) use new agents each round and learn their task and role independently.
+Then study the source, configuration and earlier experiments for the assigned question to identify reusable facilities and affected call paths. Use locations supplied by the lead and check originals against the implementation. Keep related work with members who understand it; they reuse established context and evidence, reading changed material or what a new judgment needs. Refresh affected knowledge when versions or scope change. [Evaluators](evaluator.md) start each fresh check from the task, role, prior findings and changed evidence. They consult unfamiliar framework paths as needed for the assessment.
 
 ## Assign complete questions
 
@@ -31,7 +31,7 @@ For example, an Explorer who finds a potentially faster method can send the find
 
 Use messages for short findings, questions and coordination. Put long explanations, full evidence or anything several people need to read in a shared file, then send a brief summary and its exact path. Give the background once and describe later changes without copying the whole document into messages. The [records guide](../../../../rsi-playbooks/experiment-records.md#share-documents-and-code) explains where files live and who writes them. Notify everyone when a change affects the whole team, and alert the executor immediately if an ongoing experiment will produce invalid results.
 
-Observers read work and session records independently and send their assessment only to the lead. They identify discrepancies and decisions needing attention; the lead reflects on those findings and chooses any changes to direction, resources or assignments.
+Evaluators read work and session records independently and send their assessment only to the lead. They identify discrepancies and decisions needing attention; the lead reflects on those findings and chooses any changes to direction, resources or assignments.
 
 While waiting for a reply, continue work that does not need that answer. If progress really is blocked, explain what is missing and who can provide it. Routine updates do not need replies, and completion notifications remove the need to keep asking for status. Transfers of GPUs or running jobs still need someone to accept them. The lead follows the shared records and steps in when direction, scope or resources need to change.
 
@@ -87,4 +87,4 @@ On a native completion or idle notification, the lead checks current role staffi
 
 On a user pause, stop or deadline, the lead stops scheduling new experiments. Each owner stops or hands over their jobs and preserves the results. A GPU collector's deadline controls only that collector, so other jobs need their own stop action.
 
-Count Workers, Experimenters, Explorers and Observers while they are actually doing assigned work, once per member. Observers count only during a check, not between rounds. Exclude the lead and members who are waiting, blocked or finished. Mark intervals with insufficient evidence as unknown.
+Count Workers, Experimenters, Explorers and Evaluators while they are actually doing assigned work, once per member. Evaluators count only during a check, not between rounds. Exclude the lead and members who are waiting, blocked or finished. Mark intervals with insufficient evidence as unknown.

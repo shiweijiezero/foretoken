@@ -14,17 +14,17 @@ Available resources: at most 6 NVIDIA A100 80GB GPUs in total for experiments; s
 Explorer count: 2
 Worker count: 4
 Experimenter count: 3
-Observer count: 1
-Observer check interval: 1h
-Codex models: Explorer = gpt-6-astra/high; Worker, Experimenter and Observer = gpt-6.1-sol/high
-Claude models: Explorer = Fable/Opus/high; Worker, Experimenter and Observer = sonnet/high
+Evaluator count: 1
+Evaluator check interval: 1h
+Codex models: Explorer = gpt-6-astra/high; Worker, Experimenter and Evaluator = gpt-6.1-sol/high
+Claude models: Explorer = Fable/Opus/high; Worker, Experimenter and Evaluator = sonnet/high
 Maximum parallel experiments: at most 3 two-GPU service candidates; smaller focused experiments share the six-GPU budget
 Parallel scheduling: reserve capacity for platform services, builds, and benchmark clients, then schedule experiments by their actual resource requests and record the achieved parallelism
 Iteration workloads: random only by default, at concurrency 1 and 16; analyze each completed point without waiting for the full group
 Extended validation: StudyChat for multi-turn hypotheses and the final retained approach, reusing existing matched controls; quality evaluation as needed
 Accuracy evaluation: run foretoken eval as needed for changes that may affect answer quality. Prioritize candidates being considered for retention, reuse results while their conditions still apply, and avoid repeating quality scoring after every performance measurement.
 Allowed changes: implementation and configuration at any layer, within the precision and resource constraints above
-Measurement budget per iteration: default to 10 minutes of perf/eval measurement to keep iterations fast; adjust the measurement budget and request count to the actual workload, recording the reason and time spent
+Measurement budget per iteration: allow 10 minutes by default and use enough samples to answer the question; analyze once they finish. Adjust the budget and request count to the workload, recording the reason and time spent
 Work duration: a total budget of 24 hours from the start of task execution
 Expected outcome / completion criteria: keep increasing throughput and reducing TPOT without fixed metric thresholds.
   Continue research, implementation and measurement, covering both parameter tuning and source changes. Finish when the research questions are answered and further work offers little value, when time runs out, or when the user asks to stop.
@@ -65,7 +65,7 @@ foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-nvidia --dataset ran
   --min-prompt-length 128 --max-prompt-length 4096 \
   --min-output-length 128 --max-output-length 512 \
   --max-concurrency "$concurrency" --num-prompts 80 --warmup-requests 4 \
-  --random-seed 0 --temperature 0 --output experiment,raw,plot,wandb \
+  --random-seed 0 --temperature 0 --output experiment,raw,wandb \
   --output-dir results/qwen3.5-35b-a3b-nvidia --iteration baseline
 
 ```

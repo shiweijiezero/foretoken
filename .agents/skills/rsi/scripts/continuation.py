@@ -184,7 +184,7 @@ class Continuation:
             "give the owner its next substantive question through the native follow-up tool, "
             "or record the actual missing result and resume condition. "
             "Keep exploration assigned when a member moves into implementation or review. "
-            "Record an Observer's actual completion, findings, action owners and next check time; "
+            "Record an Evaluator's actual completion, findings, action owners and next check time; "
             "update the existing report when results or decisions change. "
             "Use native activity for role counts; bindings describe previous decisions, not current activity."
         )
@@ -244,7 +244,7 @@ class Continuation:
                     (*identity, member["agent"]),
                 )
             # Native follow-up can resume a waiting member without changing its last binding decision.
-            # Unregistered Observers also deliver results, but never receive queued continuation.
+            # Unregistered Evaluators also deliver results, but never receive queued continuation.
             self.db.execute(
                 "UPDATE sessions SET review_pending=1 WHERE harness=? AND session=?", identity
             )
