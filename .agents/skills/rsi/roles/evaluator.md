@@ -33,7 +33,7 @@ Check every item in order against the task and actual records, including task-sp
 
 | ID | Check | What to look for |
 | --- | --- | --- |
-| 01 | Task objective | Work serves the user's goal and respects scope, precision, resource and time requirements. |
+| 01 | Task objective | Work respects the objective and fixed requirements; starting implementation choices have not become extra constraints. |
 | 02 | Record sources | The Evaluator independently finds lead and member sessions and work artifacts, identifying the periods covered and missing original records. |
 | 03 | Independent check | The agent is new, inherits no main history, and neither resumes an earlier Evaluator nor loads saved context. |
 | 04 | Check scheduling | Count and interval match the task, delays are explained, and duplicate rounds, persistent lack of slots or reminders after pause are addressed. |
@@ -45,7 +45,7 @@ Use the [team assignments](common.md) and each member's task.
 | ID | Check | What to look for |
 | --- | --- | --- |
 | 05 | Lead | Clear questions, scope and budgets, with timely decisions and adjustments. |
-| 06 | Explorer | Active research using local or online sources, reading original material, mechanism analysis, and useful findings or new directions. |
+| 06 | Explorer | Independent mechanism research from the task objective, using primary sources to develop explanations or alternatives beyond the current candidate list. |
 | 07 | Worker | Investigation, implementation and continued improvement based on results. |
 | 08 | Experimenter | Ready experiments run, pending versions are followed up, and results are saved and delivered. |
 | 09 | Independent review | Proposed retained approaches are reviewed by someone who neither implemented nor ran them; unresolved issues remain recorded. |

@@ -7,13 +7,13 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](task-template_zh.md)
 
-Fill in only the conditions that matter to the task. Other fields may say "unrestricted" or "agent-selected", or be omitted. State the final deployment budget separately from an optional starting configuration; available resources describe the pool actually available to the whole task.
+Append `【不可修改】` to fixed requirements, for example `Precision: BF16【不可修改】`. Leave other implementation choices to the agent within the task objective and fixed requirements. State the final deployment budget separately from an optional starting configuration; available resources describe the pool actually available to the whole task.
 
 ```text
 Execution entry: <working directory or repository, deployment configuration or service URL; omit if already clear from context>
 Starting configuration: <optional maintained deployment directory or known working configuration; omit to let the agent discover an initial approach>
 Previous experiments: <existing experiment directories or reports, main findings and open questions; omit if none>
-Models: <specified models or a model family, or agent-selected>
+Target models: <specified models or a model family, or agent-selected>
 Precision: <for example, fixed BF16, a comparison of BF16 and FP8, or unrestricted>
 Deployment layout: <for example, colocated serving, prefill/decode disaggregation, or unrestricted>
 Final deployment budget: <node placement and total GPU, CPU, and memory limits for the retained service; specify which workloads are included, or leave agent-selected>
@@ -28,12 +28,12 @@ Claude models: Explorer = Fable/Opus/high; Worker, Experimenter and Evaluator = 
 Maximum parallel experiments: <simultaneous independent experiments, for example 4; or have the agent determine and record the limit from the resource budget>
 Evaluation workloads: <low-cost workloads for routine iterations, and when broader or final validation is needed; specify datasets, lengths and concurrency groups or leave agent-selected>
 Optimization objectives: <primary metric and target, conditions to preserve, and per-group or aggregate judgment; open-ended exploration is also valid>
-Allowed changes: <for example, deployment parameters, inference engine, routing, or the whole system>
+Allowed changes: <algorithms, auxiliary models and weights, execution methods or system components the agent may design or replace; or unrestricted>
 Work and completion conditions: <clock start and total work period or target-based completion; per-experiment budgets may be specified or selected by the agent for each hypothesis>
 Deliverables: <full iteration history: motivation, approach and changes, measurements, analysis, time spent and next decision for each iteration; overall gains, retained approach, code changes and result links>
 ```
 
-Check the starting configuration against the task and current environment, then evolve it within the allowed changes. Without one, discover an initial deployment and record it before making comparisons. Use prior retained results when their conditions still apply.
+The starting configuration provides a comparison point. Its structure and parameters remain design choices unless marked as fixed. A fixed target model still permits research into auxiliary models and their weights, and execution mechanisms within the task requirements. Without a starting configuration, discover an initial deployment and record it before making comparisons. Use prior retained results when their conditions still apply.
 
 Evaluator count is the number of new agents created for each check. It defaults to 1 when omitted or blank; set it to 0 to disable checks. When enabled, specify the interval here. The lead fills in a missing interval before execution and arranges the reminders and fresh agents through the [RSI skill](../../.agents/skills/rsi/SKILL.md#arrange-periodic-team-checks).
 

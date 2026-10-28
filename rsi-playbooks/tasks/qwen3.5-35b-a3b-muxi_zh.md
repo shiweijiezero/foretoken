@@ -3,29 +3,29 @@
 [English](qwen3.5-35b-a3b-muxi.md) | 简体中文
 
 ```text
-模型：Qwen3.5-35B-A3B
+目标模型：Qwen3.5-35B-A3B【不可修改】
 起始配置：examples/rsi/qwen3.5-35b-a3b；双卡张量并行（TP2）、四步多 token 预测（MTP）、36,864 上下文，KV 缓存不卸载到主机内存，可在优化中调整
-优化目标：提高并发 1 和 16 的输出吞吐（token/s），降低解码阶段每个输出 token 的耗时（TPOT）
-精度：固定 BF16
+优化目标：提高并发 1 和 16 的输出吞吐（token/s），降低解码阶段每个输出 token 的耗时（TPOT）【不可修改】
+精度：固定 BF16【不可修改】
 部署形态：在最终单机 GPU 预算内自主选择并行方式和各阶段安排
-最终部署预算：单机 2 张沐曦 GPU；模型与 frontend 工作负载合计不超过 32 核 CPU、250G 主机内存
+最终部署预算：单机最多 2 张沐曦 GPU；目标模型、辅助模型与 frontend 的工作负载合计不超过 32 核 CPU、250G 主机内存【不可修改】
 实验规模：服务候选遵守最终预算；算子、编译或正确性等局部实验按需使用更少资源，包括单卡
-可用资源：实验合计最多使用 6 张沐曦 GPU；按实际主机容量安排 CPU、内存和存储
-Explorer 数量：2
-Worker 数量：4
-Experimenter 数量：3
-Evaluator 数量：1
-Evaluator 巡查间隔：1h
-Codex 模型：Explorer = gpt-6-astra/high；Worker、Experimenter、Evaluator = gpt-6.1-sol/high
-Claude 模型：Explorer = Fable/Opus/high；Worker、Experimenter、Evaluator = sonnet/high
+可用资源：实验合计最多使用 6 张沐曦 GPU；按实际主机容量安排 CPU、内存和存储【不可修改】
+Explorer 数量：2【不可修改】
+Worker 数量：4【不可修改】
+Experimenter 数量：3【不可修改】
+Evaluator 数量：1【不可修改】
+Evaluator 巡查间隔：1h【不可修改】
+Codex 模型：Explorer = gpt-6-astra/high；Worker、Experimenter、Evaluator = gpt-6.1-sol/high【不可修改】
+Claude 模型：Explorer = Fable/Opus/high；Worker、Experimenter、Evaluator = sonnet/high【不可修改】
 最大并行实验数：最多 3 个双卡服务候选；更小规模的局部实验共享六卡预算
 并行安排：先为平台服务、构建和评测客户端预留资源，再按各组实际资源请求安排实验，并记录并行度
 迭代负载：默认只测 random，并发 1 和 16；每个测量点完成后立即分析
 扩展验证：StudyChat 用于多轮相关假设和最终保留方案，复用已有同条件对照；质量评测按需安排
 精度评测：可能影响回答质量的改动需要补充质量证据时，执行 foretoken eval，优先评测准备保留的候选方案。
-可改动范围：在上述精度与资源约束内，可以修改各层的实现与配置
+可改动范围：在固定条件内，可改各层实现与配置，包括算法、辅助模型及其权重、组合方式与执行组织；可提出新机制或选用社区已有成果
 每轮测量时间预算：默认预留 10 分钟，按足以判断问题的样本安排测量，完成即分析；按实际负载调整预算与请求数，记录依据和耗时
-工作时间：从开始执行任务计时，总预算 24 小时
+工作时间：从开始执行任务计时，总预算 24 小时【不可修改】
 预期／结束条件：持续提高吞吐、降低 TPOT，不设固定指标阈值。
   持续研究、实现和验证，包括参数调整与源码改进。研究问题已有答案且进一步投入价值有限时，可以结束；时间用尽或用户要求停止时结束。
   结束时说明依据，分别列出已测但无收益、未能运行的实现、尚未实现或测试的方向。
