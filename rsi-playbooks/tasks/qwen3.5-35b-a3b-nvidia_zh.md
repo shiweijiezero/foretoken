@@ -16,6 +16,8 @@ Worker 数量：4
 Experimenter 数量：3
 Observer 数量：1
 Observer 巡查间隔：1h
+Codex 模型：Explorer = gpt-6-astra/high；Worker、Experimenter、Observer = gpt-6.1-sol/high
+Claude 模型：Explorer = Fable/Opus/high；Worker、Experimenter、Observer = sonnet/high
 最大并行实验数：最多 3 个双卡服务候选；更小规模的局部实验共享六卡预算
 并行安排：先为平台服务、构建和评测客户端预留资源，再按各组实际资源请求安排实验，并记录并行度
 评测负载：每个服务分别测量并发 1 和 16，覆盖随机长度负载和 StudyChat 对话；具体命令见下方“评测命令”

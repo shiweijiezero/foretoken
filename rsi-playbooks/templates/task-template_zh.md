@@ -23,6 +23,8 @@ Worker 数量：<该角色并行子 Agent 数，不含主 Agent；非负整数�
 Experimenter 数量：<该角色并行子 Agent 数，不含主 Agent；非负整数，留空由主 Agent 安排>
 Observer 数量：1
 Observer 巡查间隔：<两轮团队巡查之间的时间，例如 1h>
+Codex 模型：Explorer = gpt-6-astra/high；Worker、Experimenter、Observer = gpt-6.1-sol/high
+Claude 模型：Explorer = Fable/Opus/high；Worker、Experimenter、Observer = sonnet/high
 最大并行实验数：<同时运行的独立实验上限，如 4；或由 Agent 根据资源预算确定并记录>
 评测负载：<指定数据集、长度、并发等负载组，或由 Agent 选择>
 优化目标：<主指标与目标值、需保持的条件、按各组或整体判断；也可开放探索>

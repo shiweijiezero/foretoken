@@ -60,18 +60,18 @@ class PlatformApplicationFiles:
         return origin
 
     @contextmanager
-    def adopt(self, rendered: tuple[dict[str, Any], ...], timeout: str) -> Iterator[ApplicationFiles | None]:
-        """Hold release publication until Helm adopts the prepared origin and selects its payload."""
+    def adopt(self, rendered: tuple[dict[str, Any], ...], timeout: str) -> Iterator[tuple[ApplicationFiles | None, float | None]]:
+        """Borrow prepared files and their publication deadline through Helm's selection commit."""
         origin = self.prepare(rendered, timeout)
         if origin is None:
-            yield
+            yield None, None
             return
         configuration = next(
             document["data"] for document in self._resources(rendered)
             if document["kind"] == "ConfigMap"
         )
         if not configuration.get("releaseURL"):
-            yield origin
+            yield origin, None
             return
 
         def retained() -> set[str] | None:
@@ -95,8 +95,8 @@ class PlatformApplicationFiles:
         with origin.import_release(
             configuration["releaseURL"], configuration["revision"], retained, previous,
             timeout=timeout, credentials_secret=configuration["credentialsSecret"],
-        ):
-            yield origin
+        ) as deadline:
+            yield origin, deadline
 
     def resources(self) -> tuple[dict[str, Any], ...]:
         """Find native origin objects still owned by the platform, including failed bootstraps."""

@@ -30,11 +30,20 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(120);
 /// Engine-side capture operations borrowed by the supervisor; adapters own their native RPC contract.
 #[async_trait]
 pub trait EngineProfiler: Send + Sync {
-    /// Starts or flushes PyTorch recording on all engine workers using the supervisor's trace prefix.
+    /// Starts or confirms stopped PyTorch recording on every worker; export remains owned separately.
     async fn set_pytorch_recording(&self, start: bool, prefix: &str) -> Result<(), String>;
+
+    /// Waits for the workers' owned exports; a known artifact failure does not invalidate stopped recording.
+    async fn finish_pytorch_export(&self, prefix: &str) -> Result<ExportResult, String>;
 
     /// Starts or flushes mcTracer recording into the supervisor's retained staging directory.
     async fn set_mctracer_recording(&self, start: bool, directory: &Path) -> Result<(), String>;
+}
+
+/// Confirmed completion of stopped recording's artifact work, consumed by capture publication.
+pub enum ExportResult {
+    Complete,
+    Failed(String),
 }
 
 /// Profiler instrumentation selected before the engine process starts.
@@ -96,7 +105,7 @@ pub struct Record {
     pub engine: Engine,
     pub run_uid: String,
     pub phase: String,
-    /// Confirms that this capture has no outstanding native work in its control scope.
+    /// Confirms recording is disabled; stopped captures can still own pending artifact export.
     pub native_stopped: bool,
     pub duration_ms: u64,
     pub started_at_unix_ms: Option<u64>,
@@ -145,6 +154,8 @@ pub struct Supervisor {
     receiver: mpsc::UnboundedReceiver<(String, watch::Receiver<Action>)>,
     backend: Option<Arc<dyn EngineProfiler>>,
     native: Option<JoinHandle<Result<(), String>>>,
+    export: Option<JoinHandle<Result<ExportResult, String>>>,
+    export_result: Option<ExportResult>,
     publication: Option<JoinHandle<io::Result<Record>>>,
 }
 
@@ -354,6 +365,8 @@ impl Supervisor {
             receiver,
             backend,
             native: None,
+            export: None,
+            export_result: None,
             publication: None,
         }
     }
@@ -377,7 +390,7 @@ impl Supervisor {
         state
             .active
             .as_ref()
-            .is_some_and(|uid| state.entries[uid].record.exported_at_unix_ms.is_none())
+            .is_some_and(|uid| !state.entries[uid].record.native_stopped)
     }
 
     /// Runs serialized captures until shutdown or an uncertain native operation needs escalation.
@@ -495,25 +508,88 @@ impl Supervisor {
             record.phase = "Stopping".into();
             record.recording_ended_at_unix_ms = Some(now_ms());
         });
-        let export_deadline = tokio::time::Instant::now() + STOP_TIMEOUT;
         self.native_operation(false).await?;
         self.update(uid, |record| {
             record.native_stopped = true;
-            record.exported_at_unix_ms = Some(now_ms());
         });
+        self.finish_stopped_capture(uid).await
+    }
+
+    /// Complete a confirmed-stop export after ordinary request drain, preserving its original owner.
+    pub async fn finish_stopped_export(&mut self) -> Result<(), String> {
+        let active = {
+            let state = self
+                .handle
+                .state
+                .lock()
+                .expect("capture state lock poisoned");
+            state.active.as_ref().map(|uid| {
+                let record = &state.entries[uid].record;
+                (
+                    uid.clone(),
+                    record.native_stopped && record.started_at_unix_ms.is_some(),
+                )
+            })
+        };
+        if let Some((uid, true)) = active {
+            self.finish_stopped_capture(&uid).await?;
+        }
+        Ok(())
+    }
+
+    // This stage can be awaited again during shutdown: retained handles prevent replaying export or seal.
+    async fn finish_stopped_capture(&mut self, uid: &str) -> Result<(), String> {
+        let config = self.handle.config.clone();
+        if config.engine == Engine::Pytorch && self.export_result.is_none() {
+            if self.export.is_none() {
+                let backend = self
+                    .backend
+                    .clone()
+                    .expect("RPC profiler has an engine client");
+                let prefix = format!("{}/capture", config.runtime_id);
+                self.export = Some(tokio::spawn(async move {
+                    backend.finish_pytorch_export(&prefix).await
+                }));
+            }
+            let result = self.export.as_mut().expect("native export exists").await;
+            self.export_result = Some(match result {
+                Ok(Ok(result)) => result,
+                Ok(Err(error)) => ExportResult::Failed(error),
+                Err(error) => ExportResult::Failed(error.to_string()),
+            });
+            self.export = None;
+        }
         let mut record = self
             .handle
             .observe(Some(uid))
             .capture
             .expect("capture exists");
-        let cancelled = *action.borrow() == Action::Cancel;
+        let cancelled = *self
+            .handle
+            .state
+            .lock()
+            .expect("capture state lock poisoned")
+            .entries[uid]
+            .action
+            .borrow()
+            == Action::Cancel;
         record.phase = if cancelled { "Cancelled" } else { "Succeeded" }.into();
-        let config = self.handle.config.clone();
-        self.publication = Some(tokio::spawn(publish_capture(
-            config,
-            record,
-            export_deadline,
-        )));
+        match &self.export_result {
+            Some(ExportResult::Failed(error)) => {
+                record.phase = "Failed".into();
+                record.message.clone_from(error);
+            }
+            _ => {
+                record.exported_at_unix_ms.get_or_insert_with(now_ms);
+            }
+        };
+        if self.publication.is_none() {
+            self.publication = Some(tokio::spawn(publish_capture(
+                config,
+                record,
+                tokio::time::Instant::now() + STOP_TIMEOUT,
+            )));
+        }
         let publication = self.publication.as_mut().expect("publication exists").await;
         self.publication = None;
         match publication {
@@ -527,6 +603,7 @@ impl Supervisor {
                 };
             }),
         }
+        self.export_result = None;
         Ok(())
     }
 
@@ -536,6 +613,11 @@ impl Supervisor {
             task.abort();
             let _ = task.await;
         }
+        if let Some(task) = self.export.take() {
+            task.abort();
+            let _ = task.await;
+        }
+        self.export_result = None;
         if let Some(publication) = self.publication.take()
             && let Ok(Ok(record)) = publication.await
         {

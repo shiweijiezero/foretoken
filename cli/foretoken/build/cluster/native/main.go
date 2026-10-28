@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-// Bridges BuildKit sessions to a node's containerd content store without exposing its runtime socket to build executors.
+// Exchanges OCI content with BuildKit and containerd without exposing node runtime sockets to build executors.
 package main
 
 import (
@@ -21,6 +21,7 @@ import (
 	"github.com/containerd/containerd/v2/core/content/proxy"
 	"github.com/containerd/containerd/v2/core/leases"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
+	"github.com/containerd/containerd/v2/plugins/content/local"
 	"github.com/containerd/continuity"
 	"github.com/containerd/errdefs"
 	"github.com/containerd/platforms"
@@ -83,17 +84,24 @@ func main() {
 	}
 }
 
-// execute borrows the node client under the Python owner's known lease, which remains until that owner joins all writers.
+// execute separates unprivileged filesystem exports from node operations held by the build owner's lease.
 func execute(ctx context.Context, action string, input request) (any, error) {
 	if action != "inspect" && action != "solve" && action != "deliver" {
-		return nil, fmt.Errorf("unknown node image operation %q", action)
-	}
-	if input.ContainerdNamespace == "" || input.LeaseID == "" || len(input.LeaseLabels) == 0 {
-		return nil, errors.New("source build namespace and lease ownership are required")
+		return nil, fmt.Errorf("unknown build operation %q", action)
 	}
 	platform, err := platforms.Parse(input.Platform)
 	if err != nil {
 		return nil, err
+	}
+	matcher := platforms.OnlyStrict(platform)
+	if action == "solve" && input.Output.Type == bkclient.ExporterLocal {
+		if len(input.Inputs) != 0 {
+			return nil, errors.New("filesystem exports cannot borrow node content")
+		}
+		return nil, solve(ctx, nil, input, matcher)
+	}
+	if input.ContainerdNamespace == "" || input.LeaseID == "" || len(input.LeaseLabels) == 0 {
+		return nil, errors.New("source build namespace and lease ownership are required")
 	}
 	node, err := containerd.New(input.ContainerdAddress)
 	if err != nil {
@@ -105,7 +113,6 @@ func execute(ctx context.Context, action string, input request) (any, error) {
 		return nil, err
 	}
 	nodeContext = leases.WithLease(nodeContext, input.LeaseID)
-	matcher := platforms.OnlyStrict(platform)
 	switch action {
 	case "inspect":
 		return inspectImage(nodeContext, node, input, matcher)
@@ -142,7 +149,7 @@ func ensureLease(ctx context.Context, manager leases.Manager, input request) err
 }
 
 // solve retains the existing Dockerfile, filesync, credentials and export semantics while native CAS skips already stored blobs.
-func solve(ctx context.Context, node *containerd.Client, input request, matcher platforms.MatchComparer) error {
+func solve(ctx context.Context, node *containerd.Client, input request, matcher platforms.MatchComparer) (result error) {
 	client, err := bkclient.New(ctx, input.BuildkitAddress)
 	if err != nil {
 		return err
@@ -191,7 +198,30 @@ func solve(ctx context.Context, node *containerd.Client, input request, matcher 
 	}
 	export := bkclient.ExportEntry{Type: input.Output.Type, Attrs: input.Output.Attrs}
 	var destination *sessionStore
-	if export.Type == bkclient.ExporterOCI {
+	var filesystem content.Store
+	if export.Type == bkclient.ExporterLocal {
+		if export.Attrs["dest"] == "" {
+			return errors.New("filesystem export requires a destination")
+		}
+		if err := os.MkdirAll(filepath.Dir(input.MetadataFile), 0755); err != nil {
+			return err
+		}
+		directory, err := os.MkdirTemp(filepath.Dir(input.MetadataFile), ".image-files-")
+		if err != nil {
+			return err
+		}
+		defer func() { result = errors.Join(result, os.RemoveAll(directory)) }()
+		filesystem, err = local.NewStore(directory)
+		if err != nil {
+			return err
+		}
+		// OCI transfers preserve the original layer metadata without the local
+		// exporter's bidirectional per-file requests, which can deadlock on large caches.
+		export = bkclient.ExportEntry{
+			Type: bkclient.ExporterOCI, Attrs: map[string]string{"tar": "false", "oci-mediatypes": "true"},
+			OutputStore: filesystem,
+		}
+	} else if export.Type == bkclient.ExporterOCI {
 		destination = &sessionStore{
 			store: node.ContentStore(), leaseManager: node.LeasesService(), namespace: input.ContainerdNamespace, lease: input.LeaseID, writable: true,
 		}
@@ -209,14 +239,19 @@ func solve(ctx context.Context, node *containerd.Client, input request, matcher 
 	if err != nil {
 		return err
 	}
-	if destination != nil {
-		encoded, err := base64.StdEncoding.DecodeString(response.ExporterResponse[exptypes.ExporterImageDescriptorKey])
+	if filesystem != nil {
+		descriptor, err := imageDescriptor(response)
 		if err != nil {
-			return fmt.Errorf("decode solved image descriptor: %w", err)
+			return err
 		}
-		var descriptor ocispec.Descriptor
-		if err := json.Unmarshal(encoded, &descriptor); err != nil {
-			return fmt.Errorf("read solved image descriptor: %w", err)
+		if err := extractFilesystem(ctx, filesystem, descriptor, matcher, input.Output.Attrs["dest"]); err != nil {
+			return err
+		}
+	}
+	if destination != nil {
+		descriptor, err := imageDescriptor(response)
+		if err != nil {
+			return err
 		}
 		err = contentutil.CopyChain(ctx, destination, proxy.NewContentStore(client.ContentClient()), descriptor)
 		if errdefs.IsNotFound(err) {
@@ -231,6 +266,19 @@ func solve(ctx context.Context, node *containerd.Client, input request, matcher 
 		}
 	}
 	return writeMetadata(input.MetadataFile, response.ExporterResponse)
+}
+
+// imageDescriptor reads the OCI graph produced by a completed BuildKit image export.
+func imageDescriptor(response *bkclient.SolveResponse) (ocispec.Descriptor, error) {
+	var descriptor ocispec.Descriptor
+	encoded, err := base64.StdEncoding.DecodeString(response.ExporterResponse[exptypes.ExporterImageDescriptorKey])
+	if err != nil {
+		return descriptor, fmt.Errorf("decode solved image descriptor: %w", err)
+	}
+	if err := json.Unmarshal(encoded, &descriptor); err != nil {
+		return descriptor, fmt.Errorf("read solved image descriptor: %w", err)
+	}
+	return descriptor, nil
 }
 
 // solveWithProgress drains native diagnostics even after cancellation, preserving the solve's original failure.

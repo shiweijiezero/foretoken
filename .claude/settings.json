@@ -39,6 +39,16 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -I \"$CLAUDE_PROJECT_DIR/.agents/skills/rsi/scripts/continuation.py\" hook --harness claude"
+          }
+        ]
+      }
     ]
   }
 }

@@ -219,8 +219,8 @@ class ApplicationFiles:
         *,
         timeout: str,
         credentials_secret: str = "",
-    ) -> Iterator[None]:
-        """Serialize release import and GC through the caller's Helm selection commit.
+    ) -> Iterator[float]:
+        """Serialize release import and GC, yielding the deadline for Helm's selection commit.
 
         The input ConfigMap is created only after unique Job ownership, so a Pending
         Pod cannot collect files using a snapshot taken before another installer commits.
@@ -271,7 +271,7 @@ class ApplicationFiles:
                     raise DeploymentError(
                         "application release operation expired before Helm selection"
                     )
-            yield
+            yield deadline
 
     def _manifest_path(self, application_url: str) -> str | None:
         prefix = self.endpoint.rstrip("/") + "/"
@@ -521,6 +521,12 @@ class ApplicationFiles:
             if execution is not None:
                 execution.check()
             yield metadata, deadline
+        except BaseException as error:
+            # Publish the first failure before foreground cleanup waits for Pods,
+            # so independent installation and build stages stop immediately.
+            if execution is not None:
+                execution.cancel(error)
+            raise
         finally:
             if execution is not None:
                 execution.unregister(stop)

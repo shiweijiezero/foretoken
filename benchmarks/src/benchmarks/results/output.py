@@ -433,7 +433,7 @@ class ResultOutputs:
         self._applications.save_archives(deadline=deadline)
 
     def start_observers(self, *, deadline: float | None = None) -> None:
-        """Prepare observations within one budget; deferred starts get a fresh budget after warmup."""
+        """Bound provenance preparation, then start each sampler with its own read budget."""
         outputs = self.benchmark.outputs
         if deadline is None:
             deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
@@ -444,12 +444,14 @@ class ResultOutputs:
             )
             write_json(self.execution_dir, "environment.json", self._environment)
         if self.service is not None and self.service.model_service_refs and outputs.saves_local:
+            # Discovery budgets belong to each sampler, independently of provenance
+            # preparation and the other sampler's initial read.
             try:
                 observer = KubernetesReplicaObserver(
                     self.service.model_service_refs, self.service.model, self._applications,
                     kubectl=self.service.kubectl,
                 )
-                observer.start(deadline=deadline)
+                observer.start()
             except (DeploymentError, RuntimeError) as exc:
                 logger.warning("Replica observation unavailable; continuing with benchmark: {}", exc)
             else:
@@ -459,7 +461,7 @@ class ResultOutputs:
                 return
             try:
                 prometheus_observer = PrometheusObserver(self.service, self._replica_observer)
-                prometheus_observer.start(deadline=deadline)
+                prometheus_observer.start()
             except (DeploymentError, RuntimeError) as exc:
                 logger.warning("Prometheus observation unavailable; continuing with benchmark: {}", exc)
             else:

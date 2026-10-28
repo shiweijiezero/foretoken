@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sync/errgroup"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/typed/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -80,12 +81,27 @@ func main() {
 		log.Fatalf("create CRD client: %v", err)
 	}
 
-	// Apply serially so a failure identifies the exact API that blocked startup.
+	// Submit definitions in order while observing each API within its own budget.
+	// The first failure cancels further submissions and joins active observers.
+	observers, ctx := errgroup.WithContext(ctx)
 	for _, crd := range crds {
-		if err := applyCRD(ctx, client.CustomResourceDefinitions(), crd, fieldManager, timeout); err != nil {
-			log.Fatal(err)
+		apiContext, cancel := context.WithTimeout(ctx, timeout)
+		if err := applyCRD(apiContext, client.CustomResourceDefinitions(), crd, fieldManager); err != nil {
+			cancel()
+			observers.Go(func() error { return err })
+			break
 		}
-		log.Printf("CRD %s is established", crd.Name)
+		observers.Go(func() error {
+			defer cancel()
+			if err := waitForCRD(apiContext, client.CustomResourceDefinitions(), crd.Name); err != nil {
+				return err
+			}
+			log.Printf("CRD %s is established", crd.Name)
+			return nil
+		})
+	}
+	if err := observers.Wait(); err != nil {
+		log.Fatal(err)
 	}
 }
 
@@ -184,11 +200,8 @@ func crdHierarchyLevel(crd *apiextensionsv1.CustomResourceDefinition) int {
 	}
 }
 
-// applyCRD updates desired fields and blocks until the API becomes usable.
-func applyCRD(ctx context.Context, client crdClient, crd *apiextensionsv1.CustomResourceDefinition, fieldManager string, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
+// applyCRD submits one validated API definition for the installation hook.
+func applyCRD(ctx context.Context, client crdClient, crd *apiextensionsv1.CustomResourceDefinition, fieldManager string) error {
 	data, err := json.Marshal(crdApplyManifest{
 		APIVersion: crd.APIVersion,
 		Kind:       crd.Kind,
@@ -202,14 +215,19 @@ func applyCRD(ctx context.Context, client crdClient, crd *apiextensionsv1.Custom
 		return fmt.Errorf("apply CRD %q: %w", crd.Name, err)
 	}
 
+	return nil
+}
+
+// waitForCRD confirms one submitted API is usable within its original deadline.
+func waitForCRD(ctx context.Context, client crdClient, name string) error {
 	if err := wait.PollUntilContextCancel(ctx, 500*time.Millisecond, true, func(ctx context.Context) (bool, error) {
-		current, err := client.Get(ctx, crd.Name, metav1.GetOptions{})
+		current, err := client.Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return false, err
 		}
 		return established(current)
 	}); err != nil {
-		return fmt.Errorf("wait for CRD %q to become established: %w", crd.Name, err)
+		return fmt.Errorf("wait for CRD %q to become established: %w", name, err)
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ from itertools import chain
 import torch
 import vllm
 from foretoken_mctracer import Worker as MctracerWorker
+from foretoken_pytorch import WorkerExtension as ProfilingWorkerExtension
 from packaging.version import Version
 from vllm.v1.worker import gpu_worker
 from vllm.v1.worker.gpu import model_runner
@@ -58,8 +59,8 @@ def validate_config(config):
             )
 
 
-class WorkerExtension:
-    """Replace only the Target's proposer while leaving its native runner and scheduler intact."""
+class WorkerExtension(ProfilingWorkerExtension):
+    """Compose Target proposal hooks with native capture utilities on the same worker."""
 
     def init_worker_extension(self):
         """Install remote proposal execution after device setup and before model loading."""

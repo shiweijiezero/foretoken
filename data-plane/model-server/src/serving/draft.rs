@@ -122,10 +122,47 @@ pub(super) async fn run(
     }
     let deadline = Instant::now() + config.launch.drain_timeout();
     let mut server_stopped = matches!(stop, Stop::Server(_));
-    let force_stop = matches!(stop, Stop::Engine(_))
+    let mut force_stop = matches!(stop, Stop::Engine(_))
         || profiler
             .as_ref()
             .is_some_and(|profiler| profiler.has_native_capture());
+    // A stopped capture still owns worker export; retain native ownership and
+    // control HTTP until publication finishes or the existing drain budget expires.
+    if !force_stop
+        && !server_stopped
+        && let Some(profiler) = &mut profiler
+    {
+        tokio::select! {
+            result = tokio::time::timeout_at(deadline.into(), profiler.finish_stopped_export()) => {
+                if !matches!(result, Ok(Ok(()))) {
+                    let reason = match result {
+                        Ok(Err(error)) => error,
+                        Err(_) => "profile export exceeded the runtime drain deadline".into(),
+                        Ok(Ok(())) => unreachable!(),
+                    };
+                    warn!(%reason, "Draft profile export failed during drain");
+                    if matches!(stop, Stop::Signal) {
+                        stop = Stop::Profiling(reason);
+                    }
+                    force_stop = true;
+                }
+            },
+            status = engine.wait_for_exit() => {
+                warn!(%status, "managed Draft exited during profile export");
+                if matches!(stop, Stop::Signal) {
+                    stop = Stop::Engine(format!("managed Draft exited during profile export: {status}"));
+                }
+                force_stop = true;
+            },
+            result = &mut server => {
+                server_stopped = true;
+                warn!(?result, "Draft HTTP server stopped during profile export");
+                if matches!(stop, Stop::Signal) {
+                    stop = Stop::Server(format!("Draft HTTP server stopped during profile export: {result:?}"));
+                }
+            },
+        }
+    }
     if !force_stop && !server_stopped {
         let drain = async {
             let mut status = client.drain()?;

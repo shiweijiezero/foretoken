@@ -21,7 +21,7 @@ use tracing::warn;
 use vllm_engine_core_client::EngineCoreClient;
 
 use crate::execution::RuntimeHealth;
-use crate::profiling::EngineProfiler;
+use crate::profiling::{EngineProfiler, ExportResult};
 use requests::{OpenPeer, Peer};
 
 const PEER_STATUS_PATH: &str = "/v1/internal/draft/status";
@@ -370,12 +370,11 @@ impl DraftClient {
 #[async_trait]
 impl EngineProfiler for DraftClient {
     async fn set_pytorch_recording(&self, start: bool, prefix: &str) -> Result<(), String> {
-        if start {
-            self.engine().start_profile(Some(prefix)).await
-        } else {
-            self.engine().stop_profile(Some(prefix)).await
-        }
-        .map_err(|error| error.to_string())
+        super::profiling::set_pytorch_recording(self.engine(), start, prefix).await
+    }
+
+    async fn finish_pytorch_export(&self, prefix: &str) -> Result<ExportResult, String> {
+        super::profiling::finish_pytorch_export(self.engine(), prefix).await
     }
 
     async fn set_mctracer_recording(&self, start: bool, directory: &Path) -> Result<(), String> {
