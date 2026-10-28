@@ -92,7 +92,7 @@ Use the [communication guidance](common.md#share-findings-and-keep-working), [ex
 | 24 | Follow-through | Compare prior findings, decisions and expected results with actual changes. Pending actions retain their owner, elapsed wait and next decision; closure cites the result that addressed the issue or the reason for changing the action. |
 | 25 | Strategy reflection | Compare time and resources spent with measured gains, information learned and unresolved assumptions. Identify patterns such as marginal gains or persistent environment work and the questions the lead needs to reconsider. |
 
-Use the [opportunity assessment](../../../../rsi-playbooks/guidance/meta-knowledge/06-opportunity-assessment.md) for items 22–25. Quantify each recorded direction’s gain, feasibility, evidence, cost and information scores with their sources and uncertainty; report the frontier and time allocation as current-state findings for the lead.
+For items 22–25, use the [opportunity assessment](../../../../rsi-playbooks/guidance/meta-knowledge/06-opportunity-assessment.md) to compare recorded gains, evidence and costs. Update changed entries from available records, reuse applicable assessments, and report trade-offs and time allocation to the lead.
 
 Research takes time, and a sound experiment may fail. Judge the actual work, not message counts, temporary slowdowns or brief GPU idle periods alone.
 
