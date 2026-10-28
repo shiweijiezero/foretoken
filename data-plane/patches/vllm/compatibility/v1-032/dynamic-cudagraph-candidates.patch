@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+--- a/vllm/v1/worker/gpu/cudagraph_utils.py
++++ b/vllm/v1/worker/gpu/cudagraph_utils.py
+@@ -378,15 +378,28 @@
+                 lora_descs = [
+                     d for d in mode_descs if d.num_active_loras == num_active_loras
+                 ]
+-                current_range_start = 0
+-                # Dynamic speculative decoding can produce multiple graphs with the same
+-                # num_tokens. Group them so each graph covers the same candidate range.
+-                for num_tokens, group in groupby(lora_descs, lambda d: d.num_tokens):
+-                    matching = list(group)
+-                    for i in range(current_range_start, num_tokens + 1):
+-                        key = (i, num_active_loras)
+-                        self._candidates.setdefault(key, []).extend(matching)
+-                    current_range_start = num_tokens + 1
++                # Each query width and microbatch layout needs its own nearest
++                # capture. A smaller incompatible width must not hide a graph.
++                geometries = dict.fromkeys(
++                    (d.uniform_token_count, d.max_query_len, d.num_ubatches)
++                    for d in lora_descs
++                )
++                for geometry in geometries:
++                    layout_descs = [
++                        d
++                        for d in lora_descs
++                        if (d.uniform_token_count, d.max_query_len, d.num_ubatches)
++                        == geometry
++                    ]
++                    current_range_start = 0
++                    for num_tokens, group in groupby(
++                        layout_descs, lambda d: d.num_tokens
++                    ):
++                        matching = list(group)
++                        for i in range(current_range_start, num_tokens + 1):
++                            key = (i, num_active_loras)
++                            self._candidates.setdefault(key, []).extend(matching)
++                        current_range_start = num_tokens + 1
+ 
+     @property
+     def dp_size(self) -> int:
