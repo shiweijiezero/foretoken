@@ -6,6 +6,7 @@
 import argparse
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import sysconfig
@@ -21,9 +22,22 @@ def main() -> None:
     args = parser.parse_args()
     torch_root = Path(torch.__file__).parent
     args.output.mkdir(parents=True, exist_ok=True)
-    command = [*shlex.split(os.environ.get("CXX", "c++")), "-std=c++20", "-O2", "-shared", "-fPIC"]
+    compiler = shlex.split(os.environ.get("CXX", "c++"))
+    python_include = Path(sysconfig.get_path("include"))
+    # CPU and MetaX skip Mooncake compilation, so this stage owns its build dependencies.
+    packages = []
+    if shutil.which(compiler[0]) is None:
+        packages.append("build-essential")
+    if not (python_include / "Python.h").is_file():
+        packages.append(f"python{sys.version_info.major}.{sys.version_info.minor}-dev")
+    if packages:
+        environment = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+        subprocess.run(["apt-get", "update"], env=environment, check=True)
+        subprocess.run(["apt-get", "install", "-y", "--no-install-recommends", *packages],
+                       env=environment, check=True)
+    command = [*compiler, "-std=c++20", "-O2", "-shared", "-fPIC"]
     for include in (torch_root / "include", torch_root / "include/torch/csrc/api/include",
-                    Path(sysconfig.get_path("include"))):
+                    python_include):
         command.extend(("-I", str(include)))
     command.append(f"-D_GLIBCXX_USE_CXX11_ABI={int(torch._C._GLIBCXX_USE_CXX11_ABI)}")
     if sys.platform == "darwin":
