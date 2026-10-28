@@ -27,7 +27,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 主 Agent 决定先研究哪些问题、各投入多少时间和资源，并让同一成员持续跟进。需要实现后才能判断效果的思路，也可以安排试验；测完再决定是否保留。Experimenter 按这些安排测试准备好的方案。成员在约定范围内自行推进，不必每做一步都等新指令。具体分工见[团队协作说明](roles/common_zh.md)。
 
-分别采用 task 中的 Explorer、Worker、Experimenter 和 Evaluator 数量，都不包含主 Agent。前三项指各角色的并行成员数；未填写时由主 Agent 安排，没有专属成员的职责交给主 Agent 或其他成员承担，这不增加人数，也不构成独立审查。Evaluator 数量指每轮新建的巡查 Agent 数，省略或留空时默认 1。明确填写的数量都应遵守，包括 0；Evaluator 设为 0 表示关闭巡查，不能把主 Agent 自查算作独立巡查。旧任务可能仍称此角色为 Observer，沿用其已指定的人数和间隔。
+分别采用 task 中的 Explorer、Worker、Experimenter 和 Evaluator 数量，都不包含主 Agent。前三项指各角色的并行成员数；未填写时由主 Agent 安排，没有专属成员的职责交给主 Agent 或其他成员承担，这不增加人数，也不构成独立审查。Evaluator 数量指每轮新建的巡查 Agent 数，省略或留空时默认 1。明确填写的数量都应遵守，包括 0；Evaluator 设为 0 表示关闭巡查，不能把主 Agent 自查算作独立巡查。
 
 运行环境的实际并发上限仍然有效，主 Agent 占用的名额也应计入。无法同时容纳用户要求的团队时，按优先级分批安排，记录要求人数、实际人数及差异原因。每名成员在同一时刻只按一个分配的角色计数。
 
