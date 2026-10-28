@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](progress-charts_zh.md)
 
-The milestone chart follows measured cumulative versions. The search chart shows the compared approaches, the best result so far and failed attempts. Place the matching search chart immediately above each overview table in the [experiment report](../experiment-records.md#maintain-the-user-facing-report).
+The milestone chart follows measured cumulative versions. The search chart shows the compared approaches, the best result so far and failed attempts. Place both matching charts immediately above each overview table in the [experiment report](../experiment-records.md#maintain-the-user-facing-report).
 
 The horizontal axis follows iteration order or elapsed time; the vertical axis shows the improvement ratio relative to the original baseline. Prefix chart data and image filenames with `progress-`, for example `progress-random-concurrency-1.yaml`.
 

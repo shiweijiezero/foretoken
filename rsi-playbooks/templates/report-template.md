@@ -8,19 +8,21 @@ Use this for the task's continuously maintained `report.md`, following the [repo
 
 State what was optimized, the measured improvement and the retained approach in a few sentences. Identify the model and workloads.
 
-Use one overview table per task type, such as random requests, multi-turn conversations or answer quality, with its iteration chart immediately above it. Keep them adjacent. Include the initial baseline, retained changes, regressions, rejected approaches and failed attempts so readers can see the complete search.
+Use one overview table per task type, such as random requests, multi-turn conversations or answer quality, with both its retained-version milestone chart and complete search chart immediately above it. Keep them adjacent. Include the initial baseline, retained changes, regressions, rejected approaches and failed attempts so readers can see the complete search.
 
 Each row summarizes one approach; each point represents that approach's result for the plotted metric and condition. Use the same names, values and ordering. Name rows as an ablation table: `baseline`, `+ A`, `+ A + B`, listing the complete measured changes from the original baseline in each name. Summarize comparable repeated runs with their count and variability, linking the individual measurements. Distinguish different workload protocols in the approach names and chart panels. Count approaches separately from measurement runs.
 
 The user's initial configuration is the only baseline and stays first across sessions. Later retests and local controls are named references, not replacement baselines. Show the signed percentage change from the original baseline alongside every measured metric. When the workload protocol has no initial measurement, show the absolute value and “—” for its change. Keep environment differences and local-control comparisons in the approach records. Show concurrency levels side by side and spell them out, such as “Concurrency 1” and “Concurrency 16”. Run IDs, full configurations and logs belong in linked records.
 
-Keep chart titles short: model, dataset and metric are enough. Mark retained milestones and failed attempts; ordinary measured points need no “valid” label. The main chart shows all summarized approaches. Additional milestone-only or per-condition figures belong with the details. Generate report iteration charts with `foretoken plot --progress`, using its native search and milestone chart types. See the [plotting guide](progress-charts.md).
+Keep chart titles short: model, dataset and metric are enough. Mark retained milestones and failed attempts; ordinary measured points need no “valid” label. The main chart shows all summarized approaches. Generate report iteration charts with `foretoken plot --progress`, using its native search and milestone chart types. See the [plotting guide](progress-charts.md).
 
 ### Task type
 
 Adapt the following layout to the task's metrics. Values include their change from the original baseline; “—” means unmeasured or undefined, with a reason in the decision column. State the statistic and repeat count. Quality tables retain evaluator sample counts and error estimates. Diagnostics and tool validation stay in the experiment records.
 
-![Approach iteration history](figures/progress-main-search.png)
+![Retained-version milestones](figures/progress-main-milestones.png)
+
+![Complete search history](figures/progress-main-search.png)
 
 | Approach | Concurrency 1: tokens/s ↑ | Concurrency 1: ms/token ↓ | Concurrency 16: tokens/s ↑ | Concurrency 16: ms/token ↓ | Decision |
 | --- | ---: | ---: | ---: | ---: | --- |

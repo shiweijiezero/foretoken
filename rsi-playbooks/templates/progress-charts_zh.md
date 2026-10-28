@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](progress-charts.md) | 简体中文
 
-里程碑图展示实测累计版本的变化，搜索图展示对比方案、截至当时的最佳结果和失败尝试。将对应搜索图紧接在[实验报告](../experiment-records_zh.md#持续维护用户报告)的各张总表上方。
+里程碑图展示实测累计版本的变化，搜索图展示对比方案、截至当时的最佳结果和失败尝试。将对应的两类图紧接在[实验报告](../experiment-records_zh.md#持续维护用户报告)的各张总表上方。
 
 横轴按迭代顺序或时间推进，纵轴展示相对原始 baseline 的改善倍数。绘图数据和图片使用 `progress-` 前缀，例如 `progress-random-concurrency-1.yaml`。
 
