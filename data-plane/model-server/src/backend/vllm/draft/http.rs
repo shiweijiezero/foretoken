@@ -247,11 +247,12 @@ async fn serve_peer(client: &DraftClient, socket: &mut WebSocket) -> Result<(), 
                 }
             }
         };
-        // Continue observing disconnects while native work owns registered buffers.
-        // Cancellation leaves that work joined by its existing operation owner.
+        // Explicit Close transfers cleanup to the native owner; a departing
+        // Target must not cancel that cleanup and fail the remaining peers.
+        // Other operations still observe disconnects while buffers are in use.
         let response = tokio::select! {
             result = operation => result?,
-            received = receive_peer::<PeerCommand>(socket) => {
+            received = receive_peer::<PeerCommand>(socket), if !closing => {
                 received?;
                 return Err("Target sent another command before its previous turn completed".into());
             },
