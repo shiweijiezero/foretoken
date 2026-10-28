@@ -1,0 +1,365 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/multi_connector.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/multi_connector.py
+@@ -431,6 +431,20 @@
+         connector = self._connectors[self._requests_to_connector[request.request_id]]
+         return connector.get_loaded_kv_cache_group_ids(request)
+ 
++    def query_prefix(
++        self, request: "Request", local_tokens: int
++    ) -> list[dict[str, str | int]]:
++        """Collect native offload observations without assigning a request to a child."""
++        from vllm.distributed.kv_transfer.kv_connector.v1.offloading_connector import (
++            OffloadingConnector,
++        )
++
++        observations: list[dict[str, str | int]] = []
++        for connector in self._connectors:
++            if isinstance(connector, (OffloadingConnector, MultiConnector)):
++                observations.extend(connector.query_prefix(request, local_tokens))
++        return observations
++
+     def get_num_new_matched_tokens(
+         self,
+         request: "Request",
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
+@@ -5,7 +5,7 @@
+ from collections.abc import Iterable, Sequence
+ from dataclasses import dataclass, field, replace
+ from itertools import chain, islice
+-from typing import Any, NamedTuple
++from typing import Any, Callable, NamedTuple
+ 
+ from vllm.config import VllmConfig
+ from vllm.distributed.kv_events import KVCacheEvent
+@@ -58,6 +58,10 @@
+     make_offload_key,
+ )
+ from vllm.v1.metrics.cache_hit_source import CacheHitSource
++
++from vllm.v1.kv_offload.cpu.manager import CPUOffloadingManager
++from vllm.v1.kv_offload.tiering.fs.manager import FileSystemTierManager
++from vllm.v1.kv_offload.tiering.manager import TieringOffloadingManager
+ from vllm.v1.outputs import KVConnectorOutput
+ from vllm.v1.request import Request, RequestStatus
+ 
+@@ -563,6 +567,94 @@
+ class OffloadingConnectorScheduler:
+     """Implementation of Scheduler side methods"""
+ 
++    def query_prefix(
++        self,
++        request: Request,
++        local_tokens: int,
++        max_num_new_tokens: int | None = None,
++    ) -> list[dict[str, str | int]]:
++        """Observe native offload prefixes without reserving cache capacity."""
++        if request.skip_reading_prefix_cache:
++            return []
++        if isinstance(self.manager, TieringOffloadingManager):
++            primary = self.manager.primary_tier
++            secondary_tiers = self.manager.secondary_tiers
++        elif isinstance(self.manager, CPUOffloadingManager):
++            primary = self.manager
++            secondary_tiers = ()
++        else:
++            return []
++
++        # Reuse native hashing, group keys, and the layout convergence algorithm.
++        # Only this temporary request state changes; the active scheduler and tiers do not.
++        context = _create_req_context(request)
++        state = RequestOffloadState(
++            self.config, request, context, RequestOffloadingContext()
++        )
++        state.num_locally_computed_tokens = local_tokens
++        state.update_offload_keys()
++        # A full native load still recomputes the last prompt token for sampling.
++        max_prefix_tokens = request.num_tokens - 1
++        cpu_tokens = self._query_prefix_match(state, primary.peek, max_num_new_tokens)
++        observations: list[dict[str, str | int]] = []
++        if cpu_tokens is not None and cpu_tokens > 0:
++            observations.append(
++                {
++                    "tier": "host_pinned",
++                    "matched_tokens": min(local_tokens + cpu_tokens, max_prefix_tokens),
++                }
++            )
++
++        filesystem_tiers = [
++            tier
++            for tier in secondary_tiers
++            if isinstance(tier, FileSystemTierManager)
++            and context.load_tier_filter.allows(tier.medium, tier.locality)
++        ]
++        if not filesystem_tiers:
++            return observations
++        if self.config.supports_partial_tail:
++            keys = [
++                make_offload_key(block_hash, group.group_idx)
++                for group in self.config.kv_group_configs
++                for block_hash in request.block_hashes[
++                    local_tokens // self.config.tokens_per_hash :
++                ]
++            ]
++        else:
++            keys = [
++                key
++                for group, group_state in zip(
++                    self.config.kv_group_configs, state.group_states
++                )
++                for key in group_state.offload_keys[
++                    local_tokens // group.tokens_per_chunk :
++                ]
++            ]
++        disk_keys: set[OffloadKey] = set()
++        for tier in filesystem_tiers:
++            disk_keys.update(tier.peek(keys, context))
++
++        def lookup(key: OffloadKey, req_context: ReqContext) -> LookupResult:
++            result = primary.peek(key, req_context)
++            if result is LookupResult.MISS and key in disk_keys:
++                return LookupResult.HIT
++            return result
++
++        # Disk is a continuation through the CPU staging tier, not an independent
++        # prefix whose length can be added to the GPU or CPU hit.
++        disk_tokens = self._query_prefix_match(state, lookup, max_num_new_tokens)
++        if disk_tokens is not None and disk_tokens > (cpu_tokens or 0):
++            observations.append(
++                {
++                    "tier": "disk",
++                    "matched_tokens": min(
++                        local_tokens + disk_tokens, max_prefix_tokens
++                    ),
++                }
++            )
++        return observations
++
+     def __init__(
+         self,
+         spec: OffloadingSpec,
+@@ -678,21 +770,26 @@
+         req: Request,
+         group_config: GroupOffloadConfig,
+         start_chunk_idx: int,
++        *,
++        block_lookup: Callable[[OffloadKey, ReqContext], LookupResult] | None = None,
++        record_events: bool = True,
+     ) -> int | None:
+         """Return the number of consecutive offloaded chunks from the start,
+         or None if the backend deferred a lookup."""
++        lookup = self.manager.lookup if block_lookup is None else block_lookup
+         hit_count = 0
+         defer_lookup = False
+         for local_idx, key in enumerate(keys):
+-            result = self.manager.lookup(key, req_context)
++            result = lookup(key, req_context)
+             match result:
+                 case LookupResult.HIT:
+-                    self._events_tracker.record_lookup(
+-                        req,
+-                        group_config,
+-                        start_chunk_idx + local_idx,
+-                        key,
+-                    )
++                    if record_events:
++                        self._events_tracker.record_lookup(
++                            req,
++                            group_config,
++                            start_chunk_idx + local_idx,
++                            key,
++                        )
+                     hit_count += 1
+                 case LookupResult.HIT_PENDING:
+                     defer_lookup = True
+@@ -711,17 +808,20 @@
+         sliding_window_size: int,
+         req_context: ReqContext,
+         initial_window_size: int | None = None,
++        *,
++        block_lookup: Callable[[OffloadKey, ReqContext], LookupResult] | None = None,
+     ) -> int | None:
+         """Return the end index (in `keys`) of the last run of
+         `sliding_window_size` consecutive hits, scanning from the end.
+         The first run may need a larger window for a partial rightmost chunk.
+         Returns 0 on miss, None if the backend deferred a lookup."""
++        lookup = self.manager.lookup if block_lookup is None else block_lookup
+         defer_lookup = False
+         pending_in_window = False
+         consecutive_hits = 0
+         required_window = initial_window_size or sliding_window_size
+         for idx in range(len(keys) - 1, -1, -1):
+-            match self.manager.lookup(keys[idx], req_context):
++            match lookup(keys[idx], req_context):
+                 case LookupResult.HIT:
+                     consecutive_hits += 1
+                 case LookupResult.HIT_PENDING:
+@@ -753,6 +853,9 @@
+         self,
+         req_status: RequestOffloadState,
+         max_num_new_tokens: int | None = None,
++        *,
++        block_lookup: Callable[[OffloadKey, ReqContext], LookupResult] | None = None,
++        record_events: bool = True,
+     ) -> int | None:
+         """Find how many tokens beyond num_locally_computed_tokens can be loaded.
+ 
+@@ -854,6 +957,8 @@
+                         req_status.req,
+                         group_config,
+                         start_chunk_idx,
++                        block_lookup=block_lookup,
++                        record_events=record_events,
+                     )
+                 else:
+                     required_window = sliding_window_size_in_chunks
+@@ -872,6 +977,7 @@
+                         required_window,
+                         req_status.req_context,
+                         initial_window + int(is_eagle_unverified),
++                        block_lookup=block_lookup,
+                     )
+                 if num_hit_chunks == 0:
+                     return 0
+@@ -967,8 +1073,17 @@
+         self,
+         req_status: RequestOffloadState,
+         max_num_new_tokens: int | None = None,
++        *,
++        block_lookup: Callable[[OffloadKey, ReqContext], LookupResult] | None = None,
++        record_events: bool = True,
+     ) -> int | None:
+-        complete_hit = self._lookup_complete_chunks(req_status, max_num_new_tokens)
++        lookup = self.manager.lookup if block_lookup is None else block_lookup
++        complete_hit = self._lookup_complete_chunks(
++            req_status,
++            max_num_new_tokens,
++            block_lookup=block_lookup,
++            record_events=record_events,
++        )
+         req_status.partial_tail_boundary = None
+         if complete_hit is None or not self.config.supports_partial_tail:
+             return complete_hit
+@@ -1002,7 +1117,7 @@
+                     req_status.req_context,
+                 )
+                 boundary_keys.append(key)
+-                result = self.manager.lookup(key, req_status.req_context)
++                result = lookup(key, req_status.req_context)
+                 if result is LookupResult.MISS:
+                     boundary_missed = True
+                     break
+@@ -1011,18 +1126,33 @@
+ 
+             pending |= boundary_pending
+             if not boundary_missed and not boundary_pending:
+-                for group_config, key in zip(
+-                    self.config.kv_group_configs, boundary_keys
+-                ):
+-                    self._events_tracker.record_partial_lookup(
+-                        req_status.req, group_config, boundary, key
+-                    )
++                if record_events:
++                    for group_config, key in zip(
++                        self.config.kv_group_configs, boundary_keys
++                    ):
++                        self._events_tracker.record_partial_lookup(
++                            req_status.req, group_config, boundary, key
++                        )
+                 req_status.partial_tail_boundary = boundary
+                 return boundary - local_tokens
+ 
+         if pending and complete_hit == 0:
+             return None
+         return complete_hit
++
++    def _query_prefix_match(
++        self,
++        state: RequestOffloadState,
++        block_lookup: Callable[[OffloadKey, ReqContext], LookupResult],
++        max_num_new_tokens: int | None,
++    ) -> int | None:
++        """Run the native matcher with the connector's load bound and no event writes."""
++        return self._lookup(
++            state,
++            max_num_new_tokens,
++            block_lookup=block_lookup,
++            record_events=False,
++        )
+ 
+     def on_new_request(self, request: Request) -> None:
+         """Called when a new request is added to the scheduler."""
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/offloading_connector.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/offloading_connector.py
+@@ -151,6 +151,17 @@
+         assert self.connector_scheduler is not None
+         self.connector_scheduler.on_new_request(request)
+ 
++    def query_prefix(
++        self, request: "Request", local_tokens: int
++    ) -> list[dict[str, str | int]]:
++        """Return read-only offload observations for the scheduler's native layout."""
++        assert self.connector_scheduler is not None
++        return self.connector_scheduler.query_prefix(
++            request,
++            local_tokens,
++            max_num_new_tokens=self._max_loadable_tokens(request, local_tokens),
++        )
++
+     def get_num_new_matched_tokens(
+         self, request: "Request", num_computed_tokens: int
+     ) -> tuple[int | None, bool]:
+--- a/vllm/v1/kv_offload/cpu/manager.py
++++ b/vllm/v1/kv_offload/cpu/manager.py
+@@ -180,6 +180,15 @@
+ 
+     # --- OffloadingManager interface ---
+ 
++    def peek(self, key: OffloadKey, req_context: ReqContext) -> LookupResult:
++        """Observe CPU readiness without updating access counts or replacement state."""
++        block = self._policy.get(key)
++        if block is None:
++            return LookupResult.MISS
++        if not block.is_ready:
++            return LookupResult.HIT_PENDING
++        return LookupResult.HIT
++
+     @override
+     def on_new_request(self, req_context: ReqContext) -> RequestOffloadingContext:
+         self._get_request_cache_access(req_context)
+@@ -187,12 +196,7 @@
+ 
+     @override
+     def lookup(self, key: OffloadKey, req_context: ReqContext) -> LookupResult:
+-        chunk = self._policy.get(key)
+-        if chunk is None:
+-            return LookupResult.MISS
+-        if not chunk.is_ready:
+-            return LookupResult.HIT_PENDING
+-        return LookupResult.HIT
++        return self.peek(key, req_context)
+ 
+     @override
+     def get_load_source(
+--- a/vllm/v1/kv_offload/tiering/fs/manager.py
++++ b/vllm/v1/kv_offload/tiering/fs/manager.py
+@@ -218,6 +218,16 @@
+         if result is None:
+             return LookupResult.RETRY
+         return LookupResult.HIT if result else LookupResult.MISS
++
++    def peek(self, keys: list[OffloadKey], req_context: ReqContext) -> set[OffloadKey]:
++        """Observe existing native files without promotion or pending-request state."""
++        return {
++            key
++            for key, found in zip(
++                keys, self._lookup_manager.batch_lookup(keys, req_context), strict=True
++            )
++            if found
++        }
+ 
+     @override
+     def submit_store(self, job_metadata: TransferJob) -> None:
