@@ -98,7 +98,7 @@ foretoken perf examples/feature/profile/nsight --name nsight \
 
 ## 清理
 
-采集和分析完成后，保留结论、复现信息和必要原件，清理本任务无用的临时与重复 trace。大 trace 留在远端，本地只同步摘要和关键图。
+分析过程中保留结论、复现信息和必要原件，及时清理本任务已无用途的 trace。
 
 不再需要该部署时，执行：
 
