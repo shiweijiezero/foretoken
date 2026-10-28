@@ -9,7 +9,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 帕累托引导探索（Pareto-Guided Exploration，PGE）通过机会评估、前沿识别、主 Agent 决策和实验反馈，组织 Agent 的推理优化工作。
 
-结合已有源码分析和实验记录，比较一个方向的收益空间与所需投入。Evaluator 评估当前证据和时间使用，主 Agent 决定方向、负责人和预算。评估与决定分别写入已有巡查笔记和团队记录。
+结合已有源码分析和实验记录，比较一个方向的收益空间与所需投入。Evaluator 评估当前证据和时间使用，主 Agent 决定方向、负责人和预算。评估与决定分别写入已有评估笔记和团队记录。
 
 巡查时只更新变化的条目，复用仍适用的证据与判断。评分不要求新增实验或质量评测；只有改动可能影响输出且已有证据不足时，才按任务约定的频率安排质量验证。
 

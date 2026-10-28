@@ -9,7 +9,7 @@ English | [简体中文](06-opportunity-assessment_zh.md)
 
 Pareto-Guided Exploration (PGE) organizes agentic inference optimization through opportunity assessment, frontier identification, lead decisions and feedback from experiments.
 
-Compare a direction's potential gain with the work it requires, using existing source analysis and experiment records. The Evaluator assesses current evidence and time use; the lead decides directions, owners and budgets. Keep both in the existing observation and team records.
+Compare a direction's potential gain with the work it requires, using existing source analysis and experiment records. The Evaluator assesses current evidence and time use; the lead decides directions, owners and budgets. Keep both in the existing assessment and team records.
 
 Update changed entries at Evaluator checks. Reuse applicable evidence and unchanged assessments; a score does not require a new experiment or a quality evaluation. Quality checks follow the task's agreed frequency and are needed for changes that may affect outputs when existing evidence is insufficient.
 
