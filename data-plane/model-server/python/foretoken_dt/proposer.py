@@ -4,8 +4,11 @@
 """Keep MRV2's native proposal contract while executing a turn on a Draft peer."""
 
 import json
+from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
+from queue import Queue
+from threading import Condition, Event, Lock, Thread
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -61,6 +64,7 @@ class StagedProposal:
     feature_rows: int
     features_transferred: Future[None] | None
     prepare_sent: Future[bool] | None
+    sequence: int
     device_inputs: torch.Tensor | None
     device_inputs_ready: torch.cuda.Event | None
     query_start_loc: list[int]
@@ -68,6 +72,55 @@ class StagedProposal:
     seeds: np.ndarray
     copy_done: torch.cuda.Event
     sources: list[torch.Tensor]
+
+
+class ControlMailbox:
+    """Serialize peer commands while letting one reader deliver ordered ACKs."""
+
+    def __init__(self, connection):
+        self.connection = connection
+        self.pending: Queue[Future] = Queue()
+        self.send_lock = Lock()
+        self.closed = Event()
+        self.reader = Thread(target=self._read, name="draft-control-reader", daemon=True)
+        self.reader.start()
+
+    def send(self, payload: str) -> Future:
+        """Queue one command and return its response future without blocking the caller."""
+        response = Future()
+        with self.send_lock:
+            try:
+                self.connection.send(payload)
+            except BaseException as error:
+                response.set_exception(error)
+                raise
+            self.pending.put(response)
+        return response
+
+    def _read(self) -> None:
+        """Match each wire response to the oldest command on the same connection."""
+        try:
+            while not self.closed.is_set():
+                response = json.loads(self.connection.recv())
+                future = self.pending.get()
+                if "error" in response:
+                    future.set_exception(RuntimeError(response["error"]))
+                else:
+                    future.set_result(response)
+        except BaseException as error:
+            while True:
+                try:
+                    self.pending.get_nowait().set_exception(error)
+                except Exception:
+                    break
+
+    def close(self) -> None:
+        """Stop the reader after the owner has joined all queued operations."""
+        self.closed.set()
+        try:
+            self.connection.close()
+        finally:
+            self.reader.join(timeout=2)
 
 
 class RemoteProposer(BaseSpeculator):
@@ -99,14 +152,23 @@ class RemoteProposer(BaseSpeculator):
         )
         self.exchange = TensorExchange(settings.protocol) if self.nccl is None else None
         self.feature_capture: FeatureCapture | None = None
-        self.prepare_sent: Future[bool] | None = None
+        self.prepare_queue: deque[tuple[int, Future[bool]]] = deque()
+        self.prepare_queue_lock = Lock()
+        self.next_sequence = 0
         self.device_requests: list[DeviceRequest] = []
         self.control = None
+        self.control_mailbox: ControlMailbox | None = None
+        self.prepare_lock = Lock()
+        self.command_lock = Lock()
+        self.dispatch_condition = Condition()
+        self.pending_dispatches = 0
+        self.next_prepare_gate = Event()
+        self.next_prepare_gate.set()
         self.control_scope = None
         self.destination: TensorRegion | None = None
         self.failed = False
         self.executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="draft-control"
+            max_workers=2, thread_name_prefix="draft-control"
         )
         # Main-stream events cannot measure a proposal completed by peer IO.
         self.runner.spec_decode_timing_collector = None
@@ -158,6 +220,8 @@ class RemoteProposer(BaseSpeculator):
         """Retire feature-buffer reads before the native forward reuses their storage."""
         if self.failed:
             raise RuntimeError("the Draft binding has failed")
+        if getattr(self.runner, "warming_up", False):
+            return
         if self.feature_capture is not None:
             self.feature_capture.prepare_forward()
         self.device_requests = []
@@ -210,29 +274,36 @@ class RemoteProposer(BaseSpeculator):
                     )
                 )
         if self.nccl is not None:
-            self.prepare_sent = self.executor.submit(
+            sequence = self.next_sequence
+            self.next_sequence += 1
+            future = self.executor.submit(
                 self._prepare_batch,
+                sequence,
                 input_batch.num_tokens if self.feature_capture is not None else 0,
                 input_batch.num_reqs,
                 self.device_requests,
             )
+            with self.prepare_queue_lock:
+                self.prepare_queue.append((sequence, future))
 
-    def _prepare_batch(self, rows, num_requests, requests):
+    def _prepare_batch(self, sequence, rows, num_requests, requests):
         """Reserve native inputs during Target forward, retaining replay when reservation is unavailable."""
-        request = PrepareBatch(
-            sequence=self.sequence,
-            feature_rows=rows,
-            num_requests=num_requests,
-            requests=requests,
-        )
-        self.control.send(
-            json.dumps(
-                {"operation": "prepare", "payload": request.model_dump()},
-                separators=(",", ":"),
-                allow_nan=False,
+        # Prepare messages must retain native sequence order. The second
+        # executor worker may wait here while the preceding completion thread
+        # joins its ACK, allowing Target compute to continue without issuing
+        # two same-sequence reservations.
+        with self.prepare_lock:
+            self.next_prepare_gate.wait()
+            self.next_prepare_gate.clear()
+            request = PrepareBatch(
+                sequence=sequence,
+                feature_rows=rows,
+                num_requests=num_requests,
+                requests=requests,
             )
-        )
-        accepted = self._receive_control()["execute"]
+            accepted = self._exchange_control(
+                {"operation": "prepare", "payload": request.model_dump()}
+            )["execute"]
         if accepted:
             for request in requests:
                 if request.initial is not None:
@@ -283,6 +354,7 @@ class RemoteProposer(BaseSpeculator):
             max_size=None,
         )
         self.control = scope.__enter__()
+        self.control_mailbox = ControlMailbox(self.control)
         try:
             opened = self._exchange_control(request.model_dump())
             if opened["event"] != "opened":
@@ -295,12 +367,15 @@ class RemoteProposer(BaseSpeculator):
             if self.nccl is not None:
                 # Both workers enter the native collective after accepting the
                 # control binding; neither waits for a connect ACK first.
-                self.control.send('{"operation":"connect"}')
+                connect_ack = self._send_control({"operation": "connect"})
                 self.nccl.connect()
-                self._receive_control()
+                connect_ack.result()
         except BaseException:
             if self.nccl is not None:
                 self.nccl.close(abort=True)
+            if self.control_mailbox is not None:
+                self.control_mailbox.close()
+                self.control_mailbox = None
             self.control = None
             scope.__exit__(None, None, None)
             raise
@@ -308,15 +383,15 @@ class RemoteProposer(BaseSpeculator):
 
     def _exchange_control(self, payload):
         """Send one ordered peer operation and wait for its native completion acknowledgment."""
-        self.control.send(json.dumps(payload, separators=(",", ":"), allow_nan=False))
-        return self._receive_control()
+        return self._send_control(payload).result()
 
-    def _receive_control(self):
-        """Receive one peer acknowledgment or surface its native operation failure."""
-        response = json.loads(self.control.recv())
-        if "error" in response:
-            raise RuntimeError(response["error"])
-        return response
+    def _send_control(self, payload) -> Future:
+        """Queue one ordered command on the mailbox-owned control connection."""
+        if self.control_mailbox is None:
+            raise RuntimeError("the Draft control mailbox is not open")
+        return self.control_mailbox.send(
+            json.dumps(payload, separators=(",", ":"), allow_nan=False)
+        )
 
     def propose(
         self,
@@ -338,7 +413,7 @@ class RemoteProposer(BaseSpeculator):
         is_profile=False,
     ) -> torch.Tensor | DeviceFuture[torch.Tensor]:
         """Stage native inputs and return a future carrying the proposals' device dependency."""
-        if dummy_run:
+        if dummy_run or getattr(self.runner, "warming_up", False):
             return self.draft_tokens[: input_batch.num_reqs].zero_()
         if self.failed:
             raise RuntimeError("the Draft binding has failed")
@@ -423,6 +498,14 @@ class RemoteProposer(BaseSpeculator):
                 copy_done.synchronize()
                 raise
         sampling = self.runner.sampler.sampling_states
+        prepare_sent = None
+        sequence = None
+        with self.prepare_queue_lock:
+            if self.prepare_queue:
+                sequence, prepare_sent = self.prepare_queue.popleft()
+        if sequence is None:
+            sequence = self.next_sequence
+            self.next_sequence += 1
         staged = StagedProposal(
             request_ids=list(input_batch.req_ids),
             indices=indices,
@@ -433,7 +516,8 @@ class RemoteProposer(BaseSpeculator):
             token_offsets=token_offsets,
             feature_rows=input_batch.num_tokens,
             features_transferred=None,
-            prepare_sent=self.prepare_sent,
+            prepare_sent=prepare_sent,
+            sequence=sequence,
             device_inputs=device_inputs,
             device_inputs_ready=device_inputs_ready,
             query_start_loc=input_batch.query_start_loc_np.tolist(),
@@ -442,12 +526,29 @@ class RemoteProposer(BaseSpeculator):
             copy_done=copy_done,
             sources=[metadata, *token_sources],
         )
-        self.prepare_sent = None
         if self.feature_capture is not None:
             staged.features_transferred = self.feature_capture.begin_transfer()
         result = DeviceFuture(devices=[self.device])
-        self.executor.submit(self._complete_proposal, staged, result)
+        with self.dispatch_condition:
+            self.pending_dispatches += 1
+        try:
+            self.executor.submit(self._complete_proposal, staged, result)
+        except BaseException:
+            self._mark_dispatch_complete()
+            raise
         return result
+
+    def _mark_dispatch_complete(self) -> None:
+        """Release Finish once a proposal has reached the wire or failed before dispatch."""
+        with self.dispatch_condition:
+            self.pending_dispatches -= 1
+            self.dispatch_condition.notify_all()
+
+    def _wait_for_dispatches(self) -> None:
+        """Wait until submitted proposal commands have been dispatched before cleanup."""
+        with self.dispatch_condition:
+            while self.pending_dispatches:
+                self.dispatch_condition.wait()
 
     def _stage_host_inputs(self, staged: StagedProposal) -> None:
         """Materialize host confirmation only when native reservation falls back."""
@@ -550,6 +651,7 @@ class RemoteProposer(BaseSpeculator):
         self, staged: StagedProposal, output: DeviceFuture[torch.Tensor]
     ) -> None:
         """Publish ordered peer output with its producer-stream dependency for native consumers."""
+        dispatched = False
         try:
             if self.failed:
                 raise RuntimeError("the Draft binding has failed")
@@ -592,7 +694,11 @@ class RemoteProposer(BaseSpeculator):
                             dtype=torch.float32,
                             device=self.device,
                         )
-            sequence = self.sequence
+            sequence = staged.sequence
+            if sequence != self.sequence:
+                raise RuntimeError(
+                    "Draft proposal sequence advanced before its ordered turn was sent"
+                )
             batch = (
                 ExecuteBatch(sequence=sequence)
                 if execute
@@ -603,12 +709,20 @@ class RemoteProposer(BaseSpeculator):
                 "payload": batch.model_dump(),
             }
             with record_function_or_nullcontext("DT Target proposal RPC"):
-                if self.nccl is not None:
-                    self.control.send(
-                        json.dumps(payload, separators=(",", ":"), allow_nan=False)
-                    )
-                else:
-                    result = self._exchange_control(payload)
+                with self.command_lock:
+                    if sequence != self.sequence:
+                        raise RuntimeError(
+                            "Draft proposal sequence advanced before its ordered turn was sent"
+                        )
+                    control_result = self._send_control(payload)
+                    self.sequence = sequence + 1
+                    self._mark_dispatch_complete()
+                    dispatched = True
+                    # Permit the next Prepare only after this turn's command is
+                    # on the wire; the server queues its response behind it.
+                    self.next_prepare_gate.set()
+                if self.nccl is None:
+                    result = control_result.result()
                     if result["sequence"] != sequence:
                         raise RuntimeError(
                             "Draft returned a different proposal sequence"
@@ -641,7 +755,6 @@ class RemoteProposer(BaseSpeculator):
                         staged.temperatures, device=self.device
                     ).clamp_min(1e-20)
                     self.draft_logits[staged.indices] = log_q * scale[:, None, None]
-                self.sequence += 1
                 output.set_result(tokens)
             # Native consumers already own the device result. Execute ACKs carry
             # Draft-owned confirmation; ordinary proposals retain host fallback.
@@ -655,12 +768,15 @@ class RemoteProposer(BaseSpeculator):
                 # Like native PP's side-stream result, GPU consumers can proceed
                 # before CPU bookkeeping finishes. This ordered connection still
                 # joins the engine acknowledgment before admitting another turn.
-                result = self._receive_control()
+                result = control_result.result()
                 if execute:
                     self._apply_execute_result(staged, result, sequence)
                 elif result["sequence"] != sequence:
                     raise RuntimeError("Draft returned a different proposal sequence")
         except BaseException as error:
+            if not dispatched:
+                self._mark_dispatch_complete()
+            self.next_prepare_gate.set()
             self.failed = True
             if self.nccl is not None:
                 self.nccl.close(abort=True)
@@ -693,6 +809,7 @@ class RemoteProposer(BaseSpeculator):
 
     def _finish_requests(self, request_ids: set[str]) -> None:
         """Release retained peer sessions after their preceding proposals complete."""
+        self._wait_for_dispatches()
         active = [
             request_id
             for request_id in request_ids
@@ -726,6 +843,7 @@ class RemoteProposer(BaseSpeculator):
         """Close the remote owner before unregistering buffers that it can still write."""
         try:
             if self.control is not None and not self.failed:
+                self._wait_for_dispatches()
                 self._exchange_control({"operation": "close"})
         except BaseException:
             self.failed = True
@@ -733,13 +851,16 @@ class RemoteProposer(BaseSpeculator):
         finally:
             try:
                 if self.control is not None:
+                    if self.control_mailbox is not None:
+                        self.control_mailbox.close()
+                        self.control_mailbox = None
                     self.control_scope.__exit__(None, None, None)
                     self.control = None
             finally:
                 try:
                     if self.nccl is not None:
                         self.nccl.close(
-                            abort=self.failed or self.prepare_sent is not None
+                            abort=self.failed or bool(self.prepare_queue)
                         )
                 finally:
                     try:

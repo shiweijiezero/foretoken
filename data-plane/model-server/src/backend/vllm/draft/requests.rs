@@ -513,7 +513,10 @@ impl Peer {
         let execution = {
             let mut state = self.requests.lock().unwrap();
             if batch.sequence != state.sequence {
-                return Err("DT device execution sequence is out of order".into());
+                return Err(format!(
+                    "DT device execution sequence is out of order (expected {}, got {})",
+                    state.sequence, batch.sequence
+                ));
             }
             state
                 .execution

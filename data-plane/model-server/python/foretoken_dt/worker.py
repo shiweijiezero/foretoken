@@ -85,6 +85,17 @@ class WorkerExtension(ProfilingWorkerExtension):
                 "This neural Draft requires Target KV, which DT does not transfer yet"
             )
         self.model_runner.speculator = RemoteProposer(self, settings)
+        runner = self.model_runner
+        original_warmup = self.compile_or_warm_up_model
+
+        def warmup_with_dt_state(*args, **kwargs):
+            runner.warming_up = True
+            try:
+                return original_warmup(*args, **kwargs)
+            finally:
+                runner.warming_up = False
+
+        self.compile_or_warm_up_model = warmup_with_dt_state
 
     def destroy_worker_extension(self):
         """Close an initialized remote proposer before the native worker releases its device."""
@@ -481,8 +492,15 @@ class DraftWorker(gpu_worker.Worker):
         state = self.dt_peers[peer_id]
         peer = state.settings
         if state.channel is not None:
-            if state.prepared is None or state.prepared.num_requests != len(requests):
-                raise ValueError("Draft request rows differ from the prepared transfer")
+            prepared = state.prepared
+            if prepared is None:
+                raise ValueError("Draft stage has no prepared transfer")
+            if prepared.num_requests != len(requests):
+                raise ValueError(
+                    "Draft request rows differ from the prepared transfer "
+                    f"(sequence={prepared.sequence}, prepared={prepared.num_requests}, "
+                    f"staged={len(requests)})"
+                )
             state.output = DraftOutput(
                 peer,
                 state.channel,

@@ -192,10 +192,14 @@ async fn serve_peer(client: &DraftClient, socket: &mut WebSocket) -> Result<(), 
         .send(Message::Text(opened.to_string().into()))
         .await
         .map_err(|error| error.to_string())?;
+    let mut queued = None;
     loop {
-        let command: PeerCommand = tokio::select! {
-            received = receive_peer(socket) => received?,
-            () = client.0.health.wait_stopped() => return Ok(()),
+        let command: PeerCommand = match queued.take() {
+            Some(command) => command,
+            None => tokio::select! {
+                received = receive_peer(socket) => received?,
+                () = client.0.health.wait_stopped() => return Ok(()),
+            },
         };
         let closing = matches!(command, PeerCommand::Close);
         let peer = connection.peer.clone();
@@ -247,16 +251,22 @@ async fn serve_peer(client: &DraftClient, socket: &mut WebSocket) -> Result<(), 
                 }
             }
         };
-        // Explicit Close transfers cleanup to the native owner; a departing
-        // Target must not cancel that cleanup and fail the remaining peers.
-        // Other operations still observe disconnects while buffers are in use.
-        let response = tokio::select! {
-            result = operation => result?,
-            received = receive_peer::<PeerCommand>(socket), if !closing => {
-                received?;
-                return Err("Target sent another command before its previous turn completed".into());
-            },
-            () = client.0.health.wait_stopped() => return Ok(()),
+        // Keep one queued command while the current native operation completes.
+        // The response for the current operation is sent first, preserving the
+        // ordered peer protocol while allowing a Target to submit its next
+        // Prepare during the preceding Draft turn.
+        tokio::pin!(operation);
+        let response = loop {
+            tokio::select! {
+                result = &mut operation => break result?,
+                received = receive_peer::<PeerCommand>(socket), if !closing => {
+                    if queued.is_some() {
+                        return Err("Target queued more than one command before its previous turn completed".into());
+                    }
+                    queued = Some(received?);
+                },
+                () = client.0.health.wait_stopped() => return Ok(()),
+            }
         };
         socket
             .send(Message::Text(response.into()))
