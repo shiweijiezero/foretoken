@@ -6,17 +6,30 @@
 from dataclasses import dataclass
 
 import torch
-from vllm.v1.worker.gpu.async_utils import async_copy_to_np, stream
+from vllm.v1.worker.gpu.async_utils import stream
 
 
 class DeviceInputBatch:
     """Retain one peer's logical batch until native completion retires its readers."""
 
-    def __init__(self, sequence, packed, features, num_tokens, num_requests, ready):
+    def __init__(
+        self,
+        sequence,
+        packed,
+        features,
+        num_tokens,
+        num_requests,
+        ready,
+        *,
+        feedback_packed,
+        feedback_features,
+    ):
         self.sequence = sequence
         self.packed = packed
         self.features = features
         self.ready = ready
+        self.feedback_packed = feedback_packed
+        self.feedback_features = feedback_features
         self.input_ids, self.positions, metadata = packed.split(
             (num_tokens, num_tokens, 5 * num_requests)
         )
@@ -50,39 +63,57 @@ class DeviceTurnFeedback:
         self.values = []
         with stream(runner.output_copy_stream, runner.main_stream):
             runner.output_copy_stream.wait_stream(runner.main_stream)
-            copied_batches = {}
             for request_id, binding in rows:
                 batch = binding.batch
-                if batch not in copied_batches:
-                    num_tokens = batch.input_ids.numel()
-                    packed = async_copy_to_np(batch.packed)
-                    source = batch.features[:, :num_tokens].movedim(0, 1)
-                    # Pageable destinations can block the host before Draft execution is queued.
-                    features = torch.empty(
-                        source.shape,
-                        dtype=source.dtype,
-                        device="cpu",
-                        pin_memory=True,
+                runner.output_copy_stream.wait_event(batch.ready)
+                num_tokens = batch.input_ids.numel()
+                input_ids, positions, metadata = batch.feedback_packed.split(
+                    (num_tokens, num_tokens, 5 * batch.metadata.shape[1])
+                )
+                metadata = metadata.view_as(batch.metadata)
+                left, right = binding.offset, binding.offset + binding.count
+                input_ids[left:right].copy_(
+                    batch.input_ids[left:right], non_blocking=True
+                )
+                positions[left:right].copy_(
+                    batch.positions[left:right], non_blocking=True
+                )
+                metadata[:, binding.row].copy_(
+                    batch.metadata[:, binding.row], non_blocking=True
+                )
+                features = batch.feedback_features[left:right]
+                features.copy_(
+                    batch.features[:, left:right].movedim(0, 1), non_blocking=True
+                )
+                self.values.append(
+                    (
+                        request_id,
+                        (
+                            input_ids[left:right].numpy(),
+                            positions[left:right].numpy(),
+                            metadata[:, binding.row].numpy(),
+                            features,
+                        ),
                     )
-                    features.copy_(source, non_blocking=True)
-                    copied_batches[batch] = (
-                        packed[:num_tokens],
-                        packed[num_tokens : 2 * num_tokens],
-                        packed[2 * num_tokens :].reshape(batch.metadata.shape),
-                        features,
-                    )
-                self.values.append((request_id, copied_batches[batch]))
+                )
+
+    @classmethod
+    def materialize(cls, runner, rows):
+        """Confirm ready input once when native KV pressure requires CPU prefix replay."""
+        from .scheduler import ConfirmedDeviceTurn
+
+        feedback = cls(runner, rows)
+        completed = torch.cuda.Event()
+        completed.record(runner.output_copy_stream)
+        completed.synchronize()
+        return feedback.settle(runner.contexts, ConfirmedDeviceTurn)
 
     def settle(self, contexts, confirmation_type):
         """Return native-request confirmations after the output copy event has completed."""
         confirmations = {}
         for (_, binding), values in zip(self.rows, self.values, strict=True):
             request_id, (input_ids, positions, metadata, features) = values
-            left, right = binding.offset, binding.offset + binding.count
-            input_ids = input_ids[left:right]
-            positions = positions[left:right]
-            features = features[left:right]
-            _, sampled, rejected, anchor, total_len = map(int, metadata[:, binding.row])
+            _, sampled, rejected, anchor, total_len = map(int, metadata)
             valid = binding.count - rejected
             if binding.initial:
                 valid_confirmation = (

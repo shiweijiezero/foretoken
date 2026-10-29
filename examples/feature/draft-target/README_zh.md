@@ -30,6 +30,8 @@ curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
 
 将 `model.yaml` 中 `target` Pool 的 `replicas` 改为 `2` 或 `3`，再次执行部署命令，即可分别运行三卡或四卡配置。每个 Draft、Target 实例使用一张 GPU；增加副本不改变引擎的张量并行度。
 
+优化共享 Draft 的性能时，在 Draft Pool 的 `engineArgs` 中使用 `distributed-executor-backend: uni`。其他已支持的单 Worker 执行器沿用普通草稿调度路径。Draft 的原生批次上限用于所有 Target 的合计负载；超过单批容量的请求会分批执行。
+
 各 Pool 可以通过自己的 `engineArgs.async-scheduling` 开启或关闭异步调度。做同步对照时，将两端都设为 `false`。EAGLE3 需要完整提示词对应的特征，因此该配置会自动关闭前缀缓存。
 
 性能测量通过[评测的数据集入口](../../../benchmarks/docs/perf/huggingface_zh.md)读取 [ShareGPT 原始对话](https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered)，GPU 数包含 Draft 与 Target。与共置推理比较时，保持模型、候选 token 数、调度模式、前缀缓存设置和负载一致。

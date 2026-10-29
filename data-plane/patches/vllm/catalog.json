@@ -491,6 +491,14 @@
           "v1-metax"
         ]
       }
+    },
+    {
+      "path": "compatibility/v1-031/external-input-readiness.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
     }
   ]
 }

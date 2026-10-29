@@ -30,6 +30,8 @@ Only the Target model is exposed to callers. The Draft Pool's `model` selects it
 
 In `model.yaml`, change the `target` Pool's `replicas` to `2` or `3`, then rerun the deployment command. These configurations use three or four GPUs in total. Each Draft or Target instance uses one GPU; replica counts do not change engine tensor parallelism.
 
+For shared-Draft performance, use `distributed-executor-backend: uni` in the Draft Pool's `engineArgs`. Other supported single-worker executors use ordinary proposal scheduling. The Draft's native batch limits apply to the combined workload from its Targets; requests beyond those limits run in subsequent batches.
+
 `async-scheduling` can be enabled or disabled independently in each Pool's `engineArgs`. Set it to `false` in both Pools for a synchronous comparison. EAGLE3 requires features from the complete prompt, so prefix caching is disabled automatically for this configuration.
 
 For performance measurements, use the original [ShareGPT conversations](https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered) through the [benchmark dataset input](../../../benchmarks/docs/perf/huggingface.md), and count both Draft and Target GPUs. Compare with colocated decoding using the same models, candidate count, scheduling mode, prefix-cache setting, and workload.

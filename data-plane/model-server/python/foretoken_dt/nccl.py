@@ -79,12 +79,16 @@ class NcclPeer:
             self.input_ready.record(self.input_stream)
 
     def receive_features(
-        self, features: torch.Tensor, rows: int, consumer_stream: torch.cuda.Stream
+        self,
+        features: torch.Tensor,
+        rows: int,
+        consumer_stream: torch.cuda.Stream | None,
     ) -> None:
         """Post the announced input shapes after prior consumers release the buffer."""
         assert self.t2d_comm is not None
         with torch.cuda.device(self.device), torch.cuda.stream(self.input_stream):
-            self.input_stream.wait_stream(consumer_stream)
+            if consumer_stream is not None:
+                self.input_stream.wait_stream(consumer_stream)
             for plane in features:
                 self.t2d_comm.recv(plane[:rows], self.remote_rank, self.input_stream)
             self.input_ready.record(self.input_stream)

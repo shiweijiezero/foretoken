@@ -6,7 +6,7 @@
 import time
 from contextlib import contextmanager
 from copy import copy
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from functools import partial
 
 from vllm import SamplingParams
@@ -30,7 +30,7 @@ class ConfirmedDraftTurn:
 
 @dataclass
 class ReservedDraftTurn:
-    """Describe external device inputs whose KV capacity is already owned by native scheduling."""
+    """Describe a pending device query whose native KV is allocated when selected."""
 
     turn_sequence: int
     query_tokens: int
@@ -69,6 +69,7 @@ class DraftTurns:
         # native step fences before returning those blocks to its allocator.
         self.defer_block_free = True
         self._device_batch_active = False
+        self.dt_input_resolutions = {}
         self.dt_waiting_queues = (self.waiting, self.kv_holding_waiting)
         if self.cache_config.enable_prefix_caching:
             coordinator = self.kv_cache_manager.coordinator
@@ -153,11 +154,17 @@ class DraftTurns:
             current.status = RequestStatus.WAITING
 
     def _activate_reserved_turn(self, request):
-        """Resume a parked native slot after its complete device batch owns KV capacity."""
+        """Resume one retained turn while its inputs await device completion."""
         if not request.dt_waiting or request.num_in_flight_tokens:
             raise ValueError("Device turn arrived before native completion")
+        if request.status == RequestStatus.WAITING_FOR_STREAMING_REQ:
+            self.num_waiting_for_streaming_input -= 1
         if request not in self.running:
-            raise ValueError("Reserved Draft request lost its native worker slot")
+            for queue in self.dt_waiting_queues:
+                queue.remove_requests((request,))
+            request.status = RequestStatus.WAITING
+            self.deferred_waiting.discard(request)
+            self._enqueue_waiting_request(request)
         # Speculative private KV remains reusable by the worker, but only the
         # confirmed prefix may count toward native allocation and scheduling.
         request.num_computed_tokens = min(
@@ -165,7 +172,9 @@ class DraftTurns:
         )
         request.dt_waiting = False
         request.next_decode_eligible_step = 0
-        request.status = RequestStatus.RUNNING
+        request.status = (
+            RequestStatus.RUNNING if request in self.running else RequestStatus.WAITING
+        )
 
     def _make_cached_request_data(self, running_reqs, *args, **kwargs):
         """Publish confirmed suffixes alongside the native incremental block updates."""
@@ -263,135 +272,116 @@ class DraftTurns:
             prepared.append((request, turn))
         if (
             not self.num_spec_tokens
+            or self.vllm_config.parallel_config.distributed_executor_backend != "uni"
             or self.pause_state != PauseState.UNPAUSED
             or self.need_mamba_block_aligned_split
             or self.num_prefill_lookahead > 1
             or self.connector is not None
             or self.ec_connector is not None
-            or self.prefix_replay_tokens
             or self.cache_config.enable_prefix_caching
             or any(
-                getattr(request, "dt_reserved_turn", None) is not None
+                turn.query_tokens > self.max_num_scheduled_tokens
+                or turn.query_tokens
+                + self.vllm_config.speculative_config.max_num_new_slots_for_drafting
+                > self.scheduler_config.max_num_batched_tokens
+                or turn.seq_len_upper_bound + self.num_spec_tokens >= self.max_model_len
+                or request.has_encoder_inputs
+                or request.mm_features
+                or request.lora_request is not None
+                or (
+                    0
+                    < self.scheduler_config.long_prefill_token_threshold
+                    < turn.query_tokens
+                )
                 or request.num_in_flight_tokens
-                or not request.dt_waiting
-                for request in self.requests.values()
+                or (request.request_id in self.requests and not request.dt_waiting)
+                for request, turn in prepared
             )
         ):
             yield False
             return
-        query_budget = sum(turn.query_tokens for _, turn in prepared)
-        slots = self.vllm_config.speculative_config.max_num_new_slots_for_drafting
-        new_count = sum(turn.initial for _, turn in prepared)
-        if (
-            query_budget > self.max_num_scheduled_tokens
-            or query_budget + len(plans) * slots
-            > self.scheduler_config.max_num_batched_tokens
-            or len(self.running) + self.num_waiting_for_streaming_input + new_count
-            > self.max_num_active_reqs
-            or len(self.running) + new_count > self.max_num_running_reqs
-        ):
-            yield False
-            return
         for request, turn in prepared:
+            request.dt_reserved_turn = turn
+            request.dt_input_ready = False
+            request.dt_pending_confirmation = None
+            request.sampling_params.extra_args["dt_reserved_turn"] = asdict(turn)
+            if not turn.initial and request.request_id not in indexed:
+                # A retained stream has no incoming ADD to activate it. New
+                # stream registration activates through add_request instead.
+                self._activate_reserved_turn(request)
+        # Native selection owns KV allocation; reception does not depend on
+        # completion of another peer's compute batch.
+        yield True
+
+    def update_external_inputs(self, updates):
+        """Activate recorded input revisions on Core's thread after device completion."""
+        for request_id, sequence in updates:
+            request = self.requests.get(request_id)
+            turn = getattr(request, "dt_reserved_turn", None)
+            if turn is None or turn.turn_sequence != sequence:
+                continue
+            request.dt_input_ready = True
             if (
-                request.has_encoder_inputs
-                or request.mm_features
-                or request.lora_request is not None
-                or 0
-                < self.scheduler_config.long_prefill_token_threshold
-                < turn.query_tokens
-                or turn.seq_len_upper_bound + self.num_spec_tokens >= self.max_model_len
-                or (
-                    not turn.initial
-                    and (
-                        request not in self.running
-                        or not request.dt_waiting
-                        or request.num_computed_tokens
-                        + turn.query_tokens
-                        + self.num_sampled_tokens_per_step
-                        > self.max_model_len
-                    )
-                )
+                not turn.initial
+                and request.num_computed_tokens < request.num_prompt_tokens
             ):
-                yield False
-                return
-        initial_requests = [request for request, turn in prepared if turn.initial]
-        aborted = set()
-        accepted = False
-        try:
-            # Running requests can grow first. Growth remains native-owned even
-            # if a later row rejects preparation and the ordinary path resumes.
-            ordered = sorted(prepared, key=lambda item: item[1].initial)
-            for request, turn in ordered:
-                materialized = request.num_computed_tokens
-                request.num_computed_tokens = min(
-                    materialized, request.num_prompt_tokens
-                )
-                try:
-                    blocks = self.kv_cache_manager.allocate_slots(
-                        request,
-                        turn.query_tokens
-                        if turn.initial
-                        else max(
-                            1, turn.seq_len_upper_bound - request.num_computed_tokens
-                        ),
-                        num_lookahead_tokens=self.num_lookahead_tokens,
-                        delay_cache_blocks=True,
-                        full_sequence_must_fit=turn.initial
-                        and self.scheduler_reserve_full_isl,
-                        has_scheduled_reqs=True,
-                    )
-                finally:
-                    request.num_computed_tokens = materialized
-                if blocks is None:
-                    yield False
-                    return
-            # Native waiting admission checks the watermark again even when
-            # preallocation makes its additional block demand zero.
-            if (
-                initial_requests
-                and self.kv_cache_manager.block_pool.get_num_free_blocks()
-                < self.kv_cache_manager.watermark_blocks
-            ):
-                yield False
-                return
-            for request, turn in prepared:
-                request.dt_reserved_turn = turn
-                if turn.initial:
-                    request.dt_waiting = False
-                    request.dt_turn = None
-                elif request.request_id not in indexed:
-                    self._activate_reserved_turn(request)
-            accepted = True
-            yield True
-        except BaseException:
-            admitted = [
-                request.request_id
-                for request, _ in prepared
-                if request.request_id in self.requests
-                and not self.requests[request.request_id].dt_waiting
-            ]
-            if admitted:
-                aborted.update(admitted)
-                self.finish_requests(admitted, RequestStatus.FINISHED_ABORTED)
-            for request, _ in prepared:
-                if (
-                    request.request_id in self.requests
-                    and self.requests[request.request_id].dt_waiting
-                ):
-                    request.dt_reserved_turn = None
-            raise
-        finally:
-            if not accepted:
-                for request, _ in prepared:
-                    if request.request_id not in self.requests:
-                        request.dt_reserved_turn = None
-            for request in initial_requests:
-                if (
-                    request.request_id not in self.requests
-                    and request.request_id not in aborted
-                ):
-                    self.kv_cache_manager.free(request)
+                self.dt_input_resolutions[request_id] = sequence
+
+    def take_external_input_resolutions(self):
+        """Drain ready turns whose private KV requires confirmed-prefix replay."""
+        work = []
+        for request_id, sequence in list(self.dt_input_resolutions.items()):
+            request = self.requests.get(request_id)
+            turn = getattr(request, "dt_reserved_turn", None)
+            if turn is None or turn.turn_sequence != sequence:
+                del self.dt_input_resolutions[request_id]
+            elif request.dt_input_ready and not request.num_in_flight_tokens:
+                work.append((request_id, sequence))
+                del self.dt_input_resolutions[request_id]
+        return work
+
+    def update_external_input_metadata(self, metadata):
+        """Commit input once, then replay the same native request and turn."""
+        for request_id, confirmed in metadata.items():
+            request = self.requests.get(request_id)
+            turn = getattr(request, "dt_reserved_turn", None)
+            if turn is None or turn.turn_sequence != confirmed.turn_sequence:
+                continue
+            frontier = min(request.num_computed_tokens, request.num_prompt_tokens)
+            self._apply_device_confirmation(request, confirmed, frontier)
+            request.dt_pending_confirmation = confirmed
+            request.dt_reserved_turn = None
+            request.sampling_params.extra_args.pop("dt_reserved_turn", None)
+
+    def has_pending_external_inputs(self):
+        """Count accepted turns for drain without manufacturing runnable work."""
+        return any(
+            getattr(request, "dt_reserved_turn", None) is not None
+            for request in self.requests.values()
+        )
+
+    def get_min_input_tokens(self, request):
+        """Preserve one external query as an indivisible native scheduling row."""
+        turn = getattr(request, "dt_reserved_turn", None)
+        return turn.query_tokens if turn is not None else 0
+
+    def get_num_waiting_tokens(self, request, num_computed_tokens):
+        """Use complete external widths for native waiting admission."""
+        turn = getattr(request, "dt_reserved_turn", None)
+        return (
+            turn.query_tokens
+            if turn is not None
+            else super().get_num_waiting_tokens(request, num_computed_tokens)
+        )
+
+    def get_num_allocation_tokens(self, request, num_query_tokens, num_computed_tokens):
+        """Reserve a logical upper bound while native scheduling retains KV ownership."""
+        turn = getattr(request, "dt_reserved_turn", None)
+        return (
+            max(1, turn.seq_len_upper_bound - num_computed_tokens)
+            if turn is not None
+            else num_query_tokens
+        )
 
     def get_num_new_tokens(self, request):
         """Schedule a reserved input shape without appending padding to the confirmed prefix."""
@@ -400,26 +390,19 @@ class DraftTurns:
             return turn.query_tokens
         return super().get_num_new_tokens(request)
 
-    def _request_blocks_can_be_freed(self, request):
-        if (
-            not request.is_finished()
-            and getattr(request, "dt_reserved_turn", None) is not None
-        ):
-            return False
-        return super()._request_blocks_can_be_freed(request)
-
     def _handle_blocked_waiting_request(self, request):
-        if (
-            self._device_batch_active
-            and getattr(request, "dt_reserved_turn", None) is None
+        if not self._ready(request):
+            return False
+        if self._device_batch_active != (
+            getattr(request, "dt_reserved_turn", None) is not None
         ):
             return False
         return super()._handle_blocked_waiting_request(request)
 
     def _update_after_schedule(self, output):
         """Consume scheduled confirmations and account for whole neural proposals."""
-        # A failed reservation can leave native growth attached to a parked request.
-        # Its next external turn must publish the complete table, not only this step's delta.
+        # Retained turns and replay can rebind previously allocated blocks.
+        # Publish their complete table rather than only the current growth delta.
         for request_id in output.scheduled_cached_reqs.req_ids:
             request = self.requests[request_id]
             if getattr(request, "dt_reserved_turn", None) is not None or (
@@ -513,6 +496,72 @@ class DraftTurns:
         )
         return False
 
+    def _apply_device_confirmation(self, request, confirmed, materialized_frontier):
+        """Commit input once without overstating physical KV materialization."""
+        turn = request.dt_reserved_turn
+        if turn is None or turn.turn_sequence != confirmed.turn_sequence:
+            raise ValueError("Device confirmation does not match the scheduled turn")
+        delta = confirmed.token_ids_delta
+        extra = request.sampling_params.extra_args
+        if confirmed.initial:
+            if (
+                not turn.initial
+                or delta != [confirmed.anchor]
+                or confirmed.confirmed_length != request.num_prompt_tokens + 1
+                or confirmed.context_length != request.num_prompt_tokens
+            ):
+                raise ValueError(
+                    "Initial device confirmation does not match its complete prompt"
+                )
+            prompt_delta = []
+        else:
+            if (
+                turn.initial
+                or not delta
+                or confirmed.confirmed_length
+                != request.num_prompt_tokens + 1 + len(delta)
+            ):
+                raise ValueError(
+                    "Device confirmation does not extend the retained prefix"
+                )
+            prompt_delta = [extra["dt_anchor_token"], *delta[:-1]]
+        if (
+            confirmed.anchor != delta[-1]
+            or confirmed.context_length + 1 != confirmed.confirmed_length
+        ):
+            raise ValueError("Device confirmation has an inconsistent anchor")
+        offset = request.num_prompt_tokens
+        request.prompt_token_ids.extend(prompt_delta)
+        request._all_token_ids = request.prompt_token_ids.copy()
+        request._output_token_ids.clear()
+        request.num_prompt_tokens = len(request.prompt_token_ids)
+        request.num_computed_tokens = materialized_frontier
+        request.num_output_placeholders = 0
+        request.spec_token_ids = []
+        request.block_hashes.clear()
+        extra["dt_anchor_token"] = confirmed.anchor
+        extra["dt_generation"] = confirmed.confirmed_length
+        request.dt_turn = (
+            ConfirmedDraftTurn(
+                offset,
+                prompt_delta,
+                request.num_prompt_tokens,
+                request.sampling_params,
+            )
+            if prompt_delta
+            else None
+        )
+
+    @staticmethod
+    def _confirmation_payload(confirmed):
+        return {
+            "sequence": confirmed.turn_sequence,
+            "confirmed_length": confirmed.confirmed_length,
+            "context_length": confirmed.context_length,
+            "anchor": confirmed.anchor,
+            "token_ids_delta": confirmed.token_ids_delta,
+        }
+
     def update_from_output(self, scheduler_output, model_runner_output):
         """Retain parked turns after native stop handling removes them from the running list."""
         completed = {}
@@ -522,68 +571,19 @@ class DraftTurns:
             request = self.requests.get(request_id)
             if request is None or request.is_finished():
                 continue
-            turn = request.dt_reserved_turn
-            if turn is None or turn.turn_sequence != confirmed.turn_sequence:
-                raise ValueError(
-                    "Device confirmation does not match the scheduled turn"
-                )
-            delta = confirmed.token_ids_delta
-            extra = request.sampling_params.extra_args
-            if confirmed.initial:
-                if (
-                    not turn.initial
-                    or delta != [confirmed.anchor]
-                    or confirmed.confirmed_length != request.num_prompt_tokens + 1
-                    or confirmed.context_length != request.num_prompt_tokens
-                ):
-                    raise ValueError(
-                        "Initial device confirmation does not match its complete prompt"
-                    )
-                prompt_delta = []
-            else:
-                if (
-                    turn.initial
-                    or not delta
-                    or confirmed.confirmed_length
-                    != request.num_prompt_tokens + 1 + len(delta)
-                ):
-                    raise ValueError(
-                        "Device confirmation does not extend the retained prefix"
-                    )
-                prompt_delta = [extra["dt_anchor_token"], *delta[:-1]]
-            if (
-                confirmed.anchor != delta[-1]
-                or confirmed.context_length + 1 != confirmed.confirmed_length
-            ):
-                raise ValueError("Device confirmation has an inconsistent anchor")
-            offset = request.num_prompt_tokens
-            request.prompt_token_ids.extend(prompt_delta)
-            request._all_token_ids = request.prompt_token_ids.copy()
-            request._output_token_ids.clear()
-            request.num_prompt_tokens = len(request.prompt_token_ids)
-            request.num_computed_tokens = confirmed.context_length
-            request.num_output_placeholders = 0
-            request.spec_token_ids = []
-            request.block_hashes.clear()
-            extra["dt_anchor_token"] = confirmed.anchor
-            extra["dt_generation"] = confirmed.confirmed_length
-            request.dt_turn = (
-                ConfirmedDraftTurn(
-                    offset,
-                    prompt_delta,
-                    request.num_prompt_tokens,
-                    request.sampling_params,
-                )
-                if prompt_delta
-                else None
+            frontier = (
+                0
+                if request_id in self.dt_input_resolutions
+                else confirmed.context_length
             )
-            completed[request_id] = {
-                "sequence": confirmed.turn_sequence,
-                "confirmed_length": confirmed.confirmed_length,
-                "context_length": confirmed.context_length,
-                "anchor": confirmed.anchor,
-                "token_ids_delta": confirmed.token_ids_delta,
-            }
+            self._apply_device_confirmation(request, confirmed, frontier)
+            self.dt_input_resolutions.pop(request_id, None)
+            completed[request_id] = self._confirmation_payload(confirmed)
+        for request_id in scheduler_output.num_scheduled_tokens:
+            request = self.requests.get(request_id)
+            pending = getattr(request, "dt_pending_confirmation", None)
+            if pending is not None:
+                completed[request_id] = self._confirmation_payload(pending)
         outputs = super().update_from_output(scheduler_output, model_runner_output)
         for client_outputs in outputs.values():
             for output in client_outputs.outputs:
@@ -594,6 +594,7 @@ class DraftTurns:
                 ):
                     output.finish_reason = None
                     output.continuation_output = confirmation
+                    self.requests[output.request_id].dt_pending_confirmation = None
         for request_id in scheduler_output.num_scheduled_tokens:
             request = self.requests.get(request_id)
             if (
@@ -613,41 +614,87 @@ class DraftTurns:
         return super()._update_request_with_output(request, new_token_ids, is_stale)
 
     def _preempt_request(self, request, timestamp, drop_stale_output=False):
-        """Let native pressure reclaim private KV without regenerating an idle proposal."""
+        """Retain accepted input while native pressure reclaims private KV."""
         super()._preempt_request(request, timestamp, drop_stale_output)
+        turn = getattr(request, "dt_reserved_turn", None)
+        if turn is not None and (not turn.initial or request.num_in_flight_tokens):
+            # A first prompt can restart directly before execution. Once its
+            # output is in flight, confirmation must not resurrect reclaimed KV.
+            self.dt_input_resolutions[request.request_id] = turn.turn_sequence
         if request.dt_waiting:
             request.status = RequestStatus.WAITING_FOR_STREAMING_REQ
             self.num_waiting_for_streaming_input += 1
 
     def _ready(self, request):
-        return not request.dt_waiting and (
-            not self.num_spec_tokens or request.num_in_flight_tokens == 0
+        turn = getattr(request, "dt_reserved_turn", None)
+        return (
+            not request.dt_waiting
+            and not request.num_in_flight_tokens
+            and (
+                turn is None
+                or (
+                    getattr(request, "dt_input_ready", False)
+                    and request.request_id not in self.dt_input_resolutions
+                )
+            )
         )
 
     def schedule(self, throttle_prefills=False):
-        """Batch ready turns while retaining ordinary native allocation and preemption."""
-        self._device_batch_active = any(
-            getattr(request, "dt_reserved_turn", None) is not None
-            for request in self.requests.values()
+        """Batch compatible ready rows under native arrival and priority policy."""
+        ready = [request for request in self.requests.values() if self._ready(request)]
+        priority = getattr(self.policy, "value", self.policy) == "priority"
+        # Native scheduling considers resident rows before waiting admission.
+        # Selecting a waiting input class while incompatible ready rows fill
+        # every slot would prevent both classes from making progress.
+        selected = next(
+            (request for request in self.running if self._ready(request)),
+            None,
+        )
+        if selected is None:
+            selected = min(
+                ready,
+                key=lambda request: (
+                    request.priority if priority else 0,
+                    request.arrival_time,
+                    request.request_id,
+                ),
+                default=None,
+            )
+        self._device_batch_active = (
+            selected is not None
+            and getattr(selected, "dt_reserved_turn", None) is not None
         )
         for request in self.running:
-            if not self._ready(request) or (
-                self._device_batch_active
-                and getattr(request, "dt_reserved_turn", None) is None
+            if not self._ready(request) or self._device_batch_active != (
+                getattr(request, "dt_reserved_turn", None) is not None
             ):
                 request.next_decode_eligible_step = self.current_step + 2
+            else:
+                request.next_decode_eligible_step = 0
         try:
             output = super().schedule(throttle_prefills)
-            queued = self.get_num_unfinished_requests() - len(self.running)
-            if not output.total_num_scheduled_tokens and queued > 0:
-                # Retained turns can occupy slots or KV needed by another
-                # Target. Reclaim enough idle slots for native batch admission;
-                # freeing only one would serialize a queued Target batch.
-                available = self.max_num_active_reqs - len(self.running)
-                to_reclaim = max(1, min(queued, self.max_num_active_reqs) - available)
-                for request in reversed(self.running[:]):
-                    if request.dt_waiting and self._request_blocks_can_be_freed(
-                        request
+            waiting_ready = sum(
+                self._ready(request)
+                for request in self.requests.values()
+                if request not in self.running
+            )
+            if not output.total_num_scheduled_tokens and waiting_ready:
+                # Parked turns retain slots and KV even though they have no
+                # work. Reclaim them through native preemption so a partial
+                # peer batch can finish without waiting for its own next turn.
+                available = self.max_num_running_reqs - len(self.running)
+                to_reclaim = max(
+                    1, min(waiting_ready, self.max_num_running_reqs) - available
+                )
+                idle = sorted(self.running, key=lambda request: not request.dt_waiting)
+                for request in idle:
+                    pending_input = getattr(
+                        request, "dt_reserved_turn", None
+                    ) is not None and not getattr(request, "dt_input_ready", False)
+                    if (
+                        (request.dt_waiting or pending_input)
+                        and not request.num_in_flight_tokens
+                        and self._request_blocks_can_be_freed(request)
                     ):
                         self.running.remove(request)
                         self._preempt_request(request, time.monotonic())
@@ -661,25 +708,17 @@ class DraftTurns:
                 if request.dt_waiting and request not in self.running:
                     for queue in self.dt_waiting_queues:
                         queue.remove_requests((request,))
+                    self.deferred_waiting.discard(request)
                     if request.status == RequestStatus.WAITING_FOR_STREAMING_REQ:
                         self.num_waiting_for_streaming_input -= 1
                     request.status = RequestStatus.PREEMPTED
 
     def has_requests(self):
-        """Sleep between turns; native input, abort and in-flight batch results wake the engine."""
+        """Sleep until readiness or native outputs make a real execution step possible."""
         if self.pause_state == PauseState.PAUSED_ALL:
             return self.has_finished_requests()
-        return bool(
-            self.has_finished_requests()
-            or any(self._ready(request) for request in self.running)
-            or (
-                self.pause_state == PauseState.UNPAUSED
-                and self.get_num_unfinished_requests() > len(self.running)
-                and (
-                    len(self.running) < self.scheduler_config.max_num_seqs
-                    or any(request.dt_waiting for request in self.running)
-                )
-            )
+        return self.has_finished_requests() or any(
+            self._ready(request) for request in self.requests.values()
         )
 
 

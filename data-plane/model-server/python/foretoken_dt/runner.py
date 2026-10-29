@@ -81,22 +81,12 @@ class DraftTokens:
 class DraftOutput:
     """Collect one peer's native GPU outputs in its original request order."""
 
-    def __init__(self, peer: OpenPeer, channel: NcclPeer, requests):
+    def __init__(
+        self, peer: OpenPeer, channel: NcclPeer, requests, *, tokens, probabilities
+    ):
         self.channel = channel
-        self.tokens = torch.zeros(
-            len(requests), peer.num_candidates, dtype=torch.int64, device=channel.device
-        )
-        self.probabilities = (
-            torch.zeros(
-                len(requests),
-                peer.num_candidates,
-                peer.vocab_size,
-                dtype=torch.float32,
-                device=channel.device,
-            )
-            if peer.return_probabilities
-            else None
-        )
+        self.tokens = tokens
+        self.probabilities = probabilities
         self.pending = {
             session: (row, count, 0)
             for row, (session, _, _, _, count) in enumerate(requests)
@@ -105,6 +95,9 @@ class DraftOutput:
 
     def append(self, session, tokens, probabilities):
         """Publish the complete batch as soon as native sampling produces its last row."""
+        torch.cuda.current_stream(self.tokens.device).wait_event(
+            self.channel.input_ready
+        )
         row, expected, offset = self.pending[session]
         count = min(tokens.numel(), expected - offset)
         self.tokens[row, offset : offset + count].copy_(tokens[:count])
@@ -124,12 +117,14 @@ class DraftOutput:
         if not self.pending:
             self.publish()
 
-    def publish(self):
-        """Queue GPU output on the peer stream before native CPU output dispatch."""
+    def publish(self, producer_stream=None):
+        """Queue completed rows or IO-initialized empty output before CPU dispatch."""
         self.channel.send_output(
             self.tokens,
             self.probabilities,
-            torch.cuda.current_stream(self.tokens.device),
+            producer_stream
+            if producer_stream is not None
+            else torch.cuda.current_stream(self.tokens.device),
         )
 
 

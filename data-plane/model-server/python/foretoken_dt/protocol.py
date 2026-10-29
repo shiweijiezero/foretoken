@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-PEER_PROTOCOL_VERSION = 5
+PEER_PROTOCOL_VERSION = 6
 TransferProtocol = Literal["tcp", "rdma", "nccl"]
 
 

@@ -19,8 +19,9 @@ from vllm.v1.worker.gpu.spec_decode.autoregressive.speculator import (
 from vllm.v1.worker.gpu.spec_decode.speculator import BaseSpeculator
 
 from .context import DraftContext
-from .device_input import DeviceInputBatch, DeviceInputRow
+from .device_input import DeviceInputBatch, DeviceInputRow, DeviceTurnFeedback
 from .exchange import TensorExchange
+from .external_input import ExternalInputObserver
 from .nccl import NcclPeer
 from .protocol import PEER_PROTOCOL_VERSION, OpenPeer, PrepareBatch, Settings
 from .runner import DraftModelRunner, DraftOutput, replace_binding
@@ -104,6 +105,11 @@ class DraftPeer:
     output: DraftOutput | None = None
     device_inputs: DeviceInputBatch | None = None
     sessions: list[str] = field(default_factory=list)
+    packed: torch.Tensor | None = None
+    tokens: torch.Tensor | None = None
+    probabilities: torch.Tensor | None = None
+    feedback_packed: torch.Tensor | None = None
+    feedback_features: torch.Tensor | None = None
 
 
 class DraftWorker(gpu_worker.Worker):
@@ -131,6 +137,25 @@ class DraftWorker(gpu_worker.Worker):
         )
         self.dt_history_stream = torch.cuda.Stream(self.device)
         self.dt_peers: dict[str, DraftPeer] = {}
+        self.dt_input_observer = ExternalInputObserver(self.device)
+
+    def register_external_input_wakeup(self, callback):
+        """Connect the native Core wake owner to device-input completion observation."""
+        self.dt_input_observer.register_wakeup(callback)
+
+    def take_ready_external_inputs(self):
+        """Drain completed input identities without reading device token contents."""
+        return self.dt_input_observer.take_ready()
+
+    def resolve_external_inputs(self, identities):
+        """Confirm ready inputs once before native KV replay resumes the same turn."""
+        rows = []
+        for request_id, sequence in identities:
+            binding = self.model_runner.device_inputs[request_id]
+            if binding.batch.sequence != sequence:
+                raise ValueError("External replay input revision is stale")
+            rows.append((request_id, binding))
+        return DeviceTurnFeedback.materialize(self.model_runner, rows)
 
     def compile_or_warm_up_model(self):
         """Run native warmup independently of Target connections and retained requests."""
@@ -191,7 +216,40 @@ class DraftWorker(gpu_worker.Worker):
                         "NCCL peers require native IDs and GPU result buffers"
                     )
                 state.channel = NcclPeer(peer.nccl_ids, 1, self.device)
+                state.packed = torch.empty(
+                    2 * peer.max_tokens + 5 * peer.max_requests,
+                    dtype=torch.int64,
+                    device=self.device,
+                )
+                state.tokens = torch.empty(
+                    peer.max_requests,
+                    peer.num_candidates,
+                    dtype=torch.int64,
+                    device=self.device,
+                )
+                if peer.return_probabilities:
+                    state.probabilities = torch.empty(
+                        peer.max_requests,
+                        peer.num_candidates,
+                        peer.vocab_size,
+                        dtype=torch.float32,
+                        device=self.device,
+                    )
                 if features is not None:
+                    state.feedback_packed = torch.empty(
+                        2 * peer.max_tokens + 5 * peer.max_requests,
+                        dtype=torch.int64,
+                        device="cpu",
+                        pin_memory=True,
+                    )
+                    state.feedback_features = torch.empty(
+                        peer.max_tokens,
+                        peer.num_features,
+                        peer.hidden_size,
+                        dtype=features.dtype,
+                        device="cpu",
+                        pin_memory=True,
+                    )
                     state.features = torch.empty(
                         peer.num_features,
                         peer.max_tokens,
@@ -233,9 +291,7 @@ class DraftWorker(gpu_worker.Worker):
         prepared = PrepareBatch.model_validate(payload)
         state = self._begin_prepare(peer_id, prepared)
         if state.features is not None:
-            state.channel.receive_features(
-                state.features, prepared.feature_rows, self.model_runner.main_stream
-            )
+            state.channel.receive_features(state.features, prepared.feature_rows, None)
 
     def _begin_prepare(self, peer_id, prepared):
         """Retire the preceding peer operation before preparing its next native input."""
@@ -283,18 +339,19 @@ class DraftWorker(gpu_worker.Worker):
                 num_requests=len(requests),
             ),
         )
-        packed = torch.empty(
-            2 * num_tokens + 5 * len(requests),
-            dtype=torch.int64,
-            device=self.device,
-        )
+        packed = state.packed[: 2 * num_tokens + 5 * len(requests)]
+        # Each revision owns a distinct event. Publish it to the observer only
+        # after all receives have been enqueued and the event has been recorded.
+        ready = torch.cuda.Event()
         received = DeviceInputBatch(
             sequence,
             packed,
             state.features,
             num_tokens,
             len(requests),
-            state.channel.input_ready,
+            ready,
+            feedback_packed=state.feedback_packed[: packed.numel()],
+            feedback_features=state.feedback_features[:num_tokens],
         )
         rows = []
         contexts = {}
@@ -317,13 +374,27 @@ class DraftWorker(gpu_worker.Worker):
             )
             rows.append((session, 0, offset, count, peer.num_candidates))
             offset += count
-        output = DraftOutput(peer, state.channel, rows)
-        # Allocation can synchronize the device. Finish it before posting a
-        # receive whose Target sender is still waiting for preparation's ACK.
-        state.channel.receive_features(
-            state.features, num_tokens, self.model_runner.main_stream
+        output = DraftOutput(
+            peer,
+            state.channel,
+            rows,
+            tokens=state.tokens[: len(rows)],
+            probabilities=(
+                state.probabilities[: len(rows)]
+                if state.probabilities is not None
+                else None
+            ),
         )
+        # Reuse waits belong to this peer's IO stream. Unready peers must not
+        # place a dependency ahead of unrelated work on the shared model stream.
+        with torch.cuda.stream(state.channel.input_stream):
+            state.channel.input_stream.wait_event(state.channel.output_ready)
+            output.tokens.zero_()
+            if output.probabilities is not None:
+                output.probabilities.zero_()
+        state.channel.receive_features(state.features, num_tokens, None)
         state.channel.receive_device_inputs(packed)
+        ready.record(state.channel.input_stream)
         state.device_inputs = received
         state.output = output
         state.sessions = [session for session, _, _, _ in requests]
@@ -331,6 +402,9 @@ class DraftWorker(gpu_worker.Worker):
         self.model_runner.device_inputs.update(bindings)
         self.model_runner.outputs.update(
             (session, state.output) for session in state.output.pending
+        )
+        self.dt_input_observer.register(
+            ready, [(session, sequence) for session in state.sessions], received
         )
 
     def _stage_features(self, session, peer_id, context_start, feature_offset, count):
@@ -387,7 +461,23 @@ class DraftWorker(gpu_worker.Worker):
         if state.channel is not None:
             if state.prepared is None or state.prepared.num_requests != len(requests):
                 raise ValueError("Draft request rows differ from the prepared transfer")
-            state.output = DraftOutput(peer, state.channel, requests)
+            state.output = DraftOutput(
+                peer,
+                state.channel,
+                requests,
+                tokens=state.tokens[: len(requests)],
+                probabilities=(
+                    state.probabilities[: len(requests)]
+                    if state.probabilities is not None
+                    else None
+                ),
+            )
+            with torch.cuda.stream(state.channel.input_stream):
+                state.channel.input_stream.wait_event(state.channel.output_ready)
+                state.output.tokens.zero_()
+                if state.output.probabilities is not None:
+                    state.output.probabilities.zero_()
+                state.channel.input_ready.record(state.channel.input_stream)
             state.sessions = [session for session, *_ in requests]
             self.model_runner.outputs.update(
                 (session, state.output) for session in state.output.pending
@@ -400,7 +490,7 @@ class DraftWorker(gpu_worker.Worker):
             if count and peer.return_probabilities and state.channel is None:
                 self.model_runner.probabilities[session] = []
         if state.output is not None and not state.output.pending:
-            state.output.publish()
+            state.output.publish(producer_stream=state.channel.input_stream)
 
     def dt_publish_probabilities(self, peer_id, sessions):
         """Write actual normalized proposal laws before acknowledging the proposal batch."""
@@ -429,6 +519,7 @@ class DraftWorker(gpu_worker.Worker):
 
     def dt_forget_sessions(self, sessions):
         """Release retained data after the engine has joined cancellation and pending proposals."""
+        self.dt_input_observer.forget(sessions)
         for session in sessions:
             self.model_runner.contexts.pop(session, None)
             self.model_runner.probabilities.pop(session, None)
@@ -439,6 +530,7 @@ class DraftWorker(gpu_worker.Worker):
         """Close native IO before releasing buffers retained by this control connection."""
         state = self.dt_peers.pop(peer_id, None)
         if state is not None and state.channel is not None:
+            self.dt_input_observer.forget(state.sessions)
             pending = state.prepared is not None and (
                 state.output is None or bool(state.output.pending)
             )
@@ -450,6 +542,8 @@ class DraftWorker(gpu_worker.Worker):
     def shutdown(self):
         """Abort unfinished receives before native worker teardown waits on the device."""
         try:
+            if hasattr(self, "dt_input_observer"):
+                self.dt_input_observer.close()
             for peer_id in list(getattr(self, "dt_peers", ())):
                 self.dt_close_peer(peer_id, abort=True)
             if hasattr(self, "dt_exchange"):

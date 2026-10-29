@@ -397,7 +397,7 @@ impl Peer {
         })
     }
 
-    /// Admits a reserved turn before Target sampling and retains its native completion owner.
+    /// Registers external inputs before Target sampling and retains their native completion owner.
     async fn start_device_turn(
         self: &Arc<Self>,
         client: &DraftClient,
@@ -456,7 +456,7 @@ impl Peer {
         let Some(streams) = streams else {
             return Ok(false);
         };
-        // Native acceptance owns every row; retain the same output stream until
+        // Native registration owns every row; retain the same output stream until
         // a terminal fallback or final cancellation ends that ownership.
         let streams = {
             let mut state = self.requests.lock().unwrap();
