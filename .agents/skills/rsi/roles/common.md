@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](common_zh.md)
 
-The root agent establishes the objective, fixed requirements, original baseline, total budget and initial team. Members then own research, implementation and experiments within that authority; fresh Evaluators own independent review. The root observes existing records, reminds owners about concrete gaps and briefs the user. Routine decisions and deliveries go directly to their consumers, without waiting for that observation or communication.
+The root agent establishes the objective, fixed requirements, original baseline, total budget and initial team. Members then own research, implementation and experiments within that authority; fresh Evaluators own independent review. Once the Agent Scheduler is running, the root observes records, checks progress and resource/research boundaries, reminds owners about concrete gaps and briefs the user; it does not dispatch every stage or relay routine messages. If the scheduler is unavailable or a lease remains stuck, the root uses native follow-up only to repair that scheduling failure. Routine decisions and deliveries go directly to their consumers.
 
 ## Learn the framework first
 

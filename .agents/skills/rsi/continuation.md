@@ -91,6 +91,8 @@ Each registered member supplies a stable `--thread-id` and a complete `--respons
 
 The scheduler stops when the bound session is paused, complete or expired. It must also be stopped explicitly at the task deadline; `SessionEnd` records durable state but does not pause the RSI or create new work. Member release states are `waiting`, `done`, `paused`, `expired` or an explicit failure/resource conflict; `idle` and `needs_assignment` are scheduler faults, not normal research states.
 
+While it is healthy, the scheduler owns wake-up and the Lead remains an observer. If its process, app-server connection or lease reconciliation fails, the Lead records the incident and uses native follow-up to recover affected members until the scheduler is healthy again.
+
 ## Wait, pause or finish
 
 If no ready work can resolve a dependency, use `release --agent "$RSI_AGENT" --state waiting --reason "$RSI_REASON"` with the harness/session. Finish or hand off owned items before releasing. Use `done` when the responsibility is complete. A producer resumes a known waiting consumer with native follow-up when its result arrives.

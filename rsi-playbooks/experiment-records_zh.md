@@ -97,7 +97,7 @@ results/decode/parallelism/
 
 任务记录保存目标、分工和决定。成员实际活动从原生 harness 读取，hook 绑定从 continuation 查询，作业状态由执行负责人核实。报告需要快照时，注明观察时间和来源，避免在任务、成员和报告文件中各维护一份实时状态。结束跟进时，由负责人链接实际改动的结果，或说明停止行动的决定。
 
-需要自主接续时，由绑定单一 RSI root session 的 Agent Scheduler 负责原生唤醒；它不创建或替代 Evaluator 排期，使用 Codex app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 生命周期（见 [app-server 文档](https://learn.chatgpt.com/docs/app-server)）。`members.responsibility` 保存完整职责，`thread_id` 保存原生 app-server 身份，`dispatch_state` 及 lease、已接受的 turn ID 记录 `pending`、`dispatching`、`running` 状态。Hook 可以记录待派发，但不能把排队当作 thread 已唤醒。显式暂停、完成、过期或截止时停止 Scheduler，并保留持久责任供恢复。
+需要自主接续时，由绑定单一 RSI root session 的 Agent Scheduler 负责原生唤醒；它不创建或替代 Evaluator 排期，使用 Codex app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 生命周期（见 [app-server 文档](https://learn.chatgpt.com/docs/app-server)）。`members.responsibility` 保存完整职责，`thread_id` 保存原生 app-server 身份，`dispatch_state` 及 lease、已接受的 turn ID 记录 `pending`、`dispatching`、`running` 状态。Hook 可以记录待派发，但不能把排队当作 thread 已唤醒。Lead 观察 Scheduler 健康、研究、资源和失败边界；只有 Scheduler 故障或明确依赖时才用原生 follow-up 恢复成员。显式暂停、完成、过期或截止时停止 Scheduler，并保留持久责任供恢复。
 
 每个可执行阶段只有一个主负责人。独立审查应成为读取负责人原件的独立工作项；其他成员应承担不同范围或问题，不应重复完整审计或测量。发现重复分工时，保留第一份完整证据，并在启动新运行前把另一名成员转向其他问题。
 
