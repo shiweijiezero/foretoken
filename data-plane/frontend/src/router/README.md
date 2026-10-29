@@ -41,9 +41,13 @@ Choose a scorer for the workload:
 | Spread cold requests toward less recently selected targets | `no_hit_lru` |
 | Trade off load balance and cache reuse | `two_tier`; requires `picker.algorithm: max` |
 | Prefer the same model replica for requests with the same `session_id` in the request body | `session_affinity` |
+| Prefer lower request-length-normalized prefill and decode latency | `least_latency`; requires `picker.algorithm: max` |
 | Prefer lower weighted request lengths | `throughput` |
+| Balance prefill work and active prompt blocks after cache credits | `kv_cost`; requires `picker.algorithm: max` |
 | Prefer a configured endpoint observation | `endpoint_attribute` |
 | Give every target an equal score | `uniform` |
+
+`least_latency` sends exploratory requests to idle ranks without latency observations, including newly added replicas.
 
 Scorer-specific options go under `scorer.parameters`. For example, give cache affinity more weight in the default strategy:
 
@@ -69,6 +73,33 @@ For Encoder and Decode, `kv_least_loaded` uses load alone. These weights control
 
 A target with unavailable prefix observations remains eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
 
+## Balance prefill and KV load
+
+Select `kv_cost` with the `max` picker to balance pending prefill work and active KV allocations in this frontend replica:
+
+```yaml
+spec:
+  routerPipeline:
+    scorer:
+      algorithm: kv_cost
+    picker:
+      algorithm: max
+```
+
+Costs use token units across engine block sizes and discount reusable prefixes. Set options under `scorer.parameters`; numeric values must be finite and non-negative.
+
+| Parameter | Default | Effect |
+| --- | --- | --- |
+| `overlap_score_credit` | `1.0` | Multiplier for device-local prefix credit. Setting `0` selects load-only scoring and skips cache queries for this scorer. |
+| `overlap_score_credit_decay` | `0.0` | Reduces device credit as a target's pending prefill load exceeds the least-loaded eligible target, relative to the incoming prompt length; `0` disables decay. |
+| `prefill_load_scale` | `1.0` | Weight of pending and incoming prefill tokens after cache credits. |
+| `decode_active_request_weight` | `0.0` | Additional token-equivalent cost per active request. |
+| `host_cache_hit_weight` | `0.75` | Credit for the host-cached prefix extension beyond device hits. |
+| `disk_cache_hit_weight` | `0.25` | Credit for the disk-cached extension beyond faster local tiers. |
+| `shared_cache_multiplier` | `0.0` | Credit for a shared-cache prefix extension beyond device hits. |
+| `router_track_prefill_tokens` | `true` | Include pending prompt work on Aggregate and Prefill targets. |
+| `router_track_output_blocks` | `false` | Extend each active sequence's allocation estimate with streamed output tokens. |
+
 ## Choose from the scores
 
 Set `routerPipeline.picker.algorithm` to control selection:
@@ -76,7 +107,7 @@ Set `routerPipeline.picker.algorithm` to control selection:
 | Picker | Selection |
 | --- | --- |
 | `gamble_sampling` (default) | Higher ranks are more likely; ties have equal probability and lower-ranked targets remain eligible. |
-| `max` | Select the highest score. |
+| `max` | Select the highest score, then the smallest target ID. Within that target, prefer the least loaded rank and choose randomly on equal load. |
 | `power_of_two_choices` | Sample two distinct targets and select the higher score; choose randomly on ties. |
 
 ## Override a model or execution stage

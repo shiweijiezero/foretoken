@@ -109,6 +109,8 @@ pub(crate) fn read_vllm_metrics(engine_labels: &[EngineLabels]) -> VllmMetricsSn
         request_cost: foretoken_model_protocol::RequestCostTelemetry {
             prompt_tokens: sum(|cost| cost.prompt_tokens),
             generation_tokens: sum(|cost| cost.generation_tokens),
+            prefill_seconds: sum(|cost| cost.prefill_seconds),
+            decode_seconds: sum(|cost| cost.decode_seconds),
         },
         scheduler_running_requests,
         scheduler_waiting_requests,
@@ -197,6 +199,18 @@ fn request_cost_metrics(labels: &EngineLabels) -> foretoken_model_protocol::Requ
             &METRICS
                 .request
                 .request_generation_tokens
+                .get_or_create(labels),
+        ),
+        prefill_seconds: read(
+            &METRICS
+                .request
+                .request_prefill_time_seconds
+                .get_or_create(labels),
+        ),
+        decode_seconds: read(
+            &METRICS
+                .request
+                .request_decode_time_seconds
                 .get_or_create(labels),
         ),
     }

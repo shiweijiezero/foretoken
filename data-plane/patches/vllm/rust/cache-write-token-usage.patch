@@ -1,0 +1,364 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+--- a/rust/src/chat/src/output/harmony/tests.rs
++++ b/rust/src/chat/src/output/harmony/tests.rs
+@@ -52,6 +52,7 @@
+             prompt_token_count: 0,
+             output_token_count: 0,
+             cached_token_count: 0,
++            cache_write_token_count: 0,
+         },
+         finish_reason: FinishReason::stop_eos(),
+         kv_transfer_params: None,
+@@ -117,6 +118,7 @@
+                 prompt_token_count: 0,
+                 output_token_count: 0,
+                 cached_token_count: 0,
++                cache_write_token_count: 0,
+             },
+             finish_reason: FinishReason::stop_eos(),
+             kv_transfer_params: None,
+@@ -178,6 +180,7 @@
+                 prompt_token_count: 0,
+                 output_token_count: 0,
+                 cached_token_count: 0,
++                cache_write_token_count: 0,
+             },
+             finish_reason: FinishReason::stop_eos(),
+             kv_transfer_params: None,
+--- a/rust/src/chat/src/output/structured.rs
++++ b/rust/src/chat/src/output/structured.rs
+@@ -339,6 +339,7 @@
+                     prompt_token_count: 1,
+                     output_token_count: 1,
+                     cached_token_count: 0,
++                    cache_write_token_count: 0,
+                 },
+                 finish_reason: FinishReason::stop_eos(),
+                 kv_transfer_params: None,
+@@ -394,6 +395,7 @@
+                     prompt_token_count: 1,
+                     output_token_count: 1,
+                     cached_token_count: 0,
++                    cache_write_token_count: 0,
+                 },
+                 finish_reason: FinishReason::stop_eos(),
+                 kv_transfer_params: None,
+@@ -446,6 +448,7 @@
+                     prompt_token_count: 1,
+                     output_token_count: 1,
+                     cached_token_count: 0,
++                    cache_write_token_count: 0,
+                 },
+                 finish_reason: FinishReason::stop_eos(),
+                 kv_transfer_params: None,
+@@ -498,6 +501,7 @@
+                     prompt_token_count: 1,
+                     output_token_count: 1,
+                     cached_token_count: 0,
++                    cache_write_token_count: 0,
+                 },
+                 finish_reason: FinishReason::stop_eos(),
+                 kv_transfer_params: None,
+@@ -566,6 +570,7 @@
+                     prompt_token_count: 1,
+                     output_token_count: 1,
+                     cached_token_count: 0,
++                    cache_write_token_count: 0,
+                 },
+                 finish_reason: FinishReason::stop_eos(),
+                 kv_transfer_params: None,
+--- a/rust/src/chat/src/stream.rs
++++ b/rust/src/chat/src/stream.rs
+@@ -199,6 +199,7 @@
+                         prompt_token_count: 2,
+                         output_token_count: 1,
+                         cached_token_count: 0,
++                        cache_write_token_count: 0,
+                     },
+                     finish_reason: FinishReason::stop_eos(),
+                     kv_transfer_params: None,
+@@ -240,6 +241,7 @@
+                     prompt_token_count: 2,
+                     output_token_count: 1,
+                     cached_token_count: 0,
++                    cache_write_token_count: 0,
+                 },
+                 finish_reason: FinishReason::stop_eos(),
+                 kv_transfer_params: None,
+--- a/rust/src/llm/src/output.rs
++++ b/rust/src/llm/src/output.rs
+@@ -27,6 +27,8 @@
+     pub output_token_count: usize,
+     /// Number of prompt tokens served from cache.
+     pub cached_token_count: usize,
++    /// Prompt tokens newly admitted to the local prefix cache.
++    pub cache_write_token_count: usize,
+ }
+ 
+ /// Final raw token output plus terminal stream metadata.
+@@ -150,6 +152,8 @@
+     pub finish_reason: Option<FinishReason>,
+     /// Number of prompt tokens served from cache, when reported by prefill stats.
+     pub cached_token_count: usize,
++    /// Prompt tokens newly admitted to the local prefix cache.
++    pub cache_write_token_count: usize,
+     /// Connector-specific KV transfer parameters for disaggregated serving.
+     pub kv_transfer_params: Option<serde_json::Value>,
+     /// Connector-specific encoder cache transfer parameters for disaggregated
+@@ -200,6 +204,7 @@
+             logprobs: None,
+             finish_reason,
+             cached_token_count: 0,
++            cache_write_token_count: 0,
+             kv_transfer_params: None,
+             ec_transfer_params: None,
+         }
+@@ -276,6 +281,11 @@
+         }
+ 
+         let logprobs = raw.new_logprobs.map(|value| value.into_direct().unwrap());
++        let cache_write_token_count = raw
++            .prefill_stats
++            .as_ref()
++            .map(|stats| stats.num_cache_creation_tokens as usize)
++            .unwrap_or(0);
+         let cached_token_count = raw
+             .prefill_stats
+             .as_ref()
+@@ -294,6 +304,7 @@
+             logprobs,
+             finish_reason,
+             cached_token_count,
++            cache_write_token_count,
+             kv_transfer_params: raw.kv_transfer_params,
+             ec_transfer_params: raw.ec_transfer_params,
+         };
+@@ -342,10 +353,13 @@
+             let mut prompt_token_ids = None;
+             let mut prompt_logprobs = None;
+             let mut cached_token_count = 0;
++            let mut cache_write_token_count = 0;
+             let mut collected: Option<CollectedGenerateOutput> = None;
+ 
+             while let Some(output) = stream.next().await.transpose()? {
+                 cached_token_count = cached_token_count.max(output.cached_token_count);
++                cache_write_token_count =
++                    cache_write_token_count.max(output.cache_write_token_count);
+                 if let Some(info) = output.prompt_info {
+                     if prompt_token_ids.is_none() {
+                         prompt_token_ids = Some(info.prompt_token_ids.to_vec());
+@@ -376,6 +390,7 @@
+                             prompt_token_count: prompt_token_ids.as_ref().map_or(0, Vec::len),
+                             output_token_count: 0,
+                             cached_token_count,
++                            cache_write_token_count,
+                         },
+                         kv_transfer_params: None,
+                         ec_transfer_params: None,
+@@ -389,6 +404,7 @@
+                         prompt_token_count: collected.prompt_token_ids.len(),
+                         output_token_count: collected.token_ids.len(),
+                         cached_token_count,
++                        cache_write_token_count,
+                     };
+                     collected.kv_transfer_params = output.kv_transfer_params;
+                     collected.ec_transfer_params = output.ec_transfer_params;
+--- a/rust/src/server/src/grpc/convert.rs
++++ b/rust/src/server/src/grpc/convert.rs
+@@ -668,6 +668,7 @@
+                 prompt_token_count: 0,
+                 output_token_count: 0,
+                 cached_token_count: 0,
++                cache_write_token_count: 0,
+             },
+             finish_reason: reason,
+             kv_transfer_params: None,
+--- a/rust/src/server/src/routes/inference/generate.rs
++++ b/rust/src/server/src/routes/inference/generate.rs
+@@ -431,6 +431,7 @@
+                 logprobs: None,
+                 finish_reason: None,
+                 cached_token_count: 0,
++                cache_write_token_count: 0,
+                 kv_transfer_params: None,
+                 ec_transfer_params: None,
+             }),
+@@ -444,6 +445,7 @@
+                 logprobs: None,
+                 finish_reason: Some(FinishReason::stop_eos()),
+                 cached_token_count: 2,
++                cache_write_token_count: 0,
+                 kv_transfer_params: None,
+                 ec_transfer_params: None,
+             }),
+@@ -509,6 +511,7 @@
+                 prompt_token_count: prompt_token_ids.len(),
+                 output_token_count: 1,
+                 cached_token_count: 0,
++                cache_write_token_count: 0,
+             },
+             kv_transfer_params: None,
+             ec_transfer_params: None,
+--- a/rust/src/server/src/routes/openai/chat_completions.rs
++++ b/rust/src/server/src/routes/openai/chat_completions.rs
+@@ -972,6 +972,7 @@
+                     prompt_token_count: 1,
+                     output_token_count: 1,
+                     cached_token_count: 1,
++                    cache_write_token_count: 0,
+                 },
+                 finish_reason: FinishReason::stop_eos(),
+                 kv_transfer_params: None,
+@@ -1053,6 +1054,7 @@
+                     prompt_token_count: 1,
+                     output_token_count: 1,
+                     cached_token_count: 0,
++                    cache_write_token_count: 0,
+                 },
+                 finish_reason: FinishReason::stop_eos(),
+                 kv_transfer_params: None,
+@@ -1109,6 +1111,7 @@
+                     prompt_token_count: 1,
+                     output_token_count: 2,
+                     cached_token_count: 0,
++                    cache_write_token_count: 0,
+                 },
+                 finish_reason: FinishReason::stop_eos(),
+                 kv_transfer_params: None,
+@@ -1191,6 +1194,7 @@
+                     prompt_token_count: 1,
+                     output_token_count: 2,
+                     cached_token_count: 0,
++                    cache_write_token_count: 0,
+                 },
+                 finish_reason: FinishReason::stop_eos(),
+                 kv_transfer_params: None,
+@@ -1325,6 +1329,7 @@
+                     prompt_token_count: 1,
+                     output_token_count: 4,
+                     cached_token_count: 0,
++                    cache_write_token_count: 0,
+                 },
+                 finish_reason: FinishReason::stop_eos(),
+                 kv_transfer_params: None,
+@@ -1407,6 +1412,7 @@
+                     prompt_token_count: 1,
+                     output_token_count: 1,
+                     cached_token_count: 0,
++                    cache_write_token_count: 0,
+                 },
+                 finish_reason: FinishReason::stop_eos(),
+                 kv_transfer_params: None,
+--- a/rust/src/server/src/routes/openai/completions.rs
++++ b/rust/src/server/src/routes/openai/completions.rs
+@@ -673,6 +673,7 @@
+                         prompt_token_count: 5,
+                         output_token_count: 2,
+                         cached_token_count: 3,
++                        cache_write_token_count: 0,
+                     },
+                     finish_reason: FinishReason::Repetition(Some(StopReason::Text(
+                         "repetition_detected".to_string(),
+@@ -780,6 +781,7 @@
+                         prompt_token_count: 2,
+                         output_token_count: 1,
+                         cached_token_count: 0,
++                        cache_write_token_count: 0,
+                     },
+                     finish_reason: FinishReason::Length,
+                     kv_transfer_params: None,
+@@ -832,6 +834,7 @@
+                         prompt_token_count: 1,
+                         output_token_count: 1,
+                         cached_token_count: 0,
++                        cache_write_token_count: 0,
+                     },
+                     finish_reason: FinishReason::Length,
+                     kv_transfer_params: None,
+@@ -887,6 +890,7 @@
+                         prompt_token_count: 2,
+                         output_token_count: 1,
+                         cached_token_count: 0,
++                        cache_write_token_count: 0,
+                     },
+                     finish_reason: FinishReason::Length,
+                     kv_transfer_params: None,
+@@ -959,6 +963,7 @@
+                         prompt_token_count: 1,
+                         output_token_count: 1,
+                         cached_token_count: 0,
++                        cache_write_token_count: 0,
+                     },
+                     finish_reason: FinishReason::Length,
+                     kv_transfer_params: None,
+@@ -1033,6 +1038,7 @@
+                         prompt_token_count: 2,
+                         output_token_count: 1,
+                         cached_token_count: 0,
++                        cache_write_token_count: 0,
+                     },
+                     finish_reason: FinishReason::Length,
+                     kv_transfer_params: None,
+--- a/rust/src/server/src/routes/openai/utils/types.rs
++++ b/rust/src/server/src/routes/openai/utils/types.rs
+@@ -444,6 +444,7 @@
+                 prompt_token_count: 5,
+                 output_token_count: 2,
+                 cached_token_count: 3,
++                cache_write_token_count: 0,
+             },
+             false,
+         );
+@@ -460,6 +461,7 @@
+                 prompt_token_count: 5,
+                 output_token_count: 2,
+                 cached_token_count: 3,
++                cache_write_token_count: 0,
+             },
+             true,
+         );
+--- a/rust/src/text/src/output/decoded.rs
++++ b/rust/src/text/src/output/decoded.rs
+@@ -101,6 +101,7 @@
+     let mut decoder: Option<Box<dyn IncrementalDecoder>> = None;
+     let mut prompt_token_count = 0_usize;
+     let mut cached_token_count = 0_usize;
++    let mut cache_write_token_count = 0_usize;
+     let mut token_ids = Vec::new();
+     let mut output_token_count: usize = 0;
+     let mut logprobs: Option<DecodedLogprobs> = None;
+@@ -108,6 +109,7 @@
+     while let Some(next) = raw_stream.next().await {
+         let output = next?;
+         cached_token_count = cached_token_count.max(output.cached_token_count);
++        cache_write_token_count = cache_write_token_count.max(output.cache_write_token_count);
+ 
+         // If it's the first output, init states and yield `Start` event.
+         if decoder.is_none() {
+@@ -272,6 +274,7 @@
+                         prompt_token_count,
+                         output_token_count,
+                         cached_token_count,
++                        cache_write_token_count,
+                     },
+                     finish_reason: reason,
+                     kv_transfer_params,
+--- a/rust/src/text/src/output/mod.rs
++++ b/rust/src/text/src/output/mod.rs
+@@ -161,6 +161,7 @@
+                         prompt_token_count: 2,
+                         output_token_count: 2,
+                         cached_token_count: 0,
++                        cache_write_token_count: 0,
+                     },
+                     finish_reason: FinishReason::stop_eos(),
+                     kv_transfer_params: None,
+@@ -279,6 +280,7 @@
+                         prompt_token_count: 2,
+                         output_token_count: 5,
+                         cached_token_count: 0,
++                        cache_write_token_count: 0,
+                     },
+                     finish_reason: FinishReason::stop_eos(),
+                     kv_transfer_params: None,

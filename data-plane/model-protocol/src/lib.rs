@@ -151,6 +151,8 @@ pub struct TokenOutput {
     pub token_ids: Vec<u32>,
     pub logprobs: Option<Logprobs>,
     pub cached_token_count: usize,
+    #[serde(default)]
+    pub cache_write_token_count: usize,
     pub finish_reason: Option<FinishReason>,
     pub kv_transfer_params: Option<serde_json::Value>,
     pub ec_transfer_params: Option<serde_json::Value>,
@@ -171,6 +173,7 @@ impl From<GenerateOutput> for TokenOutput {
             token_ids: output.token_ids,
             logprobs: output.logprobs,
             cached_token_count: output.cached_token_count,
+            cache_write_token_count: output.cache_write_token_count,
             finish_reason: output.finish_reason,
             kv_transfer_params: output.kv_transfer_params,
             ec_transfer_params: output.ec_transfer_params,
@@ -202,6 +205,9 @@ pub struct PreparedTokenizer {
     pub cache_binding: Option<String>,
     pub files: std::collections::BTreeMap<String, String>,
 }
+
+/// Metadata revision exposing KV allocation facts to requesting frontends.
+pub const KV_ROUTING_METADATA_VERSION: u8 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -271,12 +277,30 @@ pub struct HistogramMoments {
     pub count: u64,
 }
 
+impl HistogramMoments {
+    /// Returns the cumulative mean of engine-owned observations, or zero before the first sample.
+    pub fn mean(self) -> f64 {
+        if self.count == 0 {
+            0.0
+        } else {
+            self.sum / self.count as f64
+        }
+    }
+}
+
+/// Telemetry revision exposing engine-owned latency moments to requesting frontends.
+pub const REQUEST_COST_TELEMETRY_VERSION: u8 = 4;
+
 /// Engine-owned request distributions used by request-cost routing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RequestCostTelemetry {
     pub prompt_tokens: Option<HistogramMoments>,
     pub generation_tokens: Option<HistogramMoments>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill_seconds: Option<HistogramMoments>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_seconds: Option<HistogramMoments>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

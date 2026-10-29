@@ -54,6 +54,7 @@ struct Session<C: Send + 'static> {
     customized_context: C,
     stage: SessionStage,
     selected: Vec<ReservationKey>,
+    track_output_blocks: bool,
 }
 
 impl<C: Send + 'static> PipelineRouter<C> {
@@ -149,7 +150,7 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
                     .routing_load
                     .lock()
                     .expect("routing load lock poisoned");
-                self.candidates(&request, &reservations)
+                self.candidates(&request, &reservations, false)
             };
             let lookups = candidates
                 .iter()
@@ -202,6 +203,7 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
             request,
             stage: SessionStage::Initial,
             selected: Vec::new(),
+            track_output_blocks: false,
         })
     }
 }
@@ -218,7 +220,22 @@ impl<C: Send + 'static> RouteSession for Session<C> {
         }
     }
 
+    fn output_tokens_generated(&mut self, count: usize) {
+        if !self.track_output_blocks || count == 0 {
+            return;
+        }
+        let mut reservations = self
+            .router
+            .routing_load
+            .lock()
+            .expect("routing load lock poisoned");
+        for key in &self.selected {
+            reservations.record_output_tokens(key, self.request.request_id(), count);
+        }
+    }
+
     fn stage_complete(&mut self) {
+        self.track_output_blocks = false;
         if self.selected.is_empty() {
             return;
         }
@@ -244,6 +261,11 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             &routing_progress,
             &mut self.customized_context,
         )?;
+        self.track_output_blocks = self
+            .router
+            .pipeline(&self.request.model, RoutingStage::Initial)
+            .scorer
+            .tracks_output_blocks();
         self.stage = match candidate.role {
             ModelServerRole::Encoder => SessionStage::Encoder {
                 pipeline_scope_id: candidate
@@ -283,6 +305,11 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             &routing_progress,
             &mut self.customized_context,
         )?;
+        self.track_output_blocks = self
+            .router
+            .pipeline(&self.request.model, RoutingStage::Prefill)
+            .scorer
+            .tracks_output_blocks();
         self.stage = SessionStage::Prefill {
             pipeline_scope_id: prefill
                 .pipeline_scope_id
@@ -321,6 +348,11 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             &routing_progress,
             &mut self.customized_context,
         )?;
+        self.track_output_blocks = self
+            .router
+            .pipeline(&self.request.model, RoutingStage::Decode)
+            .scorer
+            .tracks_output_blocks();
         self.stage = SessionStage::Complete;
         self.selected
             .push((decode.route_target_id.clone(), decode.data_parallel_rank));
@@ -347,6 +379,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
         &self,
         request: &RouterRequest,
         reservations: &RoutingReservations,
+        include_active_sequences: bool,
     ) -> Vec<RouteCandidate> {
         self.inventory
             .model_routes()
@@ -373,6 +406,9 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 )
             })
             .flat_map(|route| {
+                let kv_block_size = self.inventory.kv_block_size(&route.route_target_id);
+                let prefix_cache_enabled =
+                    self.inventory.prefix_cache_enabled(&route.route_target_id);
                 // Read the group's aggregate and rank-local gauges once, then share the immutable
                 // observation across candidates; scorers select the candidate's exact DP rank.
                 let stats = self
@@ -388,9 +424,17 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     revision: route.revision.clone(),
                     pipeline_scope_id: route.pipeline_scope_id.clone(),
                     data_parallel_rank,
+                    kv_block_size,
+                    prefix_cache_enabled,
                     route_target_stats: stats.clone(),
                     local_load: reservations
                         .snapshot(&(route.route_target_id.clone(), data_parallel_rank)),
+                    active_sequences: if include_active_sequences {
+                        reservations
+                            .active_sequences(&(route.route_target_id.clone(), data_parallel_rank))
+                    } else {
+                        Vec::new()
+                    },
                     stage_eligible: false,
                 })
             })
@@ -502,7 +546,11 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 .routing_load
                 .lock()
                 .expect("routing load lock poisoned");
-            let candidates = self.candidates(request, &reservations);
+            let candidates = self.candidates(
+                request,
+                &reservations,
+                pipeline.scorer.needs_active_sequences(),
+            );
             metrics.candidates(&request.model, round, "available", candidates.len());
             if !candidates
                 .iter()
@@ -644,7 +692,12 @@ impl<C: Send + 'static> PipelineRouter<C> {
             if let Some(on_selected) = on_selected {
                 on_selected(&candidate);
             }
-            reservations.reserve(request, &candidate, self.kv_prefix_indexer.as_ref());
+            let prefill_tokens = pipeline.scorer.prefill_token_load(
+                request,
+                &candidate,
+                self.kv_prefix_indexer.as_ref(),
+            );
+            reservations.reserve(request, &candidate, prefill_tokens);
             Ok(candidate)
         })();
         metrics.selection(&request.model, round, started.elapsed(), result.as_ref());

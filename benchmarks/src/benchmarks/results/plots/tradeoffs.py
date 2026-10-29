@@ -177,7 +177,7 @@ def _label(row: dict[str, Any], options: TradeoffOptions) -> str:
     for field in options.label_by:
         value = row["bench"].get(field)
         if value is not None:
-            labels.append(f"c{value}" if field == "max_concurrency" else f"{field}={value}")
+            labels.append(f"Concurrency {value}" if field == "max_concurrency" else f"{field}={value}")
     label = ", ".join(labels)
     if options.label_values:
         values = [f"{row[key]:,.0f}" if abs(row[key]) >= 1000 else f"{row[key]:,.1f}" for key in ("x", "y")]

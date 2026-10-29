@@ -49,12 +49,12 @@ For example, when logged in to W&B, replace the recipe's output options with:
 results/decode/parallelism/
 ├── report.md                  # Agent-maintained overall report
 ├── figures/
-│   ├── progress.yaml          # Chart data for one metric and comparison condition
-│   ├── progress-milestones.png
-│   └── progress-search.png
-├── team/                      # Agent-maintained team and observation notes
+│   ├── progress-main.yaml          # Chart data for one metric and comparison condition
+│   ├── progress-main-milestones.png
+│   └── progress-main-search.png
+├── team/                      # Agent-maintained team and assessment notes
 │   ├── README.md              # Task, reminders and follow-up decisions
-│   └── observations/          # One dated note per Observer check
+│   └── evaluations/          # One dated note per Evaluator check
 └── iterations/tp2/
     ├── notes/
     │   ├── iteration.md       # Summaries, document links and decisions
@@ -75,9 +75,9 @@ Records are saved on the machine running the evaluation. Relative paths start fr
 
 ### Share documents and code
 
-Store each approach's complete proposals, plans and analyses in `<output-dir>/iterations/<name>/notes/`. For example, `plan.md` explains the problem and evidence, the proposed approach and alternatives, key trade-offs, and the implementation and validation plan; `analysis.md` explains the measured results. Members can begin these documents before measurement and reuse the same name with `--iteration` when running experiments.
+Keep each approach's question, hypothesis, results and decisions in `<output-dir>/iterations/<name>/notes/iteration.md`. A short experiment needs only this note and links to its original results. Reuse the approach name with `--iteration` when running follow-up measurements.
 
-Use a summary table in `iteration.md` to introduce each topic and link its full document. Keep dated reviews and decisions below the table. `report.md` is the overall entry point: it links the iteration notes and summarizes goals, comparisons and findings across iterations.
+Split out a longer proposal, analysis or independently authored review only when it needs its own document, then link it from `iteration.md`. Keep dated findings and decisions in the note. `report.md` summarizes goals, comparisons and conclusions across approaches and links these records.
 
 The lead provides all members with a readable experiment directory, its host and absolute path. Use that absolute `--output-dir` across checkouts sharing a filesystem, with `--iteration` distinguishing candidates. For records on hosts without shared storage, link their actual locations and access instructions from the report.
 
@@ -91,11 +91,13 @@ Supporting research, scripts, preparation logs and cleanup records also belong u
 
 ## Keep team and session records
 
-The lead keeps the check schedule in `<output-dir>/team/README.md` and links each Observer note under `team/observations/`. Existing task records hold action owners, decisions and expected results. Keep unresolved findings linked to their first note, update their progress there, and have the report link to this current state. Each observation preserves the evidence and judgment from that check.
+The lead keeps the check schedule in `<output-dir>/team/README.md` and links each Evaluator note under `team/evaluations/`. Existing task records hold action owners, decisions and expected results. Keep unresolved findings linked to their first note, update their progress there, and have the report link to this current state. Each assessment preserves the evidence and judgment from that check.
+
+Task records describe intent, ownership and decisions. Read actual agent activity from the native harness, hook bindings from continuation status, and jobs from their execution owner. When a report needs a snapshot, include its observation time and source. Avoid maintaining another live-state copy in each task, member and report file. Close an action with its owner's link to the resulting change or explanation of the decision to stop.
 
 ### Read session evidence
 
-Start from the task and experiment directory to find the lead and member sessions. Use working directories, times, session IDs and parent/child relationships to identify the relevant records. The Observer finds these itself and reads them without asking members to report progress.
+Start from the task and experiment directory to find the lead and member sessions. Use working directories, times, session IDs and parent/child relationships to identify the relevant records. The Evaluator finds these itself and reads them without asking members to report progress.
 
 Use a read-only history interface with full items and tool output when available: [Codex thread history](https://learn.chatgpt.com/docs/app-server) or [Claude session interfaces](https://code.claude.com/docs/en/agent-sdk/sessions). Original files are commonly stored in:
 
@@ -145,7 +147,9 @@ Keep execution evidence, the history of judgments, and the current summary disti
 
 Attribute analysis, reviews, and decisions to their authors. Each decision states the action and its scope. When correcting a conclusion or changing a decision, link the earlier entry and new evidence so readers can follow how the understanding changed.
 
-After each run, append its directory or W&B link, the hypothesis tested, the comparison artifact when available, and the supported conclusion. Record failures and interruptions as well. Use the [iteration template](templates/iteration-template.md) for the history. Send contributions to the assigned writer so parallel agents do not overwrite one another's entries.
+After each run, the Experimenter adds its original location and finding to the [iteration notes](templates/iteration-template.md), then delivers them to the Worker, any assigned reviewer and report writer using the [team workflow](../.agents/skills/rsi/roles/common.md#return-results-as-work-finishes). For example, a diagnostic command can finish with exit 0 while its saved output comparison fails. Record both facts and link the comparison; distinguish measured speed, applicable validation evidence and the retention decision.
+
+Include formal measurements, diagnostic controls and tool-validation runs with their purposes and sample counts. Link auxiliary artifacts even when they have no `metrics.json`. On remote runs, the Experimenter preserves the agreed result location, including any transfer from scratch storage. Recipients read the originals there or use the delivered copy. On recovery, check the recorded remote job and result location.
 
 Keep the report's current conclusions aligned with the iteration history and link the supporting entries. Reusable knowledge can also be revised as understanding improves, with links back to the experiment history.
 
@@ -153,10 +157,12 @@ Keep the report's current conclusions aligned with the iteration history and lin
 
 At experiment start, the lead or a designated writer creates `report.md` using the [report template](templates/report-template.md) and shares its path with the user. Use the task's delivery location, or the experiment root when none is specified. Link the task, experiment directory and iteration notes from the report, resolving links from its actual location. Keep the same report when resuming. The same writer maintains the report and its [progress chart data and figures](templates/progress-charts.md); benchmark commands save the underlying evidence.
 
-Update the report after each measured iteration, including failed attempts, and whenever analysis changes a conclusion or the retained approach. Follow the template's summary tables and progress charts with an explanation of each approach's motivation, actual implementation and results in the same report. The summary and approach sections use matching descriptive names and links. Keep complete commands, logs, repeated measurements and decision history in the iteration notes.
+The writer receives run deliveries directly and follows them through the tables, explanation and figures. Choose an existing member with time for this responsibility when the lead is occupied with execution. A resumed session or new result directory adds to the same continuous report: retain the original configuration, earlier approaches and adopted milestones. The user's initial configuration remains the only baseline. Record changed conditions and later controls as named references in the overview instead of dividing it into execution rounds or resetting the baseline.
+
+Update the report after each measured iteration, including failed attempts, and whenever analysis changes a conclusion or the retained approach. Follow the [template](templates/report-template.md): one overview table per task type, with its iteration chart immediately above it. Each row summarizes one approach and matches its chart point for that metric and condition; repeated runs contribute a stated summary statistic. Include rejected approaches and regressions as well as retained changes. Use matching descriptive names linked to the approach details. Keep complete commands, logs, individual measurements and decision history in the iteration notes.
 
 Write for readers who did not participate in the experiment, separating supported conclusions from hypotheses and pending validation. Before measurements are available, state the objective, starting conditions and what remains unmeasured.
 
-Every report update includes updating the chart data, regenerating both figures and viewing them to check the result.
+Deliver measurements and findings first. Refresh chart data and inspect regenerated figures at a stage summary or report delivery when plotted values or judgments have changed. Text-only updates need no redraw. Tables and plots use the same saved results and interpretation.
 
 On pause, stop or completion, update the same report with the reason, results obtained, retained changes and unfinished validation. Replace obsolete plans with the actual state and share the report path again.

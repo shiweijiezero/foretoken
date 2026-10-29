@@ -14,6 +14,8 @@ ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.12.22
 ARG GO_IMAGE=${BASE_IMAGE_REGISTRY}/library/golang:1.25.10-bookworm
 ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 ARG PREPARATION_BASE_IMAGE=${BASE_IMAGE_REGISTRY}/library/python:3.12-slim-bookworm
+ARG MOONCAKE_WHEEL_IMAGE=mooncake-wheels
+ARG PROFILER_BINDING_IMAGE=profiler-binding
 
 FROM ${UV_IMAGE} AS uv
 
@@ -182,20 +184,31 @@ RUN --mount=type=secret,id=foretoken-build-jobs,env=BUILD_JOBS \
       --output /out --cache /var/cache/foretoken/mooncake --jobs "${BUILD_JOBS:-2}"
 
 # The selected Torch ABI owns this small binding; source updates reuse it with the environment.
-FROM mooncake-build AS profiling-build
+FROM inference-base AS profiling-build
+USER root
 RUN --mount=type=bind,source=data-plane/model-server/profiling,target=/input/profiling \
     "${FORETOKEN_VLLM_PYTHON:-python3}" -I /input/profiling/build.py --output /out/profiling
 
+FROM scratch AS mooncake-wheels
+COPY --from=mooncake-build /out/ /out/
+
+FROM scratch AS profiler-binding
+COPY --from=profiling-build /out/ /out/
+
+# Standalone builds consume the same independently retained native artifacts.
+FROM ${MOONCAKE_WHEEL_IMAGE} AS mooncake-wheel-source
+FROM ${PROFILER_BINDING_IMAGE} AS profiler-binding-source
+
 FROM engine-base AS engine-runtime
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
-    --mount=from=mooncake-build,source=/out,target=/tmp/mooncake-wheels \
+    --mount=from=mooncake-wheel-source,source=/out,target=/tmp/mooncake-wheels \
     --mount=from=runtime-patches,source=/patches,target=/tmp/vllm-patches \
     PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "${FORETOKEN_VLLM_PYTHON:-python3}" -c \
       'from pathlib import Path; from vllm_patches import install_mooncake_dependencies, check_installed_dependencies; install_mooncake_dependencies(Path("/tmp/mooncake-wheels")); check_installed_dependencies()'
-RUN --mount=from=profiling-build,source=/out/profiling,target=/tmp/profiling \
+RUN --mount=from=profiler-binding-source,source=/out/profiling,target=/tmp/profiling \
     "${FORETOKEN_VLLM_PYTHON:-python3}" -c \
       'import shutil, sysconfig; shutil.copy2("/tmp/profiling/foretoken_profile_native.so", sysconfig.get_path("platlib"))'
-COPY --from=mooncake-build /out/licenses/ /usr/local/share/licenses/
+COPY --from=mooncake-wheel-source /out/licenses/ /usr/local/share/licenses/
 COPY --from=mooncake-inputs /deploy/mooncake/NOTICE /usr/local/share/foretoken-mooncake/NOTICE
 COPY --from=mooncake-inputs /deploy/mooncake/patches/ /usr/local/share/foretoken-mooncake/patches/
 

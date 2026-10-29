@@ -11,11 +11,13 @@ A Worker turns an idea into a code or configuration change and hands that candid
 
 ## Learn the framework first
 
-Every role, including the Observer, starts with the [project README](../../../../README.md), architecture guidance, relevant component documentation and maintained examples. Learn how the control plane, data plane, inference engines and benchmark tools work together to deploy services, execute requests and produce results.
+Research and execution members start with the [project README](../../../../README.md), architecture guidance, relevant component documentation and maintained examples. Learn how the control plane, data plane, inference engines and benchmark tools work together to deploy services, execute requests and produce results.
 
-Then study the source, configuration and earlier experiments for the assigned question to identify reusable facilities and affected call paths. Use locations supplied by the lead and check originals against the implementation. Keep related work with members who understand it; they reuse established context and evidence, reading changed material or what a new judgment needs. Refresh affected knowledge when versions or scope change. [Observers](observer.md) use new agents each round and learn their task and role independently.
+Then study the source, configuration and earlier experiments for the assigned question to identify reusable facilities and affected call paths. Use locations supplied by the lead and check originals against the implementation. Keep related work with members who understand it; they reuse established context and evidence, reading changed material or what a new judgment needs. Refresh affected knowledge when versions or scope change. [Evaluators](evaluator.md) start each fresh check from the task, role, prior findings and changed evidence. They consult unfamiliar framework paths as needed for the assessment.
 
 ## Assign complete questions
+
+Select research questions by their importance and potential impact before choosing the cost of the next experiment. Reuse existing evidence, but fund the source study and core implementation needed to answer consequential questions, even when cheaper parameter changes are ready. Within an assigned question, choose evidence that resolves its uncertainty without redundant work; economy of execution must not narrow the research to easy changes.
 
 The lead assigns a sustained research question with an owner, known findings, unresolved points and relevant code, references and experiment records. The owner follows it through investigation, implementation and analysis, identifying useful work that can continue while results are pending. Assign environment preparation separately so Explorers and Workers can proceed with source analysis, implementation and available checks.
 
@@ -29,7 +31,7 @@ For example, an Explorer who finds a potentially faster method can send the find
 
 Use messages for short findings, questions and coordination. Put long explanations, full evidence or anything several people need to read in a shared file, then send a brief summary and its exact path. Give the background once and describe later changes without copying the whole document into messages. The [records guide](../../../../rsi-playbooks/experiment-records.md#share-documents-and-code) explains where files live and who writes them. Notify everyone when a change affects the whole team, and alert the executor immediately if an ongoing experiment will produce invalid results.
 
-Observers gather evidence by reading work and session records rather than asking members for updates. They send their findings to the lead, who arranges any corrections; the team does not wait for the check to finish.
+Evaluators read work and session records independently and send their assessment only to the lead. They identify discrepancies and decisions needing attention; the lead reflects on those findings and chooses any changes to direction, resources or assignments.
 
 While waiting for a reply, continue work that does not need that answer. If progress really is blocked, explain what is missing and who can provide it. Routine updates do not need replies, and completion notifications remove the need to keep asking for status. Transfers of GPUs or running jobs still need someone to accept them. The lead follows the shared records and steps in when direction, scope or resources need to change.
 
@@ -63,11 +65,15 @@ When a measurement finishes, continue ready work or stop unused serving processe
 
 Existing sweeps can run fixed workload groups and repetitions continuously. Task-owned remote sessions or an existing job manager preserve logs and exit status so jobs can be checked after a disconnect. When reading results, distinguish whether measurement finished, whether requests succeeded and whether the task's requirements were met.
 
-After each group of measurements, the Experimenter updates the records and resource state, sends the outcome and result links directly to the Worker and assigned reviewer, and continues already authorized work. The Worker interprets the measurements and advances the same research question. If priorities, budgets or comparison conditions need to change, the lead resolves that decision while unaffected work continues.
+The Experimenter owns a run through result delivery and resource release. The lead names the Worker and report writer, and an independent reviewer when the comparison needs one. As each run finishes, the Experimenter reads its outcome, makes the original results accessible at the agreed location and sends the same finding and links directly to these recipients. This includes diagnostic controls saved outside a benchmark's `runs/` directory. See [complete the experiment notes](../../../../rsi-playbooks/experiment-records.md#complete-the-experiment-notes) for delivery contents and remote recovery.
 
-Experimenters maintain their iteration notes, and the lead assigns one writer to update the report. Summaries link to the original data so conclusions can be traced. Reviewed results remain useful while their inputs and conditions still apply. See the [experiment records guide](../../../../rsi-playbooks/experiment-records.md) for the record layout.
+Deliver each completed measurement point without waiting for the full workload group. The Worker analyzes available evidence while the Experimenter continues remaining measurements; pending points stay explicit. Any assigned reviewer checks the claim, and the writer updates the report. These stages proceed without a new lead assignment after every point. If a recipient is idle, use the harness's native follow-up, or ask the lead when only it can resume the member. A message or queued step alone does not resume an idle member.
+
+The Experimenter or an explicitly accepting successor remains responsible for undelivered results. Record missing access and the person taking the next action in the existing iteration notes. The lead resolves changes to priorities, budgets, comparison conditions and retention while unaffected work continues. Reviewed results remain useful while their inputs and conditions still apply.
 
 ## Review claims independently
+
+Choose validation from the change's effect on model outputs. If outputs are unaffected or existing quality evidence still applies, record that basis and reuse the conclusion without repeating model-quality benchmarks. When a change may affect outputs and the evidence is insufficient, validate the affected behavior within the task's evaluation budget and frequency; run quality scoring only when needed.
 
 Before retaining an approach, the lead asks someone who did not implement or run it to check the results. The reviewer examines the actual code, runtime configuration and original data to confirm that the intended change ran. They then check precision, workload, output settings and resources, and consider whether failures, caches, warmup or competing work affected the comparison.
 
@@ -77,8 +83,8 @@ If a specific question remains unresolved, the reviewer explains what evidence o
 
 A stage delivery reports the conclusion, evidence and next useful step while the owner continues work within the assignment. If progress needs a result or decision, name that dependency and the condition for resuming. When the research question is answered, report remaining questions and resources still in use.
 
-On a native completion or idle notification, the lead checks current role staffing against the task. Resume the familiar member with a concrete next assignment, assign another owner, or record the real dependency or reason for ending that responsibility. If an Explorer moves into implementation or review, count the actual role and keep exploration assigned. On task resumption, check records, jobs and members, retaining the original budget and completed results.
+On a native completion or idle notification, the lead checks the next stage of the member’s assigned research question and current role staffing. Continue with the familiar owner while the question remains open and worthwhile. Change ownership or direction through an explicit lead decision, or record a real dependency; completing a stage does not automatically end its research allocation. If an Explorer moves into implementation or review, count the actual role and keep exploration assigned. On task resumption, check records, jobs and members, retaining the original budget and completed results.
 
 On a user pause, stop or deadline, the lead stops scheduling new experiments. Each owner stops or hands over their jobs and preserves the results. A GPU collector's deadline controls only that collector, so other jobs need their own stop action.
 
-Count Workers, Experimenters, Explorers and Observers while they are actually doing assigned work, once per member. Observers count only during a check, not between rounds. Exclude the lead and members who are waiting, blocked or finished. Mark intervals with insufficient evidence as unknown.
+Count Workers, Experimenters, Explorers and Evaluators while they are actually doing assigned work, once per member. Evaluators count only during a check, not between rounds. Exclude the lead and members who are waiting, blocked or finished. Mark intervals with insufficient evidence as unknown.

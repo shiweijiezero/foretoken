@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+--- a/vllm/profiler/wrapper.py
++++ b/vllm/profiler/wrapper.py
+@@ -58,6 +58,7 @@
+         # Track when the profiler gets triggered by start_profile
+         self._active_iteration_count = 0
+         self._active = False
++        self._error: Exception | None = None
+ 
+         # Track when the profiler is actually running
+         self._profiling_for_iters = 0
+@@ -89,16 +90,27 @@
+             self._start()
+             self._running = True  # Only mark as running if start succeeds
+         except Exception as e:
++            self._error = e
++            self._active = False
+             logger.warning("Failed to start profiler: %s", e)
+ 
+     def _call_stop(self) -> None:
+         """Call _stop with error handling but no safeguards."""
+         try:
+             self._stop()
++            self._running = False
+             logger.info_once("Profiler stopped successfully.")
+         except Exception as e:
++            if self._error is None:
++                self._error = e
+             logger.warning("Failed to stop profiler: %s", e)
+-        self._running = False  # Always mark as not running, assume stop worked
++
++    def _raise_if_failed(self) -> None:
++        """Report retained native errors at the worker control boundary."""
++        if self._error is not None:
++            raise RuntimeError(
++                f"Profiling failed: {self._error}; restart the worker before another capture"
++            ) from self._error
+ 
+     def start(
+         self,
+@@ -130,7 +142,7 @@
+     def step(self) -> None:
+         """Update the profiler state at each worker step,
+         to handle delayed starts and max iteration limits."""
+-        if not self._active:
++        if not self._active or self._error is not None:
+             return
+ 
+         self._active_iteration_count += 1
+@@ -193,7 +205,9 @@
+         """Ensure profiler is stopped when shutting down."""
+         logger.info_once("Shutting down profiler")
+-        if self._running:
+-            self.stop()
++        with self._lifecycle_lock:
++            if self._running:
++                self._call_stop()
++            self._active = False
+ 
+     @property
+     def has_cuda_graph_session(self) -> bool:
+--- a/vllm/v1/worker/gpu_worker.py
++++ b/vllm/v1/worker/gpu_worker.py
+@@ -1379,6 +1379,9 @@
+                 "=YOUR_DIR_PATH_TO_DUMP_TRACE'"
+             )
+ 
++        if self.profiler is not None and self.profiler_config.profiler == "torch":
++            self.profiler._raise_if_failed()
++
+         if is_start:
+             validate_profile_prefix(profile_prefix)
+ 
+@@ -1412,6 +1415,8 @@
+                 return
+             try:
+                 self.profiler.stop()
++                if self.profiler_config.profiler == "torch":
++                    self.profiler._raise_if_failed()
+             finally:
+                 if self.profiler_config.profiler == "proton" and not (
+                     self.profiler.has_cuda_graph_session
+@@ -1419,6 +1424,9 @@
+                     # Proton output names are fixed when the wrapper is constructed.
+                     # Recreate it so the next profile_prefix is honored.
+                     self.profiler = None
++
++        if self.profiler is not None and self.profiler_config.profiler == "torch":
++            self.profiler._raise_if_failed()
+ 
+     @property
+     def randomize_dummy_inputs(self) -> bool:

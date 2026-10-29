@@ -49,12 +49,12 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 results/decode/parallelism/
 ├── report.md                  # Agent 维护的整体报告
 ├── figures/
-│   ├── progress.yaml          # 一个指标、一组对照条件的绘图数据
-│   ├── progress-milestones.png
-│   └── progress-search.png
+│   ├── progress-main.yaml          # 一个指标、一组对照条件的绘图数据
+│   ├── progress-main-milestones.png
+│   └── progress-main-search.png
 ├── team/                      # Agent 维护的团队与巡查记录
 │   ├── README.md              # 任务、提醒与处理决定
-│   └── observations/          # 每轮 Observer 的独立巡查笔记
+│   └── evaluations/          # 每轮 Evaluator 的独立评估笔记
 └── iterations/tp2/
     ├── notes/
     │   ├── iteration.md       # 摘要、文档链接与决定
@@ -75,9 +75,9 @@ results/decode/parallelism/
 
 ### 通过文档共享方案与代码
 
-每个方案的完整说明、计划和分析统一写入 `<output-dir>/iterations/<name>/notes/`。例如，`plan.md` 充分说明问题与依据、方案和备选方法、关键取舍、实现与验证计划，`analysis.md` 展开实测结果的解释。讨论方案时即可创建这些文档，后续运行实验时用同一名称指定 `--iteration`。
+每个方案的问题、假设、结果和决定保存在 `<output-dir>/iterations/<name>/notes/iteration.md`。简短实验只需这一份笔记及原始结果链接；补测时用 `--iteration` 沿用方案名。
 
-`iteration.md` 用摘要表介绍各项内容，并链接完整文件，表格之后保留注明时间的审查与决定。`report.md` 作为整体入口，链接各迭代笔记，汇总目标、方案对比和跨迭代结论。
+方案、分析较长或由其他成员独立撰写审查时，再单独成文并从 `iteration.md` 链接。笔记保留注明时间的发现与决定；`report.md` 汇总跨方案的目标、比较和结论，链接这些记录。
 
 主 Agent 提供全体成员可读取的实验目录，注明所在主机和绝对路径。共享文件系统上的不同 checkout 使用同一绝对 `--output-dir`，通过 `--iteration` 区分候选；跨主机没有共享存储时，在报告中链接实际记录位置及访问方式。
 
@@ -91,11 +91,13 @@ results/decode/parallelism/
 
 ## 保存团队与会话记录
 
-主 Agent 在 `<output-dir>/team/README.md` 维护巡查安排，链接 `team/observations/` 下的每轮笔记。行动的负责人、决定和预期结果保存在已有任务记录中；未解决的问题持续链接首次记录，并在原处更新进展，报告引用这份当前状态。巡查笔记保留各次检查的依据和判断。
+主 Agent 在 `<output-dir>/team/README.md` 维护巡查安排，链接 `team/evaluations/` 下的每轮笔记。行动的负责人、决定和预期结果保存在已有任务记录中；未解决的问题持续链接首次记录，并在原处更新进展，报告引用这份当前状态。评估笔记保留各次检查的依据和判断。
+
+任务记录保存目标、分工和决定。成员实际活动从原生 harness 读取，hook 绑定从 continuation 查询，作业状态由执行负责人核实。报告需要快照时，注明观察时间和来源，避免在任务、成员和报告文件中各维护一份实时状态。结束跟进时，由负责人链接实际改动的结果，或说明停止行动的决定。
 
 ### 读取会话证据
 
-从任务文件和实验目录查找主 Agent 与成员会话，结合工作目录、时间、session ID 和父子关系确认记录范围。Observer 自行定位并只读检查，无需成员重新汇报进度。
+从任务文件和实验目录查找主 Agent 与成员会话，结合工作目录、时间、session ID 和父子关系确认记录范围。Evaluator 自行定位并只读检查，无需成员重新汇报进度。
 
 有只读历史接口时，读取完整条目和工具输出，例如 [Codex 会话历史](https://learn.chatgpt.com/docs/app-server)或 [Claude 会话接口](https://code.claude.com/docs/en/agent-sdk/sessions)。原始文件通常位于：
 
@@ -145,7 +147,9 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 
 分析、审查和决定分别注明作者，每项决定写清行动和适用范围。更正结论或改变决定时，链接旧条目与新依据，保留认识变化的过程。
 
-每次运行后，追加运行目录或 W&B 链接、测试的假设、已有对照产物的链接及证据支持的结论，也保留失败和中断原因。按[迭代模板](templates/iteration-template_zh.md)记录历史。成员把补充内容交给指定作者，避免并行覆盖记录。
+每次运行后，Experimenter 在[迭代笔记](templates/iteration-template_zh.md)中补入原件位置与结果，再按[团队交付流程](../.agents/skills/rsi/roles/common_zh.md#随实验返回结果)直接交给 Worker、已安排的审查者和报告作者。例如，诊断命令退出码为 0，但保存的输出比较可能不一致；应同时记录两个事实并链接比较结果。分别说明实测速度、适用的验证证据与是否保留。
+
+正式测量、诊断控制和工具验证均注明用途与样本数，没有 `metrics.json` 的辅助产物也要保留入口。远端运行由 Experimenter 将结果保存到约定位置，包括从临时存储转移原件；接收者直接读取原件，或使用交付的副本。恢复时先检查已登记的远端作业与结果位置。
 
 报告中的当前结论与迭代历史保持一致，并链接支撑条目。可复用知识也可随认识变化修订，保留指向实验历史的链接。
 
@@ -153,10 +157,12 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 
 实验开始时，由主 Agent 或指定作者按[报告模板](templates/report-template_zh.md)创建 `report.md`，并向用户提供文件路径。报告放在任务指定的交付位置；未指定时放在实验根目录。报告链接任务、实验目录和各轮迭代笔记，链接以报告的实际位置为起点。恢复实验时继续更新同一份文件。报告及其[进展图数据和图片](templates/progress-charts_zh.md)由同一作者维护，评测命令负责保存原始证据。
 
-每轮测量结束后（包括失败尝试），以及分析改变结论或保留方案时，及时更新报告。按模板在总结内列出对照表，随后放进展图，再在同一份报告中逐方案说明动机、实际实现和结果。表格与正文使用一致、能说明改动的名称，并相互关联。完整命令、日志、重复测量和决策历史保存在迭代笔记中。
+报告作者直接接收每次交付，负责将结果落实到表格、解释和图中。主 Agent 忙于执行时，由已有成员中能够持续承担这项工作的人负责。恢复会话或使用新的结果目录时，继续维护同一份连续报告，保留最初配置、早期方案和已采用节点。用户最初的初始配置始终是唯一 baseline。变化的条件及后续控制作为具名参照写进总览，不按执行轮次分段，也不重置 baseline。
+
+每轮测量结束后（包括失败尝试），以及分析改变结论或保留方案时，及时更新报告。按[模板](templates/report-template_zh.md)为每类任务提供一张总表，对应迭代图紧接在表格上方。每行概括一个方案，与该指标和条件下的图中点对应；重复运行采用注明统计方式的汇总值。保留、弃用和回退的方案都进入总览。图表使用一致、能说明改动的名称，链接方案详解。完整命令、日志、逐次测量和决策历史保存在迭代笔记中。
 
 面向未参与实验的读者，区分已有证据支持的结论、待验证假设和未完成验证。尚无测量结果时，说明目标、起始条件和未测项目。
 
-每次更新报告，都同步更新绘图数据、重新生成并查看两张图。
+先交付测量值与分析结论。阶段汇总或交付报告时，若图中数值或判断变化，再更新数据、重绘并检查图表；仅文字更新无需重绘。表格和图沿用同一份已保存结果与解释。
 
 暂停、停止或完成时，更新同一份报告，写清原因、已取得的结果、保留改动和未完成验证，将过时安排改为实际状态，并再次提供报告路径。

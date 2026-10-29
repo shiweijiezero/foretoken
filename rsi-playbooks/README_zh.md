@@ -28,7 +28,7 @@ cd foretoken
 | 最终部署预算 | 最终方案允许使用多少资源，与实验期间的总资源分开填写。 |
 | 评测与约束 | 负载、并发、精度和质量要求，以及允许修改的代码或配置范围。 |
 | 时间与交付 | 工作时长或结束条件、已有实验，以及报告和结果保存位置。 |
-| Agent 设置 | Explorer、Worker、Experimenter 的并行人数；每轮 Observer 数量与巡查间隔。 |
+| Agent 设置 | Explorer、Worker、Experimenter 的并行人数；每轮 Evaluator 数量与巡查间隔。 |
 
 ### 3. 启动 Agent
 
@@ -69,13 +69,13 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 max_concurrent_threads_per_session = 16
 ```
 
-按同时工作的 Explorer、Worker、Experimenter 总数，加上一轮 Observer 所需人数预留名额。
+按同时工作的 Explorer、Worker、Experimenter 总数，加上一轮 Evaluator 所需人数预留名额。
 
 ## 查看进展
 
 实验报告 `report.md` 随进展更新，汇总方案对比、性能与质量结果、保留方案和待验证的问题。原始数据和详细分析可从报告中的链接查看，记录格式见[实验记录手册](experiment-records_zh.md)。
 
-需要调整目标、预算或改动范围时，直接在会话中说明，并更新任务文件。
+需要调整目标、预算或改动范围时，在会话中说明即可，由主 Agent 更新任务记录与受影响的工作安排。
 
 暂停任务时，Claude Code 使用 `/goal clear`，Codex 使用 `/goal pause`，同时要求团队停止实验、采集进程和巡查提醒。Codex 可用 `/goal resume` 继续，恢复时沿用原任务和已有结果。
 
@@ -89,7 +89,7 @@ max_concurrent_threads_per_session = 16
 | Explorer | 检索本地或在线资料，研究机制，提出方法和新问题。 |
 | Worker | 实现方案，分析实验结果并继续改进。 |
 | Experimenter | 准备环境、部署和运行实验、保存结果、释放资源。 |
-| Observer | 每轮以新 Agent 独立读记录，逐项检查进度、研究深度和资源使用，提出调整建议。 |
+| Evaluator | 每轮独立评估进度、研究深度与资源使用，向主 Agent 提交发现及待决定的问题。 |
 
 ## 执行规则与参考资料
 

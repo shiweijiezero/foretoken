@@ -208,7 +208,7 @@ def _economics_figure(
     for row in rows:
         label = textwrap.fill(row["method"], width=16 if columns == 1 else 24)
         if row["max_concurrency"] is not None:
-            label += f"\nc{row['max_concurrency']}"
+            label += f"\nConcurrency {row['max_concurrency']}"
         speed = row[interactivity_key]
         if speed is not None:
             label += f" · {speed:.1f} tok/s/user"

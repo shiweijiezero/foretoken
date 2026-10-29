@@ -42,6 +42,9 @@ pub trait RouteSession: Send {
     /// Releases prompt-token load when the first response reaches the frontend.
     fn response_started(&mut self) {}
 
+    /// Adds newly streamed output tokens to the active stage's router-owned KV load.
+    fn output_tokens_generated(&mut self, count: usize);
+
     /// Releases the completed stage's load; dropping the session also releases outstanding stages.
     fn stage_complete(&mut self) {}
 

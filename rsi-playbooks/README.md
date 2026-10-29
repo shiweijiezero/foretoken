@@ -28,7 +28,7 @@ Confirm the following settings. Leave choices to the agents where you do not nee
 | Final deployment budget | Resources allowed for the final service, separate from the total experiment resources. |
 | Evaluation and constraints | Workloads, concurrency, precision, quality requirements and the code or configuration that may change. |
 | Time and delivery | Duration or completion conditions, prior experiments, and where to save reports and results. |
-| Agent settings | Concurrent Explorer, Worker and Experimenter counts; Observers per check and the check interval. |
+| Agent settings | Concurrent Explorer, Worker and Experimenter counts; Evaluators per check and the check interval. |
 
 ### 3. Start the agents
 
@@ -69,13 +69,13 @@ If Codex cannot create the requested team because of its agent limit, set a suit
 max_concurrent_threads_per_session = 16
 ```
 
-Choose enough slots for concurrent Explorers, Workers and Experimenters plus an Observer round.
+Choose enough slots for concurrent Explorers, Workers and Experimenters plus an Evaluator round.
 
 ## Follow progress
 
 The running `report.md` summarizes comparisons, performance and quality results, retained approaches and open validation questions. Follow its links for raw data and detailed analysis. See the [experiment records guide](experiment-records.md) for record formats.
 
-To adjust objectives, budgets or the allowed scope, state the change in the conversation and update the task file.
+To adjust objectives, budgets or the allowed scope, state the change in the conversation. The lead updates the task record and affected work arrangements.
 
 To pause, use `/goal clear` in Claude Code or `/goal pause` in Codex, and ask the team to stop experiments, collectors and check reminders. In Codex, use `/goal resume` to continue with the original task and existing results.
 
@@ -89,7 +89,7 @@ The task file expresses user requirements. The RSI skill and role instructions o
 | Explorer | Search local or online sources, study mechanisms, and propose methods and questions. |
 | Worker | Implement approaches, analyze results and improve the code or configuration. |
 | Experimenter | Prepare environments, deploy and run experiments, save results and release resources. |
-| Observer | Use a new agent each round to read records independently, check progress, research depth and resource use item by item, and suggest adjustments. |
+| Evaluator | Independently assess progress, research depth and resource use each round, and alert the lead to findings and decisions needing attention. |
 
 ## Execution rules and references
 

@@ -13,13 +13,11 @@ Staffing follows the task's role counts and the [team setup](../SKILL.md#set-up-
 
 ## Understand the problem and explore alternatives
 
-An Explorer first learns Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then combines the target workload, current code, previous experiments and relevant research to understand what limits the system. Local operators matter, but so do the ways scheduling, communication, memory and service organization affect performance together.
+Learn Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then reason from the task objective and requirements marked `[Fixed]` about how computation, state and resources could be organized. The current configuration, source and profiles describe one solution; distinguish essential dependencies from implementation choices.
 
-Frame a question from the objective, model, hardware and workload. Find relevant entries in the [knowledge library](../../../../rsi-playbooks/guidance/knowledge/README.md) and earlier experiments, then read their explanations and evidence. Trace the current version's call path to see which mechanisms it already uses and where their costs arise. Distinguish task constraints from choices made by that implementation.
+Develop and compare alternative mechanisms, including algorithms, auxiliary models and their weights, composition and execution relationships. Use the [knowledge library](../../../../rsi-playbooks/guidance/knowledge/README.md) and earlier experiments to identify the assumptions behind the current approach and the opportunities their revision could open. Keep this research assigned alongside candidate implementation and troubleshooting so mechanisms outside the current candidate list receive sustained attention.
 
-Use the [reference guide](../../../../rsi-playbooks/guidance/meta-knowledge/01-reference-search.md) to find other methods in papers, community discussions and implementations. Follow promising discussions to their original code and results. In the existing research notes, compare local findings, current behavior and external alternatives: explain their conditions, what could change, and which comparison would answer the question. Record sources and code locations so Workers can follow up, accounting for model, hardware and workload differences.
-
-A useful finding need not be an implementation proposal. A new explanation of a bottleneck, a counterexample to an earlier conclusion, a trade-off between algorithms or a question worth testing can all move the research forward.
+Use the [reference guide](../../../../rsi-playbooks/guidance/meta-knowledge/01-reference-search.md) to find principles, community implementations and pretrained auxiliary weights, or develop an original method. Check primary sources, target-model applicability and interface requirements. Record reusable findings and key unknowns in the existing research notes. Findings may motivate an alternative or support the current mechanism; explain the evidence and worthwhile research questions to the lead and relevant Workers.
 
 ## Turn research into experiments
 

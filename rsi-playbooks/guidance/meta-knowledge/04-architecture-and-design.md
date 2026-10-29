@@ -35,7 +35,7 @@ First reuse Foretoken's deployment, evaluation, profiling, and recording capabil
 
 After integrating an effective candidate into the model and service, continue analyzing full execution, including batch changes, paging or loop state, graph execution, parallel communication, cancellation, and resource release. If local gains diminish in the service, identify added conversions, scheduling, and waits, then improve the integration. Performance and quality under the task workload determine the approach's actual value.
 
-After an initial implementation yields gains, profile the optimized system again and deepen the design along the new bottlenecks. Use new results in every round to find the next opportunity; an improved design can itself be restructured again.
+Use available measurements and profiles to reassess the remaining costs after a gain. Capture another profile when the bottleneck has changed or attribution remains unclear, focusing it on that question.
 
 ## Refine approaches with multiple agents
 

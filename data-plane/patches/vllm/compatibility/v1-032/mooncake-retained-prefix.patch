@@ -1,0 +1,1002 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_connector.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_connector.py
+@@ -9,7 +9,7 @@
+ from collections import defaultdict
+ from collections.abc import Collection
+ from concurrent.futures import ThreadPoolExecutor
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from enum import IntEnum
+ from typing import TYPE_CHECKING, Any, Final
+ 
+@@ -33,6 +33,7 @@
+     KVConnectorMetadata,
+     KVConnectorRole,
+     KVConnectorTransferResults,
++    KVConnectorWorkerMetadata,
+     SupportsHMA,
+ )
+ from vllm.distributed.kv_transfer.kv_connector.v1.metrics import KVConnectorStats
+@@ -622,6 +623,8 @@
+     # peer did not send the field, so the run must not be promoted.
+     registered_row_offsets: list[int] = msgspec.field(default_factory=list)
+     remote_pp_size: int = 1
++    remote_pp_rank: int = 0
++    read_leases: dict[ReqId, tuple[str, str]] = msgspec.field(default_factory=dict)
+ 
+ 
+ class MooncakeXferResponseStatus(IntEnum):
+@@ -629,7 +632,7 @@
+     FINISH = 0
+     # Continue to receive
+     CONTINUE = 1
+-    # Something wrong, see err_msg
++    # Native I/O completion is unknown; see err_msg.
+     ERROR = 2
+ 
+ 
+@@ -652,11 +655,15 @@
+     remote_bootstrap_addr: str
+     # Set expire time to avoid infinitely sending requests.
+     expire_time: float = float("inf")
+-    # Designed for one D pairing to multiple P
++    # Number of source workers serving this receiver.
+     pull_tasks_count: int = 0
+     # Set once any worker reports a failure, so a success from another worker
+     # for the same request is not counted afterwards.
+     failed: bool = False
++    read_lease: str | None = None
++    consumer_id: str | None = None
++    awaiting_kvs: bool = True
++    completed_sources: set[str] = field(default_factory=set)
+ 
+ 
+ @dataclass
+@@ -669,6 +676,31 @@
+     need_send: int = 0
+     sent: int = 0
+     sending: int = 0
++    retained: bool = False
++    read_lease: str | None = None
++    consumer_id: str | None = None
++    readers: dict[tuple[int, int], asyncio.Future[bool]] = field(default_factory=dict)
++
++    def has_unconfirmed_readers(self) -> bool:
++        """Keep buffers until every admitted reader has a known WRITE or no-WRITE result."""
++        return any(
++            not completion.done()
++            or completion.cancelled()
++            or completion.exception() is not None
++            for completion in self.readers.values()
++        )
++
++
++@dataclass
++class MooncakeTransferWorkerMetadata(KVConnectorWorkerMetadata):
++    """Keep scheduling active until native sends and receives have drained."""
++
++    pending_transfers: set[str] = field(default_factory=set)
++
++    def aggregate(self, other: KVConnectorWorkerMetadata):
++        assert isinstance(other, MooncakeTransferWorkerMetadata)
++        self.pending_transfers.update(other.pending_transfers)
++        return self
+ 
+ 
+ class MooncakeConnectorMetadata(KVConnectorMetadata):
+@@ -677,6 +709,7 @@
+         # See comments in MooncakeBootstrapServer.
+         self.reqs_to_recv: dict[EngineId, dict[ReqId, PullReqMeta]] = defaultdict(dict)
+         self.reqs_to_send: dict[ReqId, tuple[TransferId, list[list[int]]]] = {}
++        self.retained_reqs: dict[ReqId, float] = {}
+         self.reqs_not_processed: set[TransferId] = set()
+ 
+     def add_new_req(
+@@ -694,7 +727,10 @@
+                 local_block_ids=local_block_ids,
+                 remote_engine_id=remote_engine_id,
+                 remote_bootstrap_addr=kv_transfer_params["remote_bootstrap_addr"],
+-                transfer_id=transfer_id,
++                transfer_id=kv_transfer_params.get("remote_transfer_id", transfer_id),
++                read_lease=kv_transfer_params.get("remote_read_lease"),
++                consumer_id=kv_transfer_params.get("remote_consumer_id"),
++                awaiting_kvs=any(local_block_ids),
+             )
+         else:
+             self.reqs_to_send[request_id] = (transfer_id, local_block_ids)
+@@ -797,9 +833,27 @@
+         assert self.connector_scheduler is not None
+         return self.connector_scheduler.request_finished(request, block_ids)
+ 
++    def update_connector_output(self, connector_output) -> None:
++        """Observe worker-owned transfers before the scheduler frees completed blocks."""
++        assert self.connector_scheduler is not None
++        worker_meta = connector_output.kv_connector_worker_meta
++        if isinstance(worker_meta, MooncakeTransferWorkerMetadata):
++            self.connector_scheduler.pending_transfers = worker_meta.pending_transfers
++
++    def has_pending_push_work(self) -> bool:
++        assert self.connector_scheduler is not None
++        return bool(self.connector_scheduler.get_pending_transfers())
++
+     ############################################################
+     # Worker Side Methods
+     ############################################################
++    def build_connector_worker_meta(self) -> MooncakeTransferWorkerMetadata:
++        """Publish pending native I/O so idle scheduling and shutdown can drain it."""
++        assert self.connector_worker is not None
++        return MooncakeTransferWorkerMetadata(
++            self.connector_worker.get_pending_transfers()
++        )
++
+     def register_kv_caches(self, kv_caches: dict[str, torch.Tensor]):
+         assert self.connector_worker is not None
+         self.connector_worker.register_kv_caches(kv_caches)
+@@ -848,11 +902,10 @@
+     def get_kv_connector_stats(self) -> KVConnectorStats | None:
+         """Return worker-local transfer stats since the last call.
+ 
+-        Note the P/D asymmetry: because Mooncake is P-push (P calls
+-        batch_transfer_sync_write), P records successful transfer latency,
+-        bytes, and descriptor counts, while D only records failures
+-        (recv/ZMQ errors). Aggregated NIXL-style dashboards will find
+-        successful-transfer metrics on the P worker, not D.
++        The source executing batch_transfer_sync_write records successful
++        transfer latency, bytes, and descriptor counts. Receivers record
++        receive failures. A Decode worker is a source when serving a retained
++        prefix to Prefill.
+         """
+         if self.connector_worker is None:
+             return None
+@@ -878,12 +931,23 @@
+         self.block_size = vllm_config.cache_config.block_size
+         self.kv_cache_config = kv_cache_config
+ 
+-        assert vllm_config.kv_transfer_config
+-        self.is_kv_producer: bool = (
+-            vllm_config.kv_transfer_config.kv_role == "kv_producer"
+-        )
+-        self.is_kv_consumer: bool = (
+-            vllm_config.kv_transfer_config.kv_role == "kv_consumer"
++        assert (kv_transfer_config := vllm_config.kv_transfer_config)
++        self.bidirectional_kv_xfer = kv_transfer_config.get_from_extra_config(
++            "bidirectional_kv_xfer", False
++        )
++        self.retain_decode_kv = (
++            self.bidirectional_kv_xfer and kv_transfer_config.kv_role == "kv_consumer"
++        )
++        self._kv_lease_duration = kv_transfer_config.get_from_extra_config(
++            "kv_lease_duration", 30
++        )
++        self.is_kv_producer = (
++            kv_transfer_config.kv_role == "kv_producer"
++            and not self.bidirectional_kv_xfer
++        )
++        self.is_kv_consumer = (
++            kv_transfer_config.kv_role == "kv_consumer"
++            and not self.bidirectional_kv_xfer
+         )
+         logger.info("Initializing Mooncake Transfer Engine Scheduler %s", engine_id)
+ 
+@@ -910,6 +974,9 @@
+         # Reqs to remove from processed set because they're not to send after
+         # remote prefill or aborted.
+         self._reqs_not_processed: set[TransferId] = set()
++        self._retained_reqs: dict[ReqId, float] = {}
++        self.pending_transfers: set[ReqId] = set()
++        self.engine_id = engine_id
+ 
+         # Compute sliding window block counts per KV cache group.
+         sw_sizes_tokens: list[tuple[int, int]] = [
+@@ -944,7 +1011,7 @@
+         ]
+ 
+     def _get_remote_prefill_token_count(self, num_prompt_tokens: int) -> int:
+-        """D-side only. Returns N-1 for Mamba models since the decoder
++        """Return N-1 for Mamba models since the decoder
+         always recomputes the last token and must start from h(N-1), and for
+         DSV41 SWA bounded replay, whose window is not replayed after a P/D load
+         and must be laid out for that token."""
+@@ -1021,9 +1088,10 @@
+             # Remote prefill: get all prompt blocks from remote.
+             assert not self.is_kv_producer
+             token_ids = request.prompt_token_ids or []
+-            count = self._get_remote_prefill_token_count(len(token_ids)) - (
+-                num_computed_tokens
+-            )
++            remote_tokens = self._get_remote_prefill_token_count(len(token_ids))
++            if params.get("remote_read_lease"):
++                remote_tokens = min(remote_tokens, params["remote_num_tokens"])
++            count = remote_tokens - num_computed_tokens
+             if count > 0:
+                 return count, True
+ 
+@@ -1051,9 +1119,8 @@
+                 p in params
+                 for p in ("remote_engine_id", "remote_bootstrap_addr", "transfer_id")
+             ):
+-                # If remote_blocks and num_external_tokens = 0, we have
+-                # a full prefix cache hit on the D worker. We need to call
+-                # send_notif in _read_blocks to free the memory on the P.
++                # Notify the source even on a full local hit; empty destination
++                # blocks complete the transfer without a WRITE.
+                 unhashed_block_ids = (
+                     blocks.get_unhashed_block_ids_all_groups()
+                     if num_external_tokens > 0
+@@ -1071,7 +1138,7 @@
+             # Only trigger 1 KV transfer per request.
+             params["do_remote_prefill"] = False
+ 
+-        elif params.get("do_remote_decode"):
++        if params.get("do_remote_decode"):
+             assert not self.is_kv_consumer
+             if not params.get("transfer_id"):
+                 logger.warning("Missing transfer_id in kv_transfer_params from router!")
+@@ -1108,8 +1175,18 @@
+             self._reqs_need_send.clear()
+             meta.reqs_not_processed = self._reqs_not_processed
+             self._reqs_not_processed = set()
++            meta.retained_reqs = self._retained_reqs
++            self._retained_reqs = {}
+ 
+         return meta
++
++    def get_pending_transfers(self) -> set[str]:
++        """Return active and unbroadcast transfers, excluding unclaimed Decode KV."""
++        return (
++            self.pending_transfers
++            | self._reqs_need_recv.keys()
++            | (self._reqs_need_send.keys() - self._retained_reqs.keys())
++        )
+ 
+     def request_finished(
+         self,
+@@ -1134,13 +1211,47 @@
+             # If do_remote_prefill is still True when the request is finished,
+             # update_state_after_alloc must not have been called (the request
+             # must have been aborted before it was scheduled).
+-            # To avoid stranding the prefill blocks in the prefill instance,
+-            # we must add empty block_ids to _reqs_need_recv so that our
+-            # worker side will notify and free blocks in the prefill instance.
++            # Enqueue empty block IDs so workers notify the source that no
++            # WRITE is needed, allowing it to release its KV blocks.
+             assert not self.is_kv_producer
+             self._reqs_need_recv[request.request_id] = (request, [])
+             params["do_remote_prefill"] = False
+             return False, None
++
++        if self.retain_decode_kv and request.status in (
++            RequestStatus.FINISHED_LENGTH_CAPPED,
++            RequestStatus.FINISHED_STOPPED,
++        ):
++            if (
++                request.lora_request is not None
++                or request.mm_features
++                or request.prompt_embeds is not None
++                or not 0 < request.num_computed_tokens <= len(request.all_token_ids)
++                or not any(block_ids)
++            ):
++                return False, None
++            # The retained request owns this send, independently of its incoming
++            # P/D handoff. The next Prefill keeps its own outgoing transfer_id.
++            transfer_id = request.request_id
++            params["transfer_id"] = transfer_id
++            self._reqs_need_send[request.request_id] = (
++                request,
++                self.get_sw_clipped_blocks(block_ids),
++            )
++            self._retained_reqs[request.request_id] = self._kv_lease_duration
++            return True, {
++                "do_remote_prefill": True,
++                "do_remote_decode": True,
++                "remote_engine_id": self.engine_id,
++                "remote_bootstrap_addr": make_zmq_path(
++                    "http", get_ip(), envs.VLLM_MOONCAKE_BOOTSTRAP_PORT
++                ),
++                "remote_transfer_id": transfer_id,
++                "remote_num_tokens": request.num_computed_tokens,
++                "remote_blocks_expiry_time": (
++                    time.perf_counter() + self._kv_lease_duration
++                ),
++            }
+ 
+         if not params.get("do_remote_decode"):
+             return False, None
+@@ -1190,8 +1301,17 @@
+         self.hostname = get_ip()
+ 
+         assert (kv_transfer_config := vllm_config.kv_transfer_config)
+-        self.is_kv_producer: bool = kv_transfer_config.kv_role == "kv_producer"
+-        self.is_kv_consumer: bool = kv_transfer_config.kv_role == "kv_consumer"
++        self.bidirectional_kv_xfer = kv_transfer_config.get_from_extra_config(
++            "bidirectional_kv_xfer", False
++        )
++        self.is_kv_producer = (
++            kv_transfer_config.kv_role == "kv_producer"
++            and not self.bidirectional_kv_xfer
++        )
++        self.is_kv_consumer = (
++            kv_transfer_config.kv_role == "kv_consumer"
++            and not self.bidirectional_kv_xfer
++        )
+         self.num_sender_workers = kv_transfer_config.kv_connector_extra_config.get(
+             "num_workers", 10
+         )
+@@ -1256,19 +1376,20 @@
+         self.kv_caches_base_addr: list[int] = []
+         self.device_kv_caches: dict[str, torch.Tensor] = {}
+         self.reqs_need_send: dict[TransferId, SendBlockMeta] = {}
+-
+-        # For kv_both, we will act both prefiller and decoder.
++        self._pending_receives: set[ReqId] = set()
++        self._transfer_error: BaseException | None = None
++
++        # kv_both and bidirectional transfers enable both I/O paths.
+         if not self.is_kv_consumer:
+-            # Background threads for sending kvcaches to D.
+-            # Each pool thread must be bound to the correct CUDA device
+-            # because CUDA device selection is thread-local.
++            # Bind sender threads to the correct CUDA device because device
++            # selection is thread-local.
+             self._sender_executor = ThreadPoolExecutor(
+                 max_workers=self.num_sender_workers,
+                 thread_name_prefix="vllm-mooncake-sender",
+                 initializer=self._bind_sender_thread_device,
+             )
+             logger.debug(
+-                "Mooncake Prefiller: use %d workers to send kvcaches",
++                "Mooncake sender: use %d workers to send KV",
+                 self.num_sender_workers,
+             )
+             # An asyncio queue to buffer incoming requests for the sender
+@@ -1292,7 +1413,7 @@
+                 target=_async_loop, args=(self.receiver_loop,), daemon=True
+             )
+             self._mooncake_receiver_t.start()
+-            logger.debug("Mooncake Decoder: start receiver thread")
++            logger.debug("Mooncake receiver: start receiver thread")
+ 
+         self.finished_sending_reqs: set[ReqId] = set()
+         self.finished_recving_reqs: set[ReqId] = set()
+@@ -1462,9 +1583,11 @@
+             while True:
+                 identity, metadata_bytes = await sock.recv_multipart()
+                 await self.sender_worker_queue.put((identity, metadata_bytes))
+-        except zmq.ContextTerminated:
++        except zmq.ContextTerminated as error:
++            self._transfer_error = error
+             logger.debug("ZMQ context terminated, exiting Mooncake sender thread.")
+         except Exception as e:
++            self._transfer_error = e
+             logger.error("Error in Mooncake sender thread: %s. Exiting thread.", str(e))
+         finally:
+             # Clean up worker tasks
+@@ -1481,6 +1604,9 @@
+                     metadata = self._xfer_meta_decoder.decode(metadata_bytes)
+                     await self.send_kv_to_decode(identity, sock, metadata)
+                 except Exception as e:
++                    # A background exception may follow a submitted WRITE. Surface it
++                    # to the worker instead of letting a TTL recycle either buffer.
++                    self._transfer_error = e
+                     logger.error("Error processing Mooncake xfer request: %s", e)
+                     error_response = MooncakeXferResponse(
+                         status=MooncakeXferResponseStatus.ERROR, err_msg=str(e)
+@@ -1490,9 +1616,11 @@
+                     )
+                 finally:
+                     self.sender_worker_queue.task_done()
+-            except asyncio.CancelledError:
++            except asyncio.CancelledError as error:
++                self._transfer_error = error
+                 break
+             except Exception as e:
++                self._transfer_error = e
+                 logger.error("Error in _sender_worker: %s", e)
+ 
+     async def send_kv_to_decode(
+@@ -1501,15 +1629,16 @@
+         pending_reqs: dict[ReqId, SendBlockMeta] = {}
+         remote_tp_ranks = self.transfer_topo.handshake_target_ranks(meta.remote_tp_size)
+         if meta.remote_tp_rank not in remote_tp_ranks:
+-            # This D worker does not pair with the P worker.
++            # This receiver rank is not paired with the source rank.
+             msg = (
+-                "This D tp_rank "
+-                f"{meta.remote_tp_rank} is not paired with P tp_rank "
++                "Receiver TP rank "
++                f"{meta.remote_tp_rank} is not paired with source TP rank "
+                 f"{self.tp_rank}; expected one of {remote_tp_ranks}."
+             )
+             logger.error(msg)
+             response = MooncakeXferResponse(
+-                status=MooncakeXferResponseStatus.ERROR,
++                status=MooncakeXferResponseStatus.FINISH,
++                err_reqs=list(meta.req_blocks),
+                 err_msg=msg,
+             )
+             await sock.send_multipart((identity, self._encoder.encode(response)))
+@@ -1529,7 +1658,8 @@
+             )
+             logger.error(msg)
+             response = MooncakeXferResponse(
+-                status=MooncakeXferResponseStatus.ERROR,
++                status=MooncakeXferResponseStatus.FINISH,
++                err_reqs=list(meta.req_blocks),
+                 err_msg=msg,
+             )
+             await sock.send_multipart((identity, self._encoder.encode(response)))
+@@ -1537,7 +1667,8 @@
+         local_regions, remote_regions, prep_err = self._prepare_transfer_regions(meta)
+         if prep_err is not None:
+             response = MooncakeXferResponse(
+-                status=MooncakeXferResponseStatus.ERROR,
++                status=MooncakeXferResponseStatus.FINISH,
++                err_reqs=list(meta.req_blocks),
+                 err_msg=prep_err,
+             )
+             await sock.send_multipart((identity, self._encoder.encode(response)))
+@@ -1556,22 +1687,68 @@
+         )
+         if validation_err is not None:
+             response = MooncakeXferResponse(
+-                status=MooncakeXferResponseStatus.ERROR,
++                status=MooncakeXferResponseStatus.FINISH,
++                err_reqs=list(meta.req_blocks),
+                 err_msg=validation_err,
+             )
+             await sock.send_multipart((identity, self._encoder.encode(response)))
+             return
++        reader = (meta.remote_tp_rank, meta.remote_pp_rank)
++        rejected: list[ReqId] = []
++        repeated: dict[ReqId, asyncio.Future[bool]] = {}
+         for d_req_id, (transfer_id, _) in meta.req_blocks.items():
+-            if transfer_id not in self.reqs_need_send:
+-                # This req is not enqueued in P side yet, create it here.
+-                self.reqs_need_send[transfer_id] = SendBlockMeta(
++            send_meta = self.reqs_need_send.get(transfer_id)
++            lease = meta.read_leases.get(d_req_id)
++            if lease is not None:
++                if (
++                    send_meta is None
++                    or not send_meta.retained
++                    or lease != (send_meta.read_lease, send_meta.consumer_id)
++                    or (
++                        not send_meta.readers
++                        and time.perf_counter() >= send_meta.expire_time
++                    )
++                ):
++                    rejected.append(d_req_id)
++                    continue
++                if reader in send_meta.readers:
++                    repeated[d_req_id] = send_meta.readers[reader]
++                    continue
++                # Claim, revocation and first submission all run on sender_loop.
++                # Once a reader starts, only native I/O completion can release it.
++                send_meta.readers[reader] = self.sender_loop.create_future()
++            elif send_meta is not None and send_meta.retained:
++                rejected.append(d_req_id)
++                continue
++            if send_meta is None:
++                send_meta = SendBlockMeta(
+                     p_req_id="",
+                     transfer_id=transfer_id,
+                     local_block_ids=[],
+                     ready=asyncio.Event(),
+                 )
+-            send_meta = self.reqs_need_send[transfer_id]
++                self.reqs_need_send[transfer_id] = send_meta
+             pending_reqs[d_req_id] = send_meta
++
++        if rejected or repeated:
++            # A duplicate waiter cannot cancel the original WRITE's completion.
++            repeated_ok = []
++            for req_id, completion in repeated.items():
++                if await asyncio.shield(completion):
++                    repeated_ok.append(req_id)
++                else:
++                    rejected.append(req_id)
++            response = MooncakeXferResponse(
++                status=(
++                    MooncakeXferResponseStatus.CONTINUE
++                    if pending_reqs
++                    else MooncakeXferResponseStatus.FINISH
++                ),
++                ok_reqs=repeated_ok or None,
++                err_reqs=rejected or None,
++                err_msg="Retained source is no longer available" if rejected else None,
++            )
++            await sock.send_multipart((identity, self._encoder.encode(response)))
+ 
+         async def wait_and_ret(
+             d_req_id: ReqId, send_meta: SendBlockMeta
+@@ -1596,12 +1773,12 @@
+                 for task in wait_tasks:
+                     task.cancel()
+                 logger.warning(
+-                    "Timeout waiting for P side ready: %s", list(pending_reqs)
++                    "Timeout waiting for source KV readiness: %s", list(pending_reqs)
+                 )
+                 response = MooncakeXferResponse(
+                     status=MooncakeXferResponseStatus.FINISH,
+                     err_reqs=list(pending_reqs),
+-                    err_msg="Timeout waiting for P side ready.",
++                    err_msg="Timeout waiting for source KV readiness.",
+                 )
+                 await sock.send_multipart((identity, self._encoder.encode(response)))
+                 break
+@@ -1613,6 +1790,7 @@
+                 else MooncakeXferResponseStatus.FINISH
+             )
+             ready_reqs: list[tuple[ReqId, SendBlockMeta]] = []
++            expired_reqs: list[ReqId] = []
+             for task in done:
+                 d_req_id, send_meta = task.result()
+                 del pending_reqs[d_req_id]
+@@ -1626,9 +1804,9 @@
+                         )
+                     ready_reqs.append((d_req_id, send_meta))
+                 else:
+-                    # Otherwise (expired, very unlikely), just forget it.
++                    expired_reqs.append(d_req_id)
+                     logger.warning(
+-                        "Request %s expired before sending on P side.", d_req_id
++                        "Request %s expired before sending from the source.", d_req_id
+                     )
+ 
+             (
+@@ -1643,6 +1821,7 @@
+                 local_regions,
+                 remote_regions,
+             )
++            err_reqs.extend(expired_reqs)
+             err_req_set = set(err_reqs)
+             ok_ready_reqs = [
+                 (d_req_id, send_meta)
+@@ -1652,32 +1831,33 @@
+ 
+             if src_ptrs:
+                 remote_session = f"{meta.remote_hostname}:{meta.remote_port}"
+-                ret_value = await self.sender_loop.run_in_executor(
+-                    self._sender_executor,
+-                    self._send_blocks,
+-                    remote_session,
+-                    src_ptrs,
+-                    dst_ptrs,
+-                    lengths,
+-                )
+-
+-                if ret_value != 0:
+-                    transfer_err_msg = f"Mooncake transfer engine returned {ret_value}"
+-                    err_msg = (
+-                        transfer_err_msg
+-                        if err_msg is None
+-                        else f"{err_msg}; {transfer_err_msg}"
++                try:
++                    ret_value = await asyncio.shield(
++                        self.sender_loop.run_in_executor(
++                            self._sender_executor,
++                            self._send_blocks,
++                            remote_session,
++                            src_ptrs,
++                            dst_ptrs,
++                            lengths,
++                        )
+                     )
+-                    err_reqs = list(err_reqs)
+-                    for d_req_id, _ in ok_ready_reqs:
+-                        err_reqs.append(d_req_id)
+-                        err_req_set.add(d_req_id)
+-                    ok_ready_reqs = []
++                    if ret_value != 0:
++                        raise RuntimeError(
++                            f"Mooncake WRITE returned {ret_value}; "
++                            "buffer retirement is required"
++                        )
++                except BaseException as error:
++                    # A negative result or cancelled waiter does not stop native DMA.
++                    # Keep sending references until EngineCore retires this worker.
++                    self._transfer_error = error
++                    raise
+ 
+             for d_req_id, send_meta in ready_reqs:
+                 send_meta.sending -= 1
+-
+-                if d_req_id in err_req_set:
++                if send_meta.retained:
++                    send_meta.readers[reader].set_result(d_req_id not in err_req_set)
++                elif d_req_id in err_req_set:
+                     continue
+ 
+                 send_meta.sent += 1
+@@ -1701,7 +1881,7 @@
+         remote_tp_ranks: list[int],
+         remote_pp_size: int = 1,
+     ):
+-        # Prepare for heterogeneous TP (one P pairs to multiple D)
++        # With heterogeneous TP, one source can serve multiple receivers.
+         send_meta.need_send = len(remote_tp_ranks)
+         if remote_pp_size > 1 and remote_pp_size != self.pp_size:
+             # Each consumer PP stage pulls every producer stage, including
+@@ -1827,7 +2007,7 @@
+             if has_block_error:
+                 err_reqs.append(d_req_id)
+                 if err_msg is None:
+-                    err_msg = "P num blocks less than D"
++                    err_msg = "Source has fewer KV blocks than the receiver"
+                 continue
+ 
+             if not any(local_block_ids_by_group):
+@@ -1875,7 +2055,7 @@
+                 )
+                 if not should_transfer:
+                     # Replicated KV cache: only one producer rank in the TP group
+-                    # needs to send the actual bytes for this paired decoder rank.
++                    # needs to send the actual bytes for this paired receiver rank.
+                     # TODO: Account for replicated producer KV in
+                     # get_target_remote_ranks() so we can avoid sending
+                     # unnecessary ZMQ requests and remove this branch.
+@@ -2183,7 +2363,7 @@
+             self.kv_block_len_per_layer,
+         )
+ 
+-        # No need to launch server for D node.
++        # Receive-only workers do not need a sender listener.
+         if self.is_kv_consumer:
+             return
+ 
+@@ -2211,6 +2391,75 @@
+                     f"{ready_timeout:.0f}s."
+                 )
+ 
++    def claim_send_lease(self, req_id: str, lease_id: str, consumer_id: str) -> bool:
++        """Pin an available native source through the scheduler's collective RPC."""
++        return asyncio.run_coroutine_threadsafe(
++            self._change_send_lease(req_id, lease_id, consumer_id, claim=True),
++            self.sender_loop,
++        ).result()
++
++    def cancel_send_lease(self, req_id: str, lease_id: str, consumer_id: str) -> bool:
++        """Revoke a source once no admitted reader can still write."""
++        return asyncio.run_coroutine_threadsafe(
++            self._change_send_lease(req_id, lease_id, consumer_id, claim=False),
++            self.sender_loop,
++        ).result()
++
++    async def _change_send_lease(
++        self, req_id: str, lease_id: str, consumer_id: str, *, claim: bool
++    ) -> bool:
++        """Serialize source acquisition and revocation with native submissions."""
++        send_meta = self.reqs_need_send.get(req_id)
++        if send_meta is None:
++            return not claim
++        if not send_meta.retained or not send_meta.ready.is_set():
++            return False
++        if claim:
++            if send_meta.read_lease is not None:
++                return (send_meta.read_lease, send_meta.consumer_id) == (
++                    lease_id,
++                    consumer_id,
++                )
++            if time.perf_counter() >= send_meta.expire_time:
++                return False
++            send_meta.read_lease = lease_id
++            send_meta.consumer_id = consumer_id
++            return True
++        if (send_meta.read_lease, send_meta.consumer_id) != (lease_id, consumer_id):
++            return True
++        if send_meta.has_unconfirmed_readers():
++            return False
++        del self.reqs_need_send[send_meta.transfer_id]
++        self.finished_sending_reqs.add(req_id)
++        return True
++
++    def get_pending_transfers(self) -> set[str]:
++        """Read each native loop's active transfers without counting idle Decode KV."""
++        pending = set()
++        if not self.is_kv_consumer:
++            pending.update(
++                asyncio.run_coroutine_threadsafe(
++                    self._pending_sends(), self.sender_loop
++                ).result()
++            )
++        if not self.is_kv_producer:
++            pending.update(
++                asyncio.run_coroutine_threadsafe(
++                    self._pending_recvs(), self.receiver_loop
++                ).result()
++            )
++        return pending
++
++    async def _pending_sends(self) -> set[str]:
++        return {
++            meta.p_req_id or meta.transfer_id
++            for meta in self.reqs_need_send.values()
++            if not meta.retained or meta.read_lease is not None
++        }
++
++    async def _pending_recvs(self) -> set[str]:
++        return set(self._pending_receives)
++
+     async def fetch_finished_recving_reqs(self) -> set[ReqId]:
+         finished_recving_reqs = self.finished_recving_reqs
+         self.finished_recving_reqs = set()
+@@ -2229,13 +2478,20 @@
+                 send_meta.p_req_id
+                 and send_meta.expire_time < now
+                 and send_meta.sending == 0
++                and not send_meta.has_unconfirmed_readers()
+             ):
+-                logger.warning(
+-                    "Request %s timed out after %d seconds without "
+-                    "being sent. Freeing its blocks on the producer side.",
+-                    send_meta.p_req_id,
+-                    envs.VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT,
+-                )
++                if send_meta.retained:
++                    logger.debug(
++                        "Retained KV source %s reached its idle deadline",
++                        send_meta.p_req_id,
++                    )
++                else:
++                    logger.warning(
++                        "Request %s timed out after %d seconds without "
++                        "being sent. Freeing its blocks on the producer side.",
++                        send_meta.p_req_id,
++                        envs.VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT,
++                    )
+                 self.xfer_stats.record_kv_expired_req()
+                 finished_sending_reqs.add(send_meta.p_req_id)
+                 expired_transfer_id.append(transfer_id)
+@@ -2264,6 +2520,10 @@
+ 
+         finished_recving_reqs = recv_fut.result() if recv_fut else set()
+         finished_sending_reqs = send_fut.result() if send_fut else set()
++        if self._transfer_error is not None:
++            raise RuntimeError(
++                "Mooncake transfer completion is unknown; engine buffers require retirement"
++            ) from self._transfer_error
+ 
+         if finished_sending_reqs or finished_recving_reqs:
+             logger.debug(
+@@ -2317,6 +2577,12 @@
+             remote_tp_size=self.tp_size,
+             remote_tp_rank=self.tp_rank,
+             remote_pp_size=self.pp_size,
++            remote_pp_rank=self.pp_rank,
++            read_leases={
++                req_id: (pull_meta.read_lease, pull_meta.consumer_id)
++                for req_id, pull_meta in pull_metas.items()
++                if pull_meta.read_lease is not None
++            },
+             req_blocks={
+                 req_id: (pull_meta.transfer_id, pull_meta.local_block_ids)
+                 for req_id, pull_meta in pull_metas.items()
+@@ -2346,7 +2612,7 @@
+             with make_zmq_socket(
+                 self.async_zmq_ctx, worker_addr, zmq.DEALER, bind=False, linger=0
+             ) as sock:
+-                # If something goes wrong, let P wait timeout first (in asyncio.wait()).
++                # Let the source's ready wait expire before the receive timeout.
+                 sock.setsockopt(
+                     zmq.RCVTIMEO, (envs.VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT + 60) * 1000
+                 )
+@@ -2355,20 +2621,23 @@
+                     ret_msg = await sock.recv()
+                     response = self._xfer_resp_decoder.decode(ret_msg)
+                     if response.status == MooncakeXferResponseStatus.ERROR:
+-                        self._handle_failed_recv(
+-                            pull_metas,
+-                            req_ids,
+-                            response.err_msg or "transfer error",
++                        raise RuntimeError(
++                            response.err_msg or "Mooncake transfer error"
+                         )
+-                        return
+-                    self.process_pulling_result(response, pull_metas)
++                    self.process_pulling_result(response, pull_metas, worker_addr)
++                    req_ids.difference_update(response.ok_reqs or ())
++                    req_ids.difference_update(response.err_reqs or ())
+                     if response.status == MooncakeXferResponseStatus.FINISH:
++                        if req_ids:
++                            raise RuntimeError(
++                                "Mooncake source omitted transfer completions"
++                            )
+                         break
+-        except zmq.ContextTerminated:
+-            logger.debug("ZMQ context terminated, exiting Mooncake receiver thread.")
+-        except Exception as e:
+-            self._handle_failed_recv(pull_metas, req_ids, f"transfer failed: {e}")
+-            return
++        except BaseException as error:
++            # Once the destination was advertised, a timeout or disconnect cannot
++            # prove that the source stopped writing. Do not recompute into it.
++            self._transfer_error = error
++            raise
+ 
+     def _handle_failed_recv(
+         self,
+@@ -2376,25 +2645,20 @@
+         req_ids: Collection[ReqId],
+         reason: str,
+     ) -> None:
+-        """Report a failed remote KV load so the scheduler can fail or recompute it."""
++        """Report a load miss only after every source is known to have stopped writing."""
+         failed: list[ReqId] = []
+         for req_id in req_ids:
+             pull_meta = pull_metas.get(req_id)
+-            if pull_meta is None or pull_meta.failed:
++            if pull_meta is None:
+                 continue
++            self._pending_receives.discard(req_id)
+             pull_meta.failed = True
+             failed.append(req_id)
+             self.xfer_stats.record_failed_recv()
+ 
++            if not pull_meta.awaiting_kvs:
++                continue
+             invalid = {b for group in pull_meta.local_block_ids for b in group}
+-            if not invalid:
+-                # A pull with no local blocks only asks P to release its blocks
+-                # for a request that never reached the scheduler (see
+-                # AsyncLLM.notify_kv_transfer_request_rejected, which submits an
+-                # abort_immediately request just to run request_finished). No D
+-                # request is waiting on a load, and reporting one here would trip
+-                # the scheduler's `assert req_id in self.requests`.
+-                continue
+             if self._is_hma_required:
+                 self._failed_recv_reqs.put(pull_meta.d_req_id)
+             else:
+@@ -2418,27 +2682,27 @@
+         self,
+         response: MooncakeXferResponse,
+         pull_metas: dict[ReqId, PullReqMeta],
++        worker_addr: str,
+     ):
+-        ok_reqs: list[ReqId] = response.ok_reqs or []
+-
+-        for req_id in ok_reqs:
++        """Join all source completions before publishing a receive or load miss."""
++        errors = set(response.err_reqs or ())
++        for req_id in set(response.ok_reqs or ()) | errors:
+             pull_meta = pull_metas[req_id]
++            if worker_addr in pull_meta.completed_sources:
++                continue
++            pull_meta.completed_sources.add(worker_addr)
++            pull_meta.failed |= req_id in errors
++            pull_meta.pull_tasks_count -= 1
++            if pull_meta.pull_tasks_count:
++                continue
+             if pull_meta.failed:
+-                continue
+-            # No race because we are in async loop.
+-            pull_meta.pull_tasks_count -= 1
+-            # Empty pulls only release the producer's blocks; the consumer
+-            # did not enter WAITING_FOR_REMOTE_KVS.
+-            if pull_meta.pull_tasks_count == 0 and any(pull_meta.local_block_ids):
+-                self.finished_recving_reqs.add(pull_meta.d_req_id)
+-
+-        if ok_reqs:
+-            logger.debug("pulling kv_caches for %s finished", ok_reqs)
+-
+-        if response.err_reqs:
+-            self._handle_failed_recv(
+-                pull_metas, response.err_reqs, response.err_msg or "unknown error"
+-            )
++                self._handle_failed_recv(
++                    pull_metas, [req_id], response.err_msg or "remote KV unavailable"
++                )
++            else:
++                self._pending_receives.discard(req_id)
++                if pull_meta.awaiting_kvs:
++                    self.finished_recving_reqs.add(req_id)
+ 
+     async def _connect_to_prefiller_bootstrap(self, remote_bootstrap_addr: str):
+         url = remote_bootstrap_addr + "/query"
+@@ -2522,7 +2786,7 @@
+         for worker_addr in worker_addrs:
+             asyncio.create_task(
+                 self.receive_kv_from_single_worker(worker_addr, pull_metas)
+-            )
++            ).add_done_callback(self._transfer_done)
+ 
+     async def handle_new_engine_id(
+         self,
+@@ -2551,38 +2815,40 @@
+         self, reqs_to_recv: dict[EngineId, dict[ReqId, PullReqMeta]]
+     ):
+         for remote_engine_id, pull_metas in reqs_to_recv.items():
++            self._pending_receives.update(pull_metas)
+             if remote_engine_id not in self._remote_agents:
+                 asyncio.create_task(
+                     self.handle_new_engine_id(remote_engine_id, pull_metas)
+-                )
++                ).add_done_callback(self._transfer_done)
+             else:
+                 self.receive_kv(remote_engine_id, pull_metas)
+ 
+     async def record_send_reqs(self, metadata: MooncakeConnectorMetadata):
+         for p_req_id, (transfer_id, block_ids) in metadata.reqs_to_send.items():
++            send_meta = self.reqs_need_send.get(transfer_id)
++            if send_meta is None:
++                # Retained Decode KV first appears at completion, without a
++                # Prefill admission placeholder.
++                send_meta = SendBlockMeta(
++                    p_req_id=p_req_id,
++                    transfer_id=transfer_id,
++                    local_block_ids=[],
++                    ready=asyncio.Event(),
++                    retained=p_req_id in metadata.retained_reqs,
++                )
++                self.reqs_need_send[transfer_id] = send_meta
++            send_meta.p_req_id = p_req_id
+             if block_ids:
+-                # Already gone through request_finished()
+-                send_meta = self.reqs_need_send[transfer_id]
+-                send_meta.p_req_id = p_req_id
+                 send_meta.local_block_ids = block_ids
+                 send_meta.expire_time = (
+-                    time.perf_counter() + envs.VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT
++                    time.perf_counter()
++                    + metadata.retained_reqs.get(
++                        p_req_id, envs.VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT
++                    )
+                 )
+                 send_meta.ready.set()
+-            else:
+-                # From update_state_after_alloc(),
+-                # but not reach request_finished() yet
+-                # This may be already created by send_kv_to_decode()
+-                # when D is sending MooncakeXferMetadata.
+-                if transfer_id not in self.reqs_need_send:
+-                    self.reqs_need_send[transfer_id] = SendBlockMeta(
+-                        p_req_id=p_req_id,
+-                        transfer_id=transfer_id,
+-                        local_block_ids=[],
+-                        ready=asyncio.Event(),
+-                    )
+         for transfer_id in metadata.reqs_not_processed:
+-            send_meta = self.reqs_need_send.pop(transfer_id)
++            send_meta = self.reqs_need_send.pop(transfer_id, None)
+             if send_meta:
+                 assert not send_meta.ready.is_set()
+ 
+@@ -2590,14 +2856,21 @@
+         if not self.is_kv_producer and metadata.reqs_to_recv:
+             asyncio.run_coroutine_threadsafe(
+                 self._start_load_kv(metadata.reqs_to_recv), self.receiver_loop
+-            )
++            ).add_done_callback(self._transfer_done)
+ 
+         if not self.is_kv_consumer and (
+             metadata.reqs_to_send or metadata.reqs_not_processed
+         ):
+             asyncio.run_coroutine_threadsafe(
+                 self.record_send_reqs(metadata), self.sender_loop
+-            )
++            ).add_done_callback(self._transfer_done)
++
++    def _transfer_done(self, future) -> None:
++        """Forward background failures to the worker's EngineCore supervision path."""
++        if future.cancelled():
++            self._transfer_error = RuntimeError("Mooncake transfer task was cancelled")
++        elif (error := future.exception()) is not None:
++            self._transfer_error = error
+ 
+     def _producer_cache_is_replicated(self) -> bool:
+         return self.transfer_topo.local_replicates_kv_cache
+@@ -2873,9 +3146,9 @@
+ 
+ 
+ def get_mooncake_bootstrap_addr(vllm_config: VllmConfig) -> tuple[str, int]:
+-    """Returns the address of the Mooncake bootstrap server.
+-    This is only used by prefillers to register workers.
+-    Decoders should get addr from kv_transfer_params.
++    """Return the bootstrap address used to register source workers.
++
++    Receivers get the remote bootstrap address from kv_transfer_params.
+     """
+     if (kv_config := vllm_config.kv_transfer_config) is not None:
+         address = kv_config.get_from_extra_config("bootstrap_server_address", None)

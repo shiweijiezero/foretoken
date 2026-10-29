@@ -3,26 +3,29 @@
 [English](qwen3.5-35b-a3b-muxi.md) | 简体中文
 
 ```text
-模型：Qwen3.5-35B-A3B
+目标模型：Qwen3.5-35B-A3B【不可修改】
 起始配置：examples/rsi/qwen3.5-35b-a3b；双卡张量并行（TP2）、四步多 token 预测（MTP）、36,864 上下文，KV 缓存不卸载到主机内存，可在优化中调整
-优化目标：提高并发 1 和 16 的输出吞吐（token/s），降低解码阶段每个输出 token 的耗时（TPOT）
-精度：固定 BF16
+优化目标：提高并发 1 和 16 的输出吞吐（token/s），降低解码阶段每个输出 token 的耗时（TPOT）【不可修改】
+精度：固定 BF16【不可修改】
 部署形态：在最终单机 GPU 预算内自主选择并行方式和各阶段安排
-最终部署预算：单机 2 张沐曦 GPU；模型与 frontend 工作负载合计不超过 32 核 CPU、250G 主机内存
+最终部署预算：单机最多 2 张沐曦 GPU；目标模型、辅助模型与 frontend 的工作负载合计不超过 32 核 CPU、250G 主机内存【不可修改】
 实验规模：服务候选遵守最终预算；算子、编译或正确性等局部实验按需使用更少资源，包括单卡
-可用资源：实验合计最多使用 6 张沐曦 GPU；按实际主机容量安排 CPU、内存和存储
-Explorer 数量：2
-Worker 数量：4
-Experimenter 数量：3
-Observer 数量：1
-Observer 巡查间隔：1h
+可用资源：实验合计最多使用 6 张沐曦 GPU；按实际主机容量安排 CPU、内存和存储【不可修改】
+Explorer 数量：4【不可修改】
+Worker 数量：4【不可修改】
+Experimenter 数量：3【不可修改】
+Evaluator 数量：1【不可修改】
+Evaluator 巡查间隔：1h【不可修改】
+Codex 模型：Explorer 01-02 = gpt-6-astra/high；Explorer 03-04 = gpt-6.1-sol/high；Worker、Experimenter = gpt-6.1-terra/xhigh；Evaluator = gpt-6-astra/high【不可修改】
+Claude 模型：Explorer 01-02 = Fable/Opus/high；Explorer 03-04 = sonnet/high；Worker、Experimenter、Evaluator = sonnet/high【不可修改】
 最大并行实验数：最多 3 个双卡服务候选；更小规模的局部实验共享六卡预算
 并行安排：先为平台服务、构建和评测客户端预留资源，再按各组实际资源请求安排实验，并记录并行度
-评测负载：每个服务分别测量并发 1 和 16，覆盖随机长度负载和 StudyChat 对话；具体命令见下方“评测命令”
-精度评测：针对可能影响回答质量的改动按需执行 foretoken eval，优先评测准备保留的候选方案；已有结果的适用条件未变时复用结果，避免每次性能测量后都重复评分。
-可改动范围：在上述精度与资源约束内，可以修改各层的实现与配置
-每轮测量时间预算：perf／eval 测量默认 10 分钟，以加快迭代；Agent 根据实际负载调整测量预算和请求数，记录调整原因与实际耗时
-工作时间：从开始执行任务计时，总预算 24 小时
+迭代负载：默认只测 random，并发 1 和 16；每个测量点完成后立即分析
+扩展验证：StudyChat 用于多轮相关假设和最终保留方案，复用已有同条件对照；质量评测按需安排
+精度评测：可能影响回答质量的改动需要补充质量证据时，执行 foretoken eval，优先评测准备保留的候选方案。
+可改动范围：在固定条件内，可改各层实现与配置，包括算法、辅助模型及其权重、组合方式与执行组织；可提出新机制或选用社区已有成果
+每轮测量时间预算：默认预留 10 分钟，按足以判断问题的样本安排测量，完成即分析；按实际负载调整预算与请求数，记录依据和耗时
+工作时间：从开始执行任务计时，总预算 24 小时【不可修改】
 预期／结束条件：持续提高吞吐、降低 TPOT，不设固定指标阈值。
   持续研究、实现和验证，包括参数调整与源码改进。研究问题已有答案且进一步投入价值有限时，可以结束；时间用尽或用户要求停止时结束。
   结束时说明依据，分别列出已测但无收益、未能运行的实现、尚未实现或测试的方向。
@@ -50,22 +53,28 @@ foretoken deploy examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi -e . --timeou
 
 在仓库根目录执行，使用 W&B 前先运行 `wandb login`。结果保存到 `results/qwen3.5-35b-a3b-muxi/`，初始方案名为 `baseline`；新方案使用新名称，补测沿用原方案名。对照其他候选时，同时替换部署目录、`--name` 和 `--iteration`。
 
-两个性能评测循环依次测量并发 1 和 16，使用相同输入：随机负载每组 80 条正式请求，StudyChat 每组 200 条，每组另加 4 条预热请求。StudyChat 按对话中的各轮请求计数。最终保留方案需完成 StudyChat，中间迭代按需执行。其他负载见[评测示例](../../benchmarks/docs/recipes_zh.md)。
+日常迭代先用 random 判断当前假设；仅在多轮相关问题或最终保留方案需要时运行 StudyChat。每个并发点完成就交付结果，Worker 同步分析，Experimenter 继续剩余测量。已有同条件结果可复用；其他负载见[评测示例](../../benchmarks/docs/recipes_zh.md)。
 
-GSM8K 最多并发 64 个请求。输出预算包含思考内容，由 Foretoken 限制为部署上下文上限减去套用聊天模板后的输入长度；起始部署下即 `36864 - input_tokens`。命令以 [Qwen3.5 的原生总上下文大小](https://huggingface.co/Qwen/Qwen3.5-35B-A3B#model-overview)为请求上界，设置 `max_gen_toks=262144`。
+### 日常迭代：random
+
+每个并发点使用 80 条正式请求和 4 条预热请求，保持相同输入。先设 `concurrency=1`，完成并交付结果后，再设为 `16` 运行同一命令。
 
 ```bash
-# 每轮速度迭代：随机长度负载，分别测量并发 1 和 16
-for concurrency in 1 16; do
-  foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi --dataset random \
-    --min-prompt-length 128 --max-prompt-length 4096 \
-    --min-output-length 128 --max-output-length 512 \
-    --max-concurrency "$concurrency" --num-prompts 80 --warmup-requests 4 \
-    --random-seed 0 --temperature 0 --output experiment,raw,plot,wandb \
-    --output-dir results/qwen3.5-35b-a3b-muxi --iteration baseline
-done
+concurrency=1
+foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi --dataset random \
+  --min-prompt-length 128 --max-prompt-length 4096 \
+  --min-output-length 128 --max-output-length 512 \
+  --max-concurrency "$concurrency" --num-prompts 80 --warmup-requests 4 \
+  --random-seed 0 --temperature 0 --output experiment,raw,wandb \
+  --output-dir results/qwen3.5-35b-a3b-muxi --iteration baseline
 
-# 最终保留方案必跑：StudyChat 对话，分别测量并发 1 和 16
+```
+
+### 多轮验证与最终复核：StudyChat
+
+每个并发点使用 200 条正式请求和 4 条预热请求，请求数包含对话中的各轮。最终保留方案与同条件 baseline 完成对照，已有结果仍适用时直接复用。
+
+```bash
 for concurrency in 1 16; do
   foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi \
     --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
@@ -73,8 +82,13 @@ for concurrency in 1 16; do
     --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb \
     --output-dir results/qwen3.5-35b-a3b-muxi --iteration baseline
 done
+```
 
-# 按需精度评测，最多并发 64 个请求
+### 按需质量评测
+
+GSM8K 最多并发 64 个请求。输出预算包含思考内容，由 Foretoken 限制为部署上下文上限减去套用聊天模板后的输入长度；起始部署下即 `36864 - input_tokens`。命令以 [Qwen3.5 的原生总上下文大小](https://huggingface.co/Qwen/Qwen3.5-35B-A3B#model-overview)为请求上界，设置 `max_gen_toks=262144`。
+
+```bash
 foretoken eval examples/rsi/qwen3.5-35b-a3b --name qwen-rsi-muxi \
   --evaluator lm-eval --tasks gsm8k --num_fewshot 0 --limit 20 \
   --model_args num_concurrent=64,max_gen_toks=262144 --output experiment,plot,wandb \

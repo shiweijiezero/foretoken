@@ -2,41 +2,34 @@
 
 English | [简体中文](iteration-template_zh.md)
 
-Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Identify the developer, executor, writer, and independent reviewer, and link supporting runs under `../runs/`. Follow the [recording guide](../experiment-records.md#complete-the-experiment-notes) to preserve the history of analysis, reviews, and decisions.
+Use `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` for the approach's question, evidence and decisions. Name the developer, executor, writer and any assigned reviewer. Follow the [recording guide](../experiment-records.md#complete-the-experiment-notes) and link existing task records for ownership and scheduling.
 
-Link task records for ownership and scheduling. Without task tools, record current owners, dependencies, resource allocations and measurement windows here.
-
-## Summary and documents
-
-Introduce each topic with a short summary and link its complete document in this notes directory, such as `plan.md` or `analysis.md`. Keep concise findings and the review and decision history below; put full explanations in the linked files.
-
-| Topic | Summary | Full document |
-| --- | --- | --- |
+Use the sections below as needed. Keep a short experiment in this note. Split out long proposals, analyses or separately authored reviews when needed, and link them here.
 
 ## Question and analysis
 
-Summarize the question and link the full analysis with its code, observations, prior results, and references.
+State the question, current understanding and supporting code, sources or earlier results.
 
 ## Hypothesis and design
 
-Summarize the Worker's proposed improvement and expected mechanism, linking the complete proposal and implementation and validation plan. Record the lead's selected comparisons alongside the hypothesis.
+Explain the expected mechanism and the smallest comparison that can answer the question.
 
 ## Implementation and deployment
 
-Summarize the Worker's delivered changes, linking the checkout, revision or changed files, and full explanation. Record the version, environment, and configuration the executor actually built and deployed, including material departures from the design. Identify the checkout held unchanged during execution.
+Record what changed and which code version, environment and configuration actually ran. Link the checkout or saved diff and note material departures from the plan.
 
 ## Measurements and interpretation
 
-Append a concise finding for each run, linking results under `../runs/<run>/` and the full analysis. State whether the hypothesis was supported and how failures or interruptions affect the conclusion. Keep workload and sample-size rationale, comparisons, and detailed explanations of the observed differences in the linked analysis.
+Append dated findings as measurements finish. Link original results, including diagnostics outside `runs/` and accessible remote locations. Distinguish command outcome, measured behavior, applicable validation evidence and interpretation. State comparison conditions, sample counts and pending questions; name recipients for analysis and report updates.
 
 ## Time spent
 
-Link measured durations and label estimates for investigation, design, implementation, deployment, evaluation, and analysis. Keep overlapping durations separate.
+Record investigation, build, measurement and analysis time as relevant, separating estimates and overlapping intervals.
 
 ## Behavior and attribution review
 
-Append dated findings attributed to the independent reviewer on benchmark-specific shortcuts, model behavior, comparison conditions, and the source of gains. Link the full review and original evidence, and state which conclusions are supported or need further measurement. Later corrections reference the earlier finding instead of overwriting it.
+When a review is assigned, record its author, findings and evidence. Retained approaches need an independent review under the [team guidance](../../.agents/skills/rsi/roles/common.md#review-claims-independently).
 
 ## Decision and completion
 
-Append dated decisions with their source and supporting evidence, distinguishing the Worker's candidate outcome from the lead's retention or integration decision. State the action, scope, resulting code/deployment state, and resources needed by the next iteration. If a decision changes, append the replacement and identify the earlier entry it supersedes; preserve the original judgment and its basis.
+Append the decision, author, evidence and next action, distinguishing a candidate result from the lead's retention decision. Link later corrections to the earlier judgment. Record resources still owned or handed off.

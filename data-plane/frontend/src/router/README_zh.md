@@ -41,9 +41,13 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 | 将冷请求分散到较久未选中的目标 | `no_hit_lru` |
 | 在负载均衡与缓存复用之间折中 | `two_tier`，必须搭配 `picker.algorithm: max` |
 | 按请求体中的 `session_id`，优先将同一会话的请求发往同一模型副本 | `session_affinity` |
+| 优先选择按请求长度归一化后预填充与解码总延迟较低的目标 | `least_latency`，必须搭配 `picker.algorithm: max` |
 | 优先选择加权请求长度较小的目标 | `throughput` |
+| 平衡缓存抵扣后的预填充工作量与活跃输入块负载 | `kv_cost`，必须搭配 `picker.algorithm: max` |
 | 按指定端点观测值排序 | `endpoint_attribute` |
 | 所有目标得分相同 | `uniform` |
+
+`least_latency` 会向尚无延迟观测的空闲 rank 分配探测请求，包括新扩容副本。
 
 评分算法的选项放在 `scorer.parameters` 下。例如，让默认策略更偏向缓存复用：
 
@@ -69,6 +73,33 @@ spec:
 
 无法取得某个目标的前缀匹配结果时，该目标仍可参与路由，但不获得缓存偏好。支持的缓存及状态访问见 [KV 前缀索引](../kv-indexer/README_zh.md)。
 
+## 平衡预填充与 KV 负载
+
+选择 `kv_cost` 并搭配 `max`，即可综合当前前端副本内尚未完成的预填充工作与活跃 KV 分配量：
+
+```yaml
+spec:
+  routerPipeline:
+    scorer:
+      algorithm: kv_cost
+    picker:
+      algorithm: max
+```
+
+成本统一以 token 为单位，支持不同引擎块大小，并抵扣可复用前缀。在 `scorer.parameters` 中设置以下选项；数值参数接受有限非负数。
+
+| 参数 | 默认值 | 作用 |
+| --- | --- | --- |
+| `overlap_score_credit` | `1.0` | 设备本地前缀的抵扣倍率；设为 `0` 时只按负载评分，也不为本算法查询缓存。 |
+| `overlap_score_credit_decay` | `0.0` | 根据目标超出最低可选预填充负载的部分相对于当前输入长度的比例，衰减设备抵扣；`0` 表示不衰减。 |
+| `prefill_load_scale` | `1.0` | 缓存抵扣后，待处理和新输入预填充 token 的权重。 |
+| `decode_active_request_weight` | `0.0` | 每个活跃请求额外计入的 token 等效成本。 |
+| `host_cache_hit_weight` | `0.75` | 主机缓存超出设备命中前缀部分的抵扣权重。 |
+| `disk_cache_hit_weight` | `0.25` | 磁盘缓存超出更快本地缓存部分的抵扣权重。 |
+| `shared_cache_multiplier` | `0.0` | 共享缓存超出设备命中前缀部分的抵扣倍率。 |
+| `router_track_prefill_tokens` | `true` | 在 Aggregate 和 Prefill 目标上计入尚未完成的输入工作。 |
+| `router_track_output_blocks` | `false` | 随流式输出扩展各活跃序列的分配量估计。 |
+
 ## 根据得分选择目标
 
 通过 `routerPipeline.picker.algorithm` 选择：
@@ -76,7 +107,7 @@ spec:
 | 选择算法 | 行为 |
 | --- | --- |
 | `gamble_sampling`（默认） | 排名越高，选中概率越大；同分概率相同，低排名目标仍有机会被选中。 |
-| `max` | 选择最高分目标。 |
+| `max` | 选择最高分目标，同分时选择 ID 最小的目标；在该目标内优先选择低负载 rank，负载相同时随机选择。 |
 | `power_of_two_choices` | 随机抽取两个不同目标，选择分数较高者，同分时随机选择。 |
 
 ## 按模型和执行阶段选择算法

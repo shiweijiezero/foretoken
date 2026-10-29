@@ -301,6 +301,9 @@ def _prepare_source_build(
             build_cache_reference(DEFAULT_PLATFORM_REGISTRY, cache_version, runtime_component, "environment"),
             environment_image_reference(DEFAULT_PLATFORM_REGISTRY, cache_version, runtime_component),
         )
+    if "model-server" in components:
+        cache_references["model-server-mooncake"] = cache_references["model-server"]
+        cache_references["model-server-profiler"] = cache_references["model-server"]
     cache_references["model-preparation"] = (
         build_cache_reference(DEFAULT_PLATFORM_REGISTRY, cache_version, "model-preparation", "preparation-environment"),
         environment_image_reference(DEFAULT_PLATFORM_REGISTRY, cache_version, "model-preparation"),
@@ -335,6 +338,9 @@ def _prepare_source_build(
     environment_references["model-preparation"] = (
         f"{prefix}/model-preparation:{revision}" if registry else f"{prefix}-model-preparation:{revision}"
     )
+    if "model-server" in components:
+        environment_references["model-server-mooncake"] = references["model-server"] + "-mooncake"
+        environment_references["model-server-profiler"] = references["model-server"] + "-profiler"
     if build_metax_runtime:
         for name in ("metax-sdk", "vllm-metax"):
             environment_references[name] = (
@@ -646,6 +652,22 @@ def _build_environments(
         dependency_arguments = {key: value for key, value in arguments.items() if key in dependency_names}
         if component == "model-server" and engine_image:
             dependency_arguments["INFERENCE_ENGINE_IMAGE"] = engine_image
+        if component == "model-server":
+            wheel = environments.build(
+                "model-server-mooncake", _COMPONENT_DOCKERFILES[component],
+                target="mooncake-wheels", arguments=dependency_arguments,
+                input_prefixes=("LICENSE", "deploy/mooncake/", "data-plane/patches/vllm/mooncake.version", "third_party/mooncake/"),
+            )
+            profiler = environments.build(
+                "model-server-profiler", _COMPONENT_DOCKERFILES[component],
+                target="profiler-binding",
+                arguments={key: value for key, value in dependency_arguments.items() if key in {
+                    "INFERENCE_ENGINE_IMAGE", "FORETOKEN_VLLM_PYTHON", "BUILDKIT_SYNTAX_IMAGE",
+                }},
+                input_prefixes=("data-plane/model-server/profiling/",),
+            )
+            dependency_arguments["MOONCAKE_WHEEL_IMAGE"] = wheel["image"]
+            dependency_arguments["PROFILER_BINDING_IMAGE"] = profiler["image"]
         selected = environments.build(
             component, _COMPONENT_DOCKERFILES[component], target="environment", arguments=dependency_arguments,
             input_prefixes=("data-plane/patches/vllm/", "data-plane/model-server/provider-requirements.txt", "data-plane/model-server/profiling/", "deploy/mooncake/", "third_party/mooncake/") if component == "model-server" else (),

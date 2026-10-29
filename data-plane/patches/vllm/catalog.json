@@ -12,6 +12,10 @@
       "versions": ">=0.31.0.dev0,<0.32.0.dev0"
     },
     {
+      "name": "v1-032",
+      "versions": ">=0.32.0.dev0,<0.33.0.dev0"
+    },
+    {
       "name": "v1-legacy",
       "versions": ">=0.26.0.dev0,<0.27.0.dev0"
     },
@@ -67,7 +71,17 @@
     },
     {
       "path": "common/python-profiling.patch",
-      "python": {}
+      "python": {
+        "versions": "<0.32.0.dev0"
+      }
+    },
+    {
+      "path": "compatibility/v1-032/python-profiling.patch",
+      "python": {
+        "profiles": [
+          "v1-032"
+        ]
+      }
     },
     {
       "path": "common/worker-profiling.patch",
@@ -127,7 +141,8 @@
         "profiles": [
           "v1-031",
           "v1-metax",
-          "v1-current"
+          "v1-current",
+          "v1-032"
         ]
       }
     },
@@ -135,7 +150,8 @@
       "path": "common/kv-connector-utility.patch",
       "python": {
         "profiles": [
-          "v1-031"
+          "v1-031",
+          "v1-032"
         ]
       }
     },
@@ -160,6 +176,14 @@
       }
     },
     {
+      "path": "compatibility/v1-032/nixl-retained-prefix.patch",
+      "python": {
+        "profiles": [
+          "v1-032"
+        ]
+      }
+    },
+    {
       "path": "common/nixl-retained-prefix.patch",
       "python": {
         "versions": "==0.30.0.dev0"
@@ -170,6 +194,14 @@
       "python": {
         "profiles": [
           "v1-031"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-032/mooncake-retained-prefix.patch",
+      "python": {
+        "profiles": [
+          "v1-032"
         ]
       }
     },
@@ -187,6 +219,14 @@
           "v1-031",
           "v1-metax",
           "v1-current"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-032/offload-prefix-lookup.patch",
+      "python": {
+        "profiles": [
+          "v1-032"
         ]
       }
     },
@@ -222,7 +262,8 @@
         "profiles": [
           "v1-031",
           "v1-metax",
-          "v1-current"
+          "v1-current",
+          "v1-032"
         ]
       }
     },
@@ -234,7 +275,8 @@
           "v1-default",
           "v1-031",
           "v1-metax",
-          "v1-current"
+          "v1-current",
+          "v1-032"
         ]
       }
     },
@@ -281,6 +323,16 @@
       }
     },
     {
+      "path": "compatibility/v1-032/offloading-event-identity.patch",
+      "python": {
+        "profiles": [
+          "v1-031",
+          "v1-032"
+        ],
+        "requires": "vllm/distributed/kv_transfer/kv_connector/v1/offloading/events.py"
+      }
+    },
+    {
       "path": "common/fused-gdn-declaration.patch",
       "rust": true
     },
@@ -293,7 +345,8 @@
       "python": {
         "profiles": [
           "v1-031",
-          "v1-metax"
+          "v1-metax",
+          "v1-032"
         ]
       }
     },
@@ -305,7 +358,8 @@
           "v1-031",
           "v1-legacy",
           "v1-metax",
-          "v1-current"
+          "v1-current",
+          "v1-032"
         ]
       }
     },
@@ -322,6 +376,14 @@
       }
     },
     {
+      "path": "compatibility/v1-032/spec-decode-timing-hooks.patch",
+      "python": {
+        "profiles": [
+          "v1-032"
+        ]
+      }
+    },
+    {
       "path": "common/shm-nonblocking-read.patch",
       "rust": true,
       "python": {
@@ -329,7 +391,8 @@
           "v1-031",
           "v1-legacy",
           "v1-metax",
-          "v1-current"
+          "v1-current",
+          "v1-032"
         ]
       }
     },
@@ -347,6 +410,14 @@
       "python": {
         "profiles": [
           "v1-031"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-032/spec-decode-timing.patch",
+      "python": {
+        "profiles": [
+          "v1-032"
         ]
       }
     },
@@ -369,7 +440,17 @@
     {
       "path": "common/scheduler-load.patch",
       "rust": true,
-      "python": {}
+      "python": {
+        "versions": "<0.32.0.dev0"
+      }
+    },
+    {
+      "path": "compatibility/v1-032/scheduler-load.patch",
+      "python": {
+        "profiles": [
+          "v1-032"
+        ]
+      }
     },
     {
       "path": "compatibility/v1-current/scheduler-load.patch",
@@ -407,7 +488,7 @@
     {
       "path": "vllm-0.30-profiler-result.patch",
       "python": {
-        "versions": ">=0.30.0.dev0"
+        "versions": ">=0.30.0.dev0,<0.32.0.dev0"
       }
     },
     {
@@ -499,6 +580,18 @@
           "v1-031"
         ]
       }
+    },
+    {
+      "path": "compatibility/v1-032/dynamic-cudagraph-candidates.patch",
+      "python": {
+        "profiles": [
+          "v1-032"
+        ]
+      }
+    },
+    {
+      "path": "rust/cache-write-token-usage.patch",
+      "rust": true
     }
   ]
 }

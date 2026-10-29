@@ -180,10 +180,10 @@ impl RouterPipelineConfig {
         let filter = filter_descriptor(self.filter.algorithm.as_str())?;
         let scorer = scorer_descriptor(self.scorer.algorithm.as_str())?;
         let picker = picker_descriptor(self.picker.algorithm.as_str())?;
-        if scorer.name == "two_tier" && picker.name != "max" {
+        if matches!(scorer.name, "two_tier" | "least_latency" | "kv_cost") && picker.name != "max" {
             return Err(RouterPipelineConfigError::InvalidParameters {
                 name: scorer.name.into(),
-                message: "two_tier requires picker.algorithm: max".into(),
+                message: format!("{} requires picker.algorithm: max", scorer.name),
             });
         }
         let configured_filter = if let Some(previous) = previous.filter(|previous| {

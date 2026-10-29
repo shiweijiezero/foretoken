@@ -130,7 +130,7 @@ class _Progress(_ProgressRecord):
     """One comparable report condition, its evidence, and its plotting annotations."""
 
     title: str
-    subtitle: str
+    subtitle: str = ""
     updated_at: str
     x_label: str
     metric: _Metric
@@ -139,7 +139,7 @@ class _Progress(_ProgressRecord):
     phases: list[_Phase] = Field(default_factory=list)
     references: list[_Reference] = Field(default_factory=list)
 
-    @field_validator("title", "subtitle", "updated_at", "x_label")
+    @field_validator("title", "updated_at", "x_label")
     @classmethod
     def described_report(cls, value: str) -> str:
         """Require the chart's identifying text without changing the writer's wording."""
@@ -285,7 +285,7 @@ def _plot_search(
               color=color, lw=1.6, label="Best so far", zorder=4)
     labeled = valid
     if valid:
-        axis.scatter(xs, ratios, color=color, alpha=0.30, s=12, label="Valid evaluation", zorder=3)
+        axis.scatter(xs, ratios, color=color, alpha=0.30, s=12, zorder=3)
         named = [(point["x"], ratio) for point, ratio in zip(valid, ratios) if point.get("label")]
         if named:
             axis.scatter(*zip(*named), s=29, facecolors="white", edgecolors=color, linewidths=1.1, zorder=5)
@@ -350,9 +350,8 @@ def render_progress(data: dict[str, Any], path: Path, writer: FigureWriter) -> N
             figure = Figure(figsize=(14, 5.7), facecolor="white")
             FigureCanvasAgg(figure)
             renderer = figure.canvas.get_renderer()
-            title = data["title"] if data["title"].lower().startswith("foretoken") else f"Foretoken · {data['title']}"
-            title = _wrap(title, 12.1 * figure.dpi, 14, renderer)
-            subtitle = _wrap(data["subtitle"], 12.1 * figure.dpi, 8, renderer)
+            title = _wrap(data["title"], 12.1 * figure.dpi, 14, renderer)
+            subtitle = _wrap(data.get("subtitle", ""), 12.1 * figure.dpi, 8, renderer)
             title_height = 0.24 * len(title.splitlines())
             header = 0.23 + title_height + 0.17 * len(subtitle.splitlines())
             footer = 0.75 if search else 0.50
@@ -430,7 +429,8 @@ def render_progress(data: dict[str, Any], path: Path, writer: FigureWriter) -> N
                                   frameon=False, ncol=5, fontsize=8)
 
             figure.text(0.07, 1 - 0.08 / height, title, fontsize=14, color="#303642", va="top")
-            figure.text(0.07, 1 - (0.14 + title_height) / height, subtitle, fontsize=8,
-                        color="#647086", linespacing=1.4, va="top")
+            if subtitle:
+                figure.text(0.07, 1 - (0.14 + title_height) / height, subtitle, fontsize=8,
+                            color="#647086", linespacing=1.4, va="top")
             writer.figure(figure, f"{path.stem}-{view}",
                           description=f"Updated {data['updated_at']}; data: {path.name}")

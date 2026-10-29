@@ -72,12 +72,7 @@ impl RouterRequest {
             .generate_request
             .as_ref()
             .ok_or(KvPrefixUnavailableReason::UnsupportedRequest)?;
-        // Native sampling defaults skip cache reads when prompt logprobs are requested.
-        if request
-            .sampling_params
-            .skip_reading_prefix_cache
-            .unwrap_or(request.sampling_params.prompt_logprobs.is_some())
-        {
+        if !self.reads_prefix_cache() {
             return Err(KvPrefixUnavailableReason::UnsupportedRequest);
         }
 
@@ -107,6 +102,16 @@ impl RouterRequest {
                     length: feature.mm_position.length,
                 })
                 .collect(),
+        })
+    }
+
+    /// Reports whether this request permits native prefix-cache reads for routing estimates.
+    pub(crate) fn reads_prefix_cache(&self) -> bool {
+        self.generate_request.as_ref().is_some_and(|request| {
+            !request
+                .sampling_params
+                .skip_reading_prefix_cache
+                .unwrap_or(request.sampling_params.prompt_logprobs.is_some())
         })
     }
 

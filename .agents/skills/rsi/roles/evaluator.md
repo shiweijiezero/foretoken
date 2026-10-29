@@ -3,17 +3,19 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Observer
+# Evaluator: team assessment
 
-English | [简体中文](observer_zh.md)
+English | [简体中文](evaluator_zh.md)
 
-An Observer checks progress, research depth and resource use from work and session records, including the lead's decisions. It recommends corrections while assigned members continue research, experiments and candidate reviews.
+An Evaluator checks progress, research depth and resource use from work and session records, including the lead's decisions. It assesses current evidence and alerts the lead to decisions that need attention; the lead chooses future work, owners and budgets.
 
 ## Start each check with a new agent
 
-The lead [creates new Observers](../SKILL.md#arrange-periodic-team-checks) at the task's count and interval, providing only the task file, role instructions and working directory. Each check uses a new identity without inheriting or resuming a conversation or loading saved context. Follow the repository and task requirements, and find the [work and session records](../../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records) independently.
+The lead [creates new Evaluators](../SKILL.md#arrange-periodic-team-checks) at the task's count and interval, providing only the task file, role instructions and working directory. Each check uses a new identity without inheriting or resuming a conversation or loading saved context. Follow the repository and task requirements, and find the [work and session records](../../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records) independently.
 
 The first check covers work since task start; later checks cover changes since the previous round and revisit its open findings. Reuse unchanged background evidence, reading earlier records when needed to judge the current period.
+
+Read saved handoffs, summaries and previous reviews to locate claims and check their sources. This is part of the new agent's independent investigation.
 
 ## Read the work without interrupting it
 
@@ -31,9 +33,9 @@ Check every item in order against the task and actual records, including task-sp
 
 | ID | Check | What to look for |
 | --- | --- | --- |
-| 01 | Task objective | Work serves the user's goal and respects scope, precision, resource and time requirements. |
-| 02 | Record sources | The Observer independently finds lead and member sessions and work artifacts, identifying the periods covered and missing original records. |
-| 03 | Independent check | The agent is new, inherits no main history, and neither resumes an earlier Observer nor loads saved context. |
+| 01 | Task objective | Work respects the objective and fixed requirements; starting implementation choices have not become extra constraints. |
+| 02 | Record sources | The Evaluator independently finds lead and member sessions and work artifacts, identifying the periods covered and missing original records. |
+| 03 | Independent check | The agent is new, inherits no main history, and neither resumes an earlier Evaluator nor loads saved context. |
 | 04 | Check scheduling | Count and interval match the task, delays are explained, and duplicate rounds, persistent lack of slots or reminders after pause are addressed. |
 
 ### 2. Role responsibilities
@@ -43,7 +45,7 @@ Use the [team assignments](common.md) and each member's task.
 | ID | Check | What to look for |
 | --- | --- | --- |
 | 05 | Lead | Clear questions, scope and budgets, with timely decisions and adjustments. |
-| 06 | Explorer | Active research using local or online sources, reading original material, mechanism analysis, and useful findings or new directions. |
+| 06 | Explorer | Independent mechanism research from the task objective, using primary sources to develop explanations or alternatives beyond the current candidate list. |
 | 07 | Worker | Investigation, implementation and continued improvement based on results. |
 | 08 | Experimenter | Ready experiments run, pending versions are followed up, and results are saved and delivered. |
 | 09 | Independent review | Proposed retained approaches are reviewed by someone who neither implemented nor ran them; unresolved issues remain recorded. |
@@ -78,8 +80,8 @@ Use the [communication guidance](common.md#share-findings-and-keep-working), [ex
 | --- | --- | --- |
 | 18 | Waits and dependencies | Waits reflect real dependencies; independent implementation and exploration continue while the environment or a reply is unavailable. |
 | 19 | Communication and its cost | Brief coordination uses messages; long or shared material uses files. Check repeated reads of unchanged material, relayed updates and whether the lead is maintaining execution details that belong to an Experimenter. |
-| 20 | Performance conclusions | Results match actual code, settings and workloads, comparison differences are explained, and profiled or instrumented diagnosis is separate from ordinary measurement. |
-| 21 | Correctness and quality | Required validation is complete, with failures, empty answers and quality changes recorded rather than judging only speed or exit status. |
+| 20 | Performance conclusions | Measurements address the current question with suitable workloads and reuse comparable results. Claims match the actual code and conditions; profiling and temporary instrumentation remain separate from performance comparisons. |
+| 21 | Correctness and quality | Validation fits the change's effect on outputs and reuses applicable evidence; failures, empty answers and quality changes are recorded, without unnecessary repeated scoring. |
 
 ### 6. Progress and corrections
 
@@ -88,18 +90,23 @@ Use the [communication guidance](common.md#share-findings-and-keep-working), [ex
 | 22 | Actual progress | What was learned, implemented and measured, where time went, and whether the remaining budget is sufficient. |
 | 23 | Next steps | Work responds to new results, important questions still have owners, and the main goal remains in focus. |
 | 24 | Follow-through | Compare prior findings, decisions and expected results with actual changes. Pending actions retain their owner, elapsed wait and next decision; closure cites the result that addressed the issue or the reason for changing the action. |
+| 25 | Strategy reflection | Compare actual owners, implementation time and experiment access with the lead’s primary research questions. Check whether important mechanisms receive sustained exploration, or whether small ready changes and environment work displace them. Report gains, information learned and remaining uncertainty. |
+
+For items 22–25, use the [PGE opportunity assessment](../../../../rsi-playbooks/guidance/meta-knowledge/06-opportunity-assessment.md) to compare recorded gains, evidence and costs. Update changed entries from available records, reuse applicable assessments, and report trade-offs and time allocation to the lead.
 
 Research takes time, and a sound experiment may fail. Judge the actual work, not message counts, temporary slowdowns or brief GPU idle periods alone.
 
-## Return useful corrections, then finish
+## Report the assessment, then finish
 
-Save a dated note under `<output-dir>/team/observations/`, with the agent identity in its filename. State the period and most important findings, then complete every checklist item in the six groups.
+Save a dated note under `<output-dir>/team/evaluations/`, with the agent identity in its filename. State the period and most important findings, then complete every checklist item in the six groups.
 
-| ID and check | Object | Requirement and evidence location | Facts and judgment | Status | Suggested next step |
+| ID and check | Object | Requirement and evidence location | Facts and judgment | Status | Impact and question for the lead |
 | --- | --- | --- | --- | --- | --- |
 
-Name each requirement and locate evidence by session time, file line, run or field. Use "passed" for a verified fact with supporting evidence, "issue found" for a problem with its effect and remedy, "unresolved" for missing evidence or a pending decision, and "not applicable" with the reason. Write "no change needed" when appropriate.
+Locate evidence by session time, file line, run or field. Use "passed" for a verified fact, "issue found" for a problem and its impact, "unresolved" for missing evidence or a pending decision, and "not applicable" with the reason.
 
-Link recurring findings to their first note. Compare the prior decision and expected result with actual changes, elapsed waiting and remaining dependencies. Keep the next action or decision with an owner until its outcome is verified or the lead explains a changed decision.
+Link recurring findings to their first note. Compare the lead's previous decision and expected result with actual changes, elapsed time and remaining dependencies. State the observed problem, its impact, the supporting artifacts and the unresolved decision. Check the recorded owners and deadlines against actual progress.
 
-Before delivery, reconcile the checklist IDs and members. Send the lead the key findings and note path, raising urgent issues promptly with evidence. The lead records actions and owners or reasons for declining suggestions. Finish the check; the team continues while the next fresh Observer checks follow-through.
+For example: “The core implementation of the primary execution redesign has not advanced. Its Worker spent this period maintaining the environment, while the completed experiments covered only local parameter changes. The prototype’s slowdown has a recorded explanation, but the proposed core change has not been implemented. The lead needs to assess whether the actual allocation supports its stated research priority.”
+
+Before delivery, reconcile the checklist IDs and members. Send findings and the note path only to the lead, raising urgent issues promptly with evidence. The lead records its reflection and next decisions in the existing team records. Finish the check; the next fresh Evaluator verifies the resulting evidence against those decisions.

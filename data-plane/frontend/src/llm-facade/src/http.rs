@@ -365,6 +365,7 @@ fn generate_output(output: TokenOutput) -> GenerateOutput {
         logprobs: output.logprobs,
         finish_reason: output.finish_reason,
         cached_token_count: output.cached_token_count,
+        cache_write_token_count: output.cache_write_token_count,
         kv_transfer_params: output.kv_transfer_params,
         ec_transfer_params: output.ec_transfer_params,
     }

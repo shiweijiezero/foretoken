@@ -173,7 +173,7 @@ spec:
 
 Set `kvTransfer.protocol` to `tcp` or `rdma` only when overriding automatic selection. Apply changes with `foretoken deploy <directory>`; this replaces the model's P/D instances while other services keep their own transport choices.
 
-Reuse is enabled automatically for full-attention text models without LoRA in the Foretoken vLLM 0.31 and supplied MetaX environments. These environments include the required transport dependencies.
+Reuse is enabled automatically for full-attention text models without LoRA in the Foretoken vLLM 0.31–0.32 and supplied MetaX environments. These environments include the required transport dependencies.
 
 Reuse requires one node per model replica, compatible P/D KV layouts, and PP/PCP/DCP of 1. NIXL also requires matching P/D TP sizes. Other supported configurations retain ordinary P/D behavior. Encoder separation and Mooncake Store use Mooncake.
 

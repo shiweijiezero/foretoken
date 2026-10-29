@@ -14,5 +14,6 @@ Research methods for independently investigating and improving inference systems
 3. [Exploration and decisions](03-exploration-and-decision.md): choose valuable problems and keep pursuing deeper improvements.
 4. [Architecture and method design](04-architecture-and-design.md): compare alternative implementations across kernels, engines, request handling, and cluster orchestration.
 5. [Recording and learning](05-recording-and-learning.md): preserve findings, inefficient approaches, and reusable experiment entrypoints for later work.
+6. [Pareto-Guided Exploration (PGE)](06-opportunity-assessment.md): quantify gains, feasibility, evidence and costs for Evaluator assessment and lead decisions.
 
 Concrete principles and findings belong in the [technical knowledge library](../knowledge/README.md).

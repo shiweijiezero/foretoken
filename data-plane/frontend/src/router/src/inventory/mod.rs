@@ -34,6 +34,16 @@ pub trait RouteInventory: Send + Sync {
         None
     }
 
+    /// Returns the engine's KV allocation block size for routing cost estimates.
+    fn kv_block_size(&self, _route_target_id: &RouteTargetId) -> Option<std::num::NonZeroU32> {
+        None
+    }
+
+    /// Reports whether the engine shares prefix-cache allocations between requests.
+    fn prefix_cache_enabled(&self, _route_target_id: &RouteTargetId) -> Option<bool> {
+        None
+    }
+
     /// Returns the capabilities currently trusted for one route target.
     fn effective_capabilities(&self, route_target_id: &RouteTargetId) -> BTreeSet<String> {
         self.model_routes()

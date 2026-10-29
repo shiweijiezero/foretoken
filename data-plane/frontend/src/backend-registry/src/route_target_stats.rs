@@ -111,6 +111,7 @@ impl RouteTargetStatsHistory {
 
         Some(RouteTargetStats {
             data_parallel_ranks: current.data_parallel_ranks.clone(),
+            request_cost: current.request_cost,
             prompt_tokens_per_request: self.prompt_lengths.mean,
             generation_tokens_per_request: self.generation_lengths.mean,
             collected_at_unix_ms: current.collected_at_unix_ms,
