@@ -9,6 +9,8 @@ English | [简体中文](common_zh.md)
 
 The root agent establishes the objective, fixed requirements, original baseline, total budget and initial team. Members then own research, implementation and experiments within that authority; fresh Evaluators own independent review. Once the Agent Scheduler is running, the root observes records, checks progress and resource/research boundaries, reminds owners about concrete gaps and briefs the user; it does not dispatch every stage or relay routine messages. If the scheduler is unavailable or a lease remains stuck, the root uses native follow-up only to repair that scheduling failure. Routine decisions and deliveries go directly to their consumers.
 
+Keep one observation checkpoint for the task. Report only when the checkpoint, evidence, owner action, resource state or decision changes; when a verified wait produces no change, wait for the next check instead of repeating the same status.
+
 ## Learn the framework first
 
 Read the [project README](../../../../README.md), architecture guidance and documentation for the affected path, then the task, current retained configuration and relevant experiment records. Trace producers and consumers before changing behavior. Reuse established context and applicable evidence; refresh what the current question or changed version requires.

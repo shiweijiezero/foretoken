@@ -15,6 +15,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 启用任务的[接续绑定](continuation_zh.md#启用本次任务)，按配置启用定期巡查。同一研究课题使用一个 W&B project，名称以 `foretoken-` 开头并包含模型、硬件和目标，恢复时沿用命名。研究、实现和环境准备同时开始。任务需要在主 Agent 回合结束后继续时，启动绑定该任务的 [Agent Scheduler](continuation_zh.md#运行独立-agent-scheduler)；Hook 和 queue 只持久化职责，不会唤醒 idle 原生 thread。显式暂停、完成、过期或截止时停止 Scheduler。
 
+Lead 保留一个观察 checkpoint，只汇报状态变化、具体纠正和决定。已确认且没有新证据的等待无需重复汇报，等下一次排期检查或 Scheduler 事件。
+
 各 Experimenter 写自己的迭代结果和判定并刷新生成进展视图。指定一名总览负责人在报告锁内维护元数据、状态、链接和简短说明；[报告维护流程](../../../rsi-playbooks/experiment-records_zh.md#持续维护用户报告)通过现有绘图入口生成数值汇总。
 
 ## 组建团队与派工

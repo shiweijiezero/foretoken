@@ -22,6 +22,8 @@ Activate the task's [continuation binding](continuation.md#enable-the-task) and 
 
 When the task must continue after the lead turn ends, start the task-bound [Agent Scheduler](continuation.md#run-the-independent-agent-scheduler). Hooks and queue operations persist responsibility but do not wake an idle native thread. Stop the scheduler at explicit pause, completion, expiry or deadline.
 
+The lead keeps an observation checkpoint and communicates state changes, concrete corrections and decisions. A verified wait with no changed evidence needs no repeated status message; use the next scheduled check or scheduler event.
+
 Each Experimenter writes its own iteration results and dispositions and refreshes the generated progress view. A designated overview owner maintains only report metadata, status, links and short context under the task-local report lock; the [report workflow](../../../rsi-playbooks/experiment-records.md#maintain-the-user-facing-report) keeps numerical aggregation in the plot command.
 
 ## Set up the team and assignments
