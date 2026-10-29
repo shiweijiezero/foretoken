@@ -42,8 +42,6 @@ The checkout includes project hooks for [RSI continuation](../.agents/skills/rsi
 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 ```
 
-The project settings enable Claude Code's Ultracode dynamic workflows. This is separate from Agent Teams and from the effort level; keep the model and effort mapping in the task file.
-
 Enter in the session:
 
 ```text
