@@ -125,10 +125,11 @@ diff --git a/rust/src/managed-engine/src/process.rs b/rust/src/managed-engine/sr
 
 @@ -181,24 +202,49 @@
 
-     /// Send SIGTERM to the managed Python process group.
+-    /// Send SIGTERM to the managed Python process group.
++    /// Ask the launcher to stop its workers through their native process manager.
      pub fn terminate(pid: u32) -> Result<()> {
 -        signal(pid, libc::SIGTERM)
-+        signal(pid, libc::SIGTERM).map(|_| ())
++        signal(pid as i32, libc::SIGTERM).map(|_| ())
      }
 
      /// Send SIGKILL to the managed Python process group.
@@ -138,12 +139,12 @@ diff --git a/rust/src/managed-engine/src/process.rs b/rust/src/managed-engine/sr
 -
 -    /// Deliver one signal to the managed Python process group.
 -    fn signal(pid: u32, signal: i32) -> Result<()> {
-+        signal(pid, libc::SIGKILL).map(|_| ())
++        signal(-(pid as i32), libc::SIGKILL).map(|_| ())
 +    }
 +
 +    /// Check whether the owned group still contains processes, including unreaped children.
 +    pub fn exists(pid: u32) -> Result<bool> {
-+        signal(pid, 0)
++        signal(-(pid as i32), 0)
 +    }
 +
 +    /// Reap exited descendants adopted by this process without consuming other groups' children.
@@ -166,9 +167,10 @@ diff --git a/rust/src/managed-engine/src/process.rs b/rust/src/managed-engine/sr
 +        }
 +    }
 +
-+    /// Deliver one signal, returning false once the managed process group no longer exists.
-+    fn signal(pid: u32, signal: i32) -> Result<bool> {
-         let rc = unsafe { libc::kill(-(pid as i32), signal) };
++    /// Signal a process or group, returning false once the recipient no longer exists.
++    fn signal(pid: i32, signal: i32) -> Result<bool> {
+-        let rc = unsafe { libc::kill(-(pid as i32), signal) };
++        let rc = unsafe { libc::kill(pid, signal) };
          if rc == 0 {
 -            return Ok(());
 +            return Ok(true);
@@ -179,5 +181,6 @@ diff --git a/rust/src/managed-engine/src/process.rs b/rust/src/managed-engine/sr
 -            return Ok(());
 +            return Ok(false);
          }
-         Err(error).context("failed to signal managed engine process group")
+-        Err(error).context("failed to signal managed engine process group")
++        Err(error).context("failed to signal managed engine process or group")
      }
