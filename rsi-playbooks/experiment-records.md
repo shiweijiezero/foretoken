@@ -155,7 +155,7 @@ Keep execution evidence, the history of judgments, and the current summary disti
 | Other files under `iterations/<name>/notes/` | Each author maintains the full proposal, plan, analysis or review linked from the iteration notes. |
 | `iterations/<name>/notes/progress.yaml` | The Experimenter records selected runs, measured parent and judgments for each scope. The plot command derives the shared comparisons from these records. |
 | `members.responsibility` / `members.thread_id` | The complete continuing role brief and native app-server identity used by the Agent Scheduler; these are not replaced by one queued stage. |
-| `report.md` | The concise user-facing overview owns task metadata, status and links. One designated overview owner updates its prose under `.foretoken-report.lock`; numerical comparisons come from the generated progress summary. |
+| `report.md` | The concise user-facing overview contains the chart-and-table summary and short approach descriptions. A designated overview owner updates the affected rows and prose; full commands and logs stay in the experiment records. |
 
 Attribute analysis, reviews, and decisions to their authors. Each decision states the action and its scope. When correcting a conclusion or changing a decision, link the earlier entry and new evidence so readers can follow how the understanding changed.
 
@@ -167,7 +167,7 @@ Keep the report's current conclusions aligned with the iteration history and lin
 
 ## Maintain the user-facing report
 
-At task setup, create `report.md` using the [report template](templates/report-template.md), link the task and result directory, and share its path. Keep the same report when resuming. Assign one continuing member as the overview owner; this owner updates only metadata, status, links and short approach context under the task-local `.foretoken-report.lock`. The owner is not a measurement or dispatch bottleneck.
+At task setup, create `report.md` using the [report template](templates/report-template.md), link the task and result directory, and share its path. Keep the same report when resuming. Assign one continuing member as the overview owner; this owner updates the concise table, figures, links and short approach context under the task-local `.foretoken-report.lock`. Experimenters update their own iteration records and progress exports; the overview owner is not a measurement or dispatch bottleneck.
 
 After a measured stage or a changed judgment, update `iterations/<name>/notes/progress.yaml` and run:
 
@@ -175,7 +175,7 @@ After a measured stage or a changed judgment, update `iterations/<name>/notes/pr
 foretoken plot --progress results/decode/parallelism
 ```
 
-The command reads every iteration's selected saved runs and judgments, then generates `figures/progress/progress-summary.md`, matching CSV tables and the native milestone/search charts. The generated summary is the numerical source of truth; `report.md` links it instead of copying a cross-scope table. Each scope starts with measured retained branch tips and actual run/configuration/source links for choosing an applicable next parent; adopted ancestors remain in the history. Metrics, repetition counts, variability and recorded code/configuration evidence come from the existing run records. Detailed mechanisms, output differences and independent reviews stay in the owner's `iteration.md` and linked analyses.
+The command reads every iteration's selected saved runs and judgments, then generates `figures/progress/progress-summary.md`, matching CSV tables and the native milestone/search charts. Use those generated values to refresh the concise table in `report.md`; do not duplicate full run inventories there. Each scope starts with measured retained branch tips and actual run/configuration/source links for choosing an applicable next parent; adopted ancestors remain in the history. Metrics, repetition counts, variability and recorded code/configuration evidence come from the existing run records. Detailed mechanisms, output differences and Evaluator findings stay in the owner's `iteration.md` and linked analyses.
 
 For example, a candidate's progress record can select one completed command and its measured parent:
 

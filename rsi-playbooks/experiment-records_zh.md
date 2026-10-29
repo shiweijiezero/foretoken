@@ -155,7 +155,7 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 | `iterations/<name>/notes/` 下的其他文件 | 各作者维护完整方案、计划、分析或复核，由迭代笔记链接。 |
 | `iterations/<name>/notes/progress.yaml` | Experimenter 记录所选运行、实测父配置及各适用范围的判断，绘图命令据此生成共同对比。 |
 | `members.responsibility` / `members.thread_id` | Agent Scheduler 使用的完整持续职责与原生 app-server 身份；不能被某一个排队阶段替代。 |
-| `report.md` | 面向用户的简洁总览负责任务元数据、状态和链接。由一名指定总览负责人在 `.foretoken-report.lock` 下更新文字；数值比较来自生成的进展摘要。 |
+| `report.md` | 面向用户的简洁总览包含图表、总表和各方案简述。由一名指定总览负责人更新受影响的表格行和文字；完整命令和日志留在实验记录中。 |
 
 分析、审查和决定分别注明作者，每项决定写清行动和适用范围。更正结论或改变决定时，链接旧条目与新依据，保留认识变化的过程。
 
@@ -167,7 +167,7 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 
 ## 持续维护用户报告
 
-任务开始时，按[报告模板](templates/report-template_zh.md)创建 `report.md`，链接任务和结果目录，并向用户提供路径。恢复时沿用同一份报告。指定一名持续成员作为总览负责人；他只在任务级 `.foretoken-report.lock` 下更新元数据、状态、链接和简短方案说明。总览负责人不负责测量或派发，因此不会成为实验瓶颈。
+任务开始时，按[报告模板](templates/report-template_zh.md)创建 `report.md`，链接任务和结果目录，并向用户提供路径。恢复时沿用同一份报告。指定一名持续成员作为总览负责人；他在任务级 `.foretoken-report.lock` 下更新简洁总表、图表、链接和方案简述。Experimenter 维护自己的迭代记录和进展导出；总览负责人不负责测量或派发，因此不会成为实验瓶颈。
 
 每个实测阶段结束或判断变化后，更新 `iterations/<name>/notes/progress.yaml`，然后执行：
 
@@ -175,7 +175,7 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 foretoken plot --progress results/decode/parallelism
 ```
 
-命令读取所有迭代所选的既有运行和判断，生成 `figures/progress/progress-summary.md`、对应 CSV 表及原生里程碑图、搜索图。生成摘要是数值唯一来源；`report.md` 链接它，不再手工拼接跨 scope 总表。各 scope 顶部列出已测采用分支末端及实际运行／配置／源码记录，便于后续选择适用的父配置；祖先历史仍保留。指标、重复次数、波动和已记录的源码／配置证据均来自原件。机制解释、输出差异与独立复核保留在作者的 `iteration.md` 及分析中。
+命令读取所有迭代所选的既有运行和判断，生成 `figures/progress/progress-summary.md`、对应 CSV 表及原生里程碑图、搜索图。使用这些生成数值更新 `report.md` 中的简洁总表，不把完整运行清单复制进去。各 scope 顶部列出已测采用分支末端及实际运行／配置／源码记录，便于后续选择适用的父配置；祖先历史仍保留。指标、重复次数、波动和已记录的源码／配置证据均来自原件。机制解释、输出差异与 Evaluator 结论保留在作者的 `iteration.md` 及分析中。
 
 例如，候选的进展记录可以选择一次完成的命令及其实测父方案：
 
