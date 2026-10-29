@@ -103,7 +103,7 @@ mkdir -p results/my-experiment/figures
 cp rsi-playbooks/templates/progress-template.yaml results/my-experiment/figures/progress-main.yaml
 ```
 
-在 `progress-main.yaml` 中填写标题、对照条件和更新时间，再按下文填入基线和测量结果。基线尚未测得时，保留 `baseline.value: null`。然后生成图片：
+在 `progress-main.yaml` 中填写对照条件和更新时间，再按下文填入基线和测量结果。基线尚未测得时，保留 `baseline.value: null`。然后生成图片：
 
 ```bash
 foretoken plot --progress results/my-experiment/figures/progress*.yaml
@@ -115,11 +115,11 @@ foretoken plot --progress results/my-experiment/figures/progress*.yaml
 
 ## 填入结果
 
-用户最初的初始配置是唯一 baseline。同一文件沿用同一指标和可比负载条件；后续控制放在 `references`，不重置 baseline。每个点对应总表中的一个方案，使用相同名称和汇总值；重复运行采用表中的统计方式，链接原始测量。标题保留模型、数据集和指标等简短信息，并发写全为“并发 1”等名称。详细硬件、缓存和源码设置放在报告条件及链接的记录中。
+用户最初的初始配置是唯一 baseline。同一文件沿用同一指标和可比负载条件；后续控制放在 `references`，不重置 baseline。每个点对应总表中的一个方案，使用相同名称和汇总值；重复运行采用表中的统计方式，链接原始测量。标题和副标题只补充坐标轴或报告尚未说明的背景。详细硬件、缓存和源码设置放在报告条件及链接的记录中。
 
 | 字段 | 内容 |
 | --- | --- |
-| `title`、`subtitle` | 简短标题和可选图注。 |
+| `title`、`subtitle` | 可选背景或测量条件，不需要时省略或留空。 |
 | `updated_at` | 与报告一致的更新时间，包含时区。 |
 | `x_label` | `x` 的含义，例如经过的小时数、评测序号或工具调用次数；baseline 位于零点。 |
 | `metric` | `name`、`unit` 和改善方向 `direction`；吞吐通常用 `higher`，延迟通常用 `lower`。 |

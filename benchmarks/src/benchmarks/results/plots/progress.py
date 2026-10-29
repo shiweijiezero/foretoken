@@ -133,7 +133,7 @@ class _Phase(_ProgressRecord):
 class _Progress(_ProgressRecord):
     """One comparable report condition, its evidence, and its plotting annotations."""
 
-    title: str
+    title: str = ""
     subtitle: str = ""
     updated_at: str
     x_label: str
@@ -143,7 +143,7 @@ class _Progress(_ProgressRecord):
     phases: list[_Phase] = Field(default_factory=list)
     references: list[_Reference] = Field(default_factory=list)
 
-    @field_validator("title", "updated_at", "x_label")
+    @field_validator("updated_at", "x_label")
     @classmethod
     def described_report(cls, value: str) -> str:
         """Require the chart's identifying text without changing the writer's wording."""
@@ -355,10 +355,10 @@ def render_progress(data: dict[str, Any], path: Path, writer: FigureWriter) -> N
             figure = Figure(figsize=(14, 5.7), facecolor="white")
             FigureCanvasAgg(figure)
             renderer = figure.canvas.get_renderer()
-            title = _wrap(data["title"], 12.1 * figure.dpi, 14, renderer)
-            subtitle = _wrap(data.get("subtitle", ""), 12.1 * figure.dpi, 8, renderer)
+            title = _wrap(data.get("title", "").strip(), 12.1 * figure.dpi, 14, renderer)
+            subtitle = _wrap(data.get("subtitle", "").strip(), 12.1 * figure.dpi, 8, renderer)
             title_height = 0.24 * len(title.splitlines())
-            header = 0.23 + title_height + 0.17 * len(subtitle.splitlines())
+            header = 0.23 + title_height + 0.17 * len(subtitle.splitlines()) if title or subtitle else 0.10
             footer = 0.50
             legend_columns = 1
             if search:
@@ -470,7 +470,8 @@ def render_progress(data: dict[str, Any], path: Path, writer: FigureWriter) -> N
                               frameon=False, ncol=legend_columns, fontsize=8.5,
                               handlelength=2, columnspacing=1.3, labelspacing=0.65)
 
-            figure.text(0.07, 1 - 0.08 / height, title, fontsize=14, color="#303642", va="top")
+            if title:
+                figure.text(0.07, 1 - 0.08 / height, title, fontsize=14, color="#303642", va="top")
             if subtitle:
                 figure.text(0.07, 1 - (0.14 + title_height) / height, subtitle, fontsize=8,
                             color="#647086", linespacing=1.4, va="top")

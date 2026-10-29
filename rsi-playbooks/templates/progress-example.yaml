@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 # Synthetic layout example only. These are not Foretoken benchmark results.
-title: Synthetic model · Synthetic dataset · Throughput · Concurrency 1
+title: Synthetic example
 updated_at: '2026-01-01T00:00:00Z'
 x_label: Elapsed time (hours)
 metric:

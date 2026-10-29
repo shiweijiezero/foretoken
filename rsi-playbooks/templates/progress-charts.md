@@ -103,7 +103,7 @@ mkdir -p results/my-experiment/figures
 cp rsi-playbooks/templates/progress-template.yaml results/my-experiment/figures/progress-main.yaml
 ```
 
-In `progress-main.yaml`, fill in the title, comparison conditions and update time, then add the baseline and measurements as described below. Leave `baseline.value: null` until the baseline is measured. Generate the charts:
+In `progress-main.yaml`, fill in the comparison conditions and update time, then add the baseline and measurements as described below. Leave `baseline.value: null` until the baseline is measured. Generate the charts:
 
 ```bash
 foretoken plot --progress results/my-experiment/figures/progress*.yaml
@@ -115,11 +115,11 @@ Use a separate file for each metric and comparison condition, such as `progress-
 
 ## Record the results
 
-The user's initial configuration is the only baseline. Keep one metric and comparable workload conditions per file; later controls belong in `references` and do not reset the baseline. Each point corresponds to one approach in the overview table, with the same name and summary value. Summarize repeated runs using the table's statistic and link the original measurements. Keep titles short, using the model, dataset and metric. Spell out concurrency levels, such as “Concurrency 1”. Detailed hardware, cache and source settings belong in the report's conditions and linked records.
+The user's initial configuration is the only baseline. Keep one metric and comparable workload conditions per file; later controls belong in `references` and do not reset the baseline. Each point corresponds to one approach in the overview table, with the same name and summary value. Summarize repeated runs using the table's statistic and link the original measurements. Add a title or subtitle only for context not already supplied by the axes or report. Detailed hardware, cache and source settings belong in the report's conditions and linked records.
 
 | Field | Content |
 | --- | --- |
-| `title`, `subtitle` | Short title and optional caption. |
+| `title`, `subtitle` | Optional context or measurement conditions. Omit or leave empty when unnecessary. |
 | `updated_at` | The report's update time, including timezone. |
 | `x_label` | Meaning of `x`, such as elapsed hours, evaluation index or tool calls; the baseline is at zero. |
 | `metric` | `name`, `unit` and `direction`: `higher` for throughput or `lower` for latency, for example. |

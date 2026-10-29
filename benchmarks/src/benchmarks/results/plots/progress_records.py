@@ -180,7 +180,7 @@ def render_iteration_progress(root: Path, writer: FigureWriter, metrics: tuple[s
             direction = "lower" if metric.endswith("_seconds") else "higher"
             stem = f"progress-{quote(scope, safe='')}--{quote(metric, safe='')}"
             baseline_value = baseline["summary"].get(metric, {}).get("mean") if baseline else None
-            data = {"title": f"{scope} · {label}", "updated_at": updated, "x_label": "Measured approach",
+            data = {"title": scope, "updated_at": updated, "x_label": "Measured approach",
                     "metric": {"name": label, "unit": "", "direction": direction},
                     "baseline": {"label": baseline["label"] if baseline else "Initial baseline (unmeasured)",
                                  "value": baseline_value * scale if baseline_value is not None else None,
