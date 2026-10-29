@@ -290,7 +290,11 @@ class Continuation:
             self.db.execute("""UPDATE members SET last_error=? WHERE harness=? AND session=? AND agent=?""",
                             (f"app-server thread status: {status}", harness, session, agent))
             return None
-        if row["dispatch_state"] == "dispatching" and row["lease_until"] and row["lease_until"] > now:
+        # `turn/start` can be accepted before `thread/read` reports `active`.
+        # Keep a short post-start lease so the next poll cannot append a second
+        # turn during that propagation window. Once the lease expires, the
+        # scheduler may recover a genuinely completed or lost turn.
+        if row["dispatch_state"] in {"dispatching", "running"} and row["turn_id"] and row["lease_until"] and row["lease_until"] > now:
             return None
         dispatch_id = uuid.uuid4().hex
         prompt = (
@@ -309,13 +313,13 @@ class Continuation:
         return {"agent": agent, "thread_id": row["thread_id"], "dispatch_id": dispatch_id, "prompt": prompt}
 
     def supervisor_started(self, harness: str, session: str, agent: str, supervisor: str,
-                           dispatch_id: str, turn_id: str) -> bool:
-        """Commit running state only after app-server accepts `turn/start`."""
+                           dispatch_id: str, turn_id: str, lease_seconds: float) -> bool:
+        """Commit running state after `turn/start` and retain a propagation lease."""
         cursor = self.db.execute("""UPDATE members SET dispatch_state='running',lease_owner=NULL,
-                          lease_until=NULL,turn_id=?,last_error=NULL
+                          lease_until=?,turn_id=?,last_error=NULL
                        WHERE harness=? AND session=? AND agent=? AND state='working'
                          AND dispatch_state='dispatching' AND lease_owner=? AND dispatch_id=?""",
-                        (turn_id, harness, session, agent, supervisor, dispatch_id))
+                        (time.time() + lease_seconds, turn_id, harness, session, agent, supervisor, dispatch_id))
         return bool(cursor.rowcount)
 
     def supervisor_failed(self, harness: str, session: str, agent: str, supervisor: str,

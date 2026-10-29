@@ -146,7 +146,7 @@ def run_once(connection: Any, state: Any, client: AppServerClient, harness: str,
         with connection:
             state.supervisor_started(
                 harness, member["session"], member["agent"], owner,
-                action["dispatch_id"], turn_id,
+                action["dispatch_id"], turn_id, lease_seconds,
             )
     return actions
 
