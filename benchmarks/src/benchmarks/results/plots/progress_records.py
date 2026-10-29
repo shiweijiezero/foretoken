@@ -18,10 +18,18 @@ from pydantic import Field, ValidationError, model_validator
 
 from benchmarks.results.measurements.sweeps import summarize_sweep
 from benchmarks.results.plots.data import _metric_display
-from benchmarks.results.plots.progress import _Progress, _ProgressRecord, render_progress
+from benchmarks.results.plots.progress import (
+    _Progress,
+    _ProgressRecord,
+    render_progress,
+)
 from benchmarks.results.plots.rendering import FigureWriter
-from benchmarks.results.plots.saved_results import _comparison_changes, read_saved_results
+from benchmarks.results.plots.saved_results import (
+    _comparison_changes,
+    read_saved_results,
+)
 from benchmarks.results.recording.database import read_records
+from benchmarks.results.recording.files import write_text
 
 
 class _Measurement(_ProgressRecord):
@@ -250,4 +258,4 @@ def render_iteration_progress(root: Path, writer: FigureWriter, metrics: tuple[s
     writer.table("progress-runs", provenance)
     path = writer.directory / "progress-summary.md"
     writer.files[path.name] = path
-    path.write_text("\n".join(markdown) + "\n", encoding="utf-8")
+    write_text(str(writer.directory), path.name, "\n".join(markdown) + "\n")

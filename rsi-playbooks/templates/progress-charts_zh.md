@@ -13,7 +13,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 foretoken plot --progress results/my-experiment
 ```
 
-结果位于 `results/my-experiment/figures/progress/`：`progress-summary.md` 是可读摘要，`progress-summary.csv` 保存统计与判断，`progress-runs.csv` 提供运行、配置、环境及源码证据入口。Markdown 直接展示对应图表。任务报告链接此摘要，无需报告汇总人或人工抄写指标。
+结果位于 `results/my-experiment/figures/progress/`：`progress-summary.md` 是可读摘要，`progress-summary.csv` 保存统计与判断，`progress-runs.csv` 提供运行、配置、环境及源码证据入口。Markdown 直接展示对应图表。任务报告链接此摘要；不设中央成员抄写数值，指定的总览负责人仍在报告锁内维护元数据和简短说明。
 
 ## 记录一个方案
 
@@ -64,7 +64,7 @@ measurements:
 
 ## 刷新共同视图
 
-每份 `progress.yaml` 由该迭代唯一的 Experimenter 维护，其他作者的分析留在各自文件中；不同迭代使用不同记录。用现有原子写入函数发布完整记录，避免其他作者的绘图调用读到截断中的文件。JSON 是合法的 YAML，可直接用于这个 `.yaml` 文件。以下命令在已完成运行、已有 `notes/` 目录后执行，路径换成自己的实际迭代：
+每份 `progress.yaml` 由该迭代唯一的 Experimenter 维护，其他作者的分析留在各自文件中；不同迭代使用不同记录。同一迭代禁止并写。用现有原子写入函数发布完整记录，避免绘图调用读到截断中的文件。JSON 是合法的 YAML，可直接用于这个 `.yaml` 文件。以下命令在已完成运行、已有 `notes/` 目录后执行，路径换成自己的实际迭代：
 
 ```bash
 python - <<'PY'
@@ -84,7 +84,7 @@ write_json("results/my-experiment/iterations/qkv/notes", "progress.yaml", {
 PY
 ```
 
-原子替换后，任一 Experimenter 都可运行前述绘图命令。目录模式在既有发布锁内发现和读取所有 owner 的记录，再刷新完整视图；排队的调用取得锁后重新读取。该锁串行化聚合与发布，不保护其他工具直接截断写入记录的操作。
+原子替换后，任一 Experimenter 都可运行前述绘图命令。目录模式在既有发布锁内发现和读取所有 owner 的记录，再刷新完整视图；排队的调用取得锁后重新读取。同一文件的 single-writer 规则避免截断写入与读取竞争；多个迭代同时更新时，待负责人完成后再重绘一次以得到稳定快照。
 
 默认图显示输出吞吐与平均 TPOT。用已有选项选择其他保存指标：
 

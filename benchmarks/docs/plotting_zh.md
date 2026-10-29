@@ -104,7 +104,7 @@ AgentX 的速度下限使用 `--interactivity-metric agentx_interactivity --inte
 foretoken plot --progress results/my-experiment
 ```
 
-命令生成 `figures/progress/progress-summary.md`、CSV 表和原生里程碑／搜索图，指标直接读取原有结果。任一 Experimenter 更新自己的 `iterations/<name>/notes/progress.yaml` 后都可刷新；报告保留简洁的图表、总表和方案简述，不设中央报告作者。默认展示吞吐与平均 TPOT，用 `--metric ttft --stat p95` 等已有选项选择其他指标。记录、适用范围和实测父配置关系见 [RSI 进展指南](../../rsi-playbooks/templates/progress-charts_zh.md)。
+命令生成 `figures/progress/progress-summary.md`、CSV 表和原生里程碑／搜索图，指标直接读取原有结果。任一 Experimenter 更新自己的 `iterations/<name>/notes/progress.yaml` 后都可刷新；报告链接这个生成的数值视图，指定的总览负责人在报告锁内维护元数据和简短文字。默认展示吞吐与平均 TPOT，用 `--metric ttft --stat p95` 等已有选项选择其他指标。记录、适用范围和实测父配置关系见 [RSI 进展指南](../../rsi-playbooks/templates/progress-charts_zh.md)。
 
 原有 `foretoken plot --progress CHART.yaml [CHART.yaml ...]` 仍可用。YAML 在同一目录时默认输出到该目录，否则输出到 `./plots`；每次只替换所选文件对应的图，保留其他条件。两种模式都可用 `--output-dir` 指定位置。
 

@@ -146,7 +146,7 @@ Keep execution evidence, the history of judgments, and the current summary disti
 | `iterations/<name>/notes/iteration.md` | The assigned Experimenter maintains the summary and document index, and appends run findings, independent reviews, decisions, and corrections with timestamps, sources, and evidence links. |
 | Other files under `iterations/<name>/notes/` | Each author maintains the full proposal, plan, analysis or review linked from the iteration notes. |
 | `iterations/<name>/notes/progress.yaml` | The Experimenter records selected runs, measured parent and judgments for each scope. The plot command derives the shared comparisons from these records. |
-| `report.md` | The concise user-facing overview contains the chart-and-table summary and short approach descriptions. It links the generated figures and owner analyses; full commands and logs stay in the experiment records. |
+| `report.md` | The concise user-facing overview owns task metadata, status and links. One designated overview owner updates its prose under `.foretoken-report.lock`; numerical comparisons come from the generated progress summary. |
 
 Attribute analysis, reviews, and decisions to their authors. Each decision states the action and its scope. When correcting a conclusion or changing a decision, link the earlier entry and new evidence so readers can follow how the understanding changed.
 
@@ -158,7 +158,7 @@ Keep the report's current conclusions aligned with the iteration history and lin
 
 ## Maintain the user-facing report
 
-At task setup, create `report.md` using the [report template](templates/report-template.md), link the task and result directory, and share its path. Keep the same report when resuming. Each Experimenter maintains its own iteration's analysis and progress record, updates the affected rows and approach summary when its evidence changes, and refreshes the generated figures. Experimenters coordinate edits to the shared report directly; no central writer collects or transcribes the team's measurements.
+At task setup, create `report.md` using the [report template](templates/report-template.md), link the task and result directory, and share its path. Keep the same report when resuming. Assign one continuing member as the overview owner; this owner updates only metadata, status, links and short approach context under the task-local `.foretoken-report.lock`. The owner is not a measurement or dispatch bottleneck.
 
 After a measured stage or a changed judgment, update `iterations/<name>/notes/progress.yaml` and run:
 
@@ -166,7 +166,7 @@ After a measured stage or a changed judgment, update `iterations/<name>/notes/pr
 foretoken plot --progress results/decode/parallelism
 ```
 
-The command reads every iteration's selected saved runs and judgments, then generates `figures/progress/progress-summary.md`, matching CSV tables and the native milestone/search charts. Use those generated values to refresh the concise table in `report.md`; do not duplicate full run inventories there. Each scope starts with measured retained branch tips and actual run/configuration/source links for choosing an applicable next parent; adopted ancestors remain in the history. Metrics, repetition counts, variability and recorded code/configuration evidence come from the existing run records. Detailed mechanisms, output differences and independent reviews stay in the owner's `iteration.md` and linked analyses.
+The command reads every iteration's selected saved runs and judgments, then generates `figures/progress/progress-summary.md`, matching CSV tables and the native milestone/search charts. The generated summary is the numerical source of truth; `report.md` links it instead of copying a cross-scope table. Each scope starts with measured retained branch tips and actual run/configuration/source links for choosing an applicable next parent; adopted ancestors remain in the history. Metrics, repetition counts, variability and recorded code/configuration evidence come from the existing run records. Detailed mechanisms, output differences and independent reviews stay in the owner's `iteration.md` and linked analyses.
 
 For example, a candidate's progress record can select one completed command and its measured parent:
 
@@ -184,6 +184,14 @@ Paths start from this YAML's directory. A scope names a workload and comparison 
 
 Continue implementation and exploration from the current validated configuration for the relevant scope. Record the actual parent that the candidate ran, including its existing changes. Independently measured A and B from P are two branches; adopting either does not establish A+B. A combined configuration needs its own run and judgment. Use the smallest execution that verifies the changed boundary; reuse applicable evidence rather than routinely repeating full matrices or paired controls.
 
-Each iteration has one Experimenter publishing its progress record through the [atomic update example](templates/progress-charts.md#refresh-the-shared-view), then refreshing the shared view directly. The command serializes discovery, reading and publication under the existing figure-directory lock; queued refreshes read the latest records when they acquire that lock. The generated tables retain each measured parent and actual run/source references. Milestones connect only recorded measured parents, leaving independent branches distinct. Retention is an explicit scope-specific judgment, never a choice made from maximum throughput.
+Each iteration has one Experimenter publishing its progress record through the [atomic update example](templates/progress-charts.md#refresh-the-shared-view), then refreshing the shared view directly. A progress file has one writer and is replaced atomically; the plot command serializes discovery, reading and publication under the existing figure-directory lock. If several progress files change during a redraw, rerun after the owners finish so the summary records one settled snapshot. The generated tables retain each measured parent and actual run/source references. Milestones connect only recorded measured parents, leaving independent branches distinct. Retention is an explicit scope-specific judgment, never a choice made from maximum throughput.
 
-For a document platform, publish or link the same generated summary rather than maintaining another numerical report. On pause, stop or completion, record the reason and remaining work in the task overview and link the owners' actual cleanup evidence. Existing manually authored chart YAML remains supported by `foretoken plot --progress CHART.yaml`.
+For a document platform, publish or link the same generated summary rather than maintaining another numerical report. To change the overview, run the update command under the report lock, for example:
+
+```bash
+python3 -I .agents/skills/rsi/scripts/report_lock.py \
+  --report results/decode/parallelism/report.md -- \
+  "${EDITOR:-vi}" results/decode/parallelism/report.md
+```
+
+The editor opens the current file only after acquiring the lock. A scripted updater must likewise reread the current report inside `report_lock()` and write a complete replacement; it must not append a stale copy. On pause, stop or completion, record the reason and remaining work in the task overview and link the owners' actual cleanup evidence. Existing manually authored chart YAML remains supported by `foretoken plot --progress CHART.yaml`.

@@ -25,24 +25,33 @@ Inspect records read-only without asking members for status or interrupting expe
 
 ## Checklist
 
-Record one row for every item below with `passed`, `issue found`, `unresolved` or `not applicable`, the evidence path and the owner/action. A routine check rereads changed and open rows and links unchanged evidence; initialization, a major change and completion cover every row.
+Every assessment contains one row for each applicable item below. Each row has exactly five fields: `status` (`passed`, `issue found`, `unresolved` or `not applicable`), the concrete evidence path and observation time, the judgment, the named owner and action, and the next check time or condition. A routine check rereads changed and open rows and links unchanged evidence; initialization, a major change and completion cover every row. Missing evidence is `unresolved`, never a pass.
 
-| ID | Check | Evidence to inspect |
+| ID | Check and decision rule | Evidence to inspect |
 | --- | --- | --- |
-| 01 | Objective and limits | Task objective, fixed requirements, original baseline, total resources and hard deadline |
-| 02 | Cumulative parent | Latest applicable retained configuration, actual parent, new delta and measured combination |
-| 03 | Research value | Current bottleneck, hypothesis, PGE trade-off and next question |
-| 04 | Implementation | Intended revision, worktree and deployment are the ones that actually ran |
-| 05 | Workload and quality | Matching workload, output checks, quality scope, failures and unknowns |
-| 06 | Performance evidence | Throughput/latency, repetitions, variation, parent change and baseline change |
-| 07 | Adoption decision | Independent review, decision scope and remaining validation |
-| 08 | Parallel experiments | Ready candidates run concurrently when their resource requests do not conflict; no unnecessary stage barrier or fixed pairing |
-| 09 | Resource utilization | Available GPUs, CPU, memory, storage and network are used as far as the task budget and comparison conditions allow; idle capacity has a recorded dependency or preparation reason |
-| 10 | Environment reuse | Worktrees, server-side builds, images, model files, compiler caches and deployment instances are reused without contaminating candidates |
-| 11 | Work-pool liveness | Claims, dependencies, affinity, fairness, targeted notifications, waits, handoffs and recovery leave no ready work stranded |
-| 12 | Delivery and report | Original results, progress record, concise table, figures and approach summary are current |
-| 13 | Follow-through | Previous findings have an owner, correction and observable outcome; repeated failures are not reopened without a new question |
-| 14 | Workflow improvement | A workflow hypothesis was tested when raised, and waiting, rework, communication or cumulative progress changed as expected |
+| R01 | Objective and fixed limits | Task objective, user requirements, original start/deadline, fixed baseline, workload, budget and resource ceiling |
+| R02 | Baseline integrity | The user's initial configuration is the only baseline; later controls and retests are named references, never replacement baselines |
+| R03 | Cumulative parent | Each candidate records the latest applicable retained parent, all inherited changes, its new delta and a measured combined configuration; a candidate based on an old parent is flagged |
+| R04 | Branch and scope correctness | Independent A and B measurements do not establish A+B; each workload/quality scope keeps its own parent chain and adoption decision |
+| R05 | Research value | Current bottleneck, falsifiable hypothesis, PGE opportunity/feasibility/evidence/effort trade-off and the next question are explicit |
+| M01 | Actual implementation identity | Source revision, worktree, build mode, image/runtime, model snapshot, cache/build scope and deployment instance match the recorded candidate |
+| M02 | Comparable workload | Request shape, prompt/input, output budget, concurrency (including C1 and C16), batching, warmup and topology are comparable to the selected parent |
+| M03 | Output and quality gate | Request IDs, output tokens, stop/usage fields and exact output or quality checks are recorded; divergence, missing quality evidence and synthetic-only controls remain unresolved |
+| M04 | Performance evidence | Throughput and TPOT/latency use the same metric definition, repetitions, sample counts, variation, parent and original-baseline deltas; C1-only evidence cannot claim C16 |
+| M05 | Failures and negative results | Compile, deploy, readiness, HTTP, timeout, cleanup and comparison failures are retained with their actual exit/evidence; unavailable infrastructure is not called a speed result |
+| M06 | Minimal validation | The smallest changed boundary is validated first; a full matrix is not repeated unless a new question requires it, and retained claims have the necessary independent review |
+| W01 | Parallel execution | Non-conflicting ready candidates run concurrently; there is no unnecessary stage barrier or fixed Worker–Experimenter pairing |
+| W02 | Work-pool liveness | Claims, dependencies, affinity, fairness, notifications, waits, handoffs and recovery leave no ready item stranded or active owner ambiguous |
+| W03 | Hook fallback and recovery | Member stop, root Stop/PostToolUse/SessionEnd and guard events have a tested recovery path; a missed idle event is recoverable from another live event without silently dropping active work |
+| W04 | Evaluator schedule | The original anchored interval creates one fresh Evaluator per configured count, records its actual completion/findings/owners/next check, and does not rely on a second scheduler |
+| W05 | Continuous direct work | Explorer, Worker and Experimenter continue from the latest retained configuration, communicate directly and make routine decisions without lead approval; waiting has a concrete dependency |
+| W06 | Resource utilization | Available GPUs across permitted cards/hosts, CPU, memory, storage and RDMA/network are used within the task ceiling; idle capacity has a recorded dependency or preparation reason |
+| W07 | Environment reuse and isolation | Prepared images, model files and caches are reused while worktrees, writable builds, runtime state and deployment instances stay isolated; stale parents are not reused accidentally |
+| D01 | Owner records | The Experimenter preserves original commands, raw outputs, logs, resource observations, progress record, independent review and disposition in its iteration directory |
+| D02 | Report and export consistency | Each owner updates its own iteration/progress record; export reads a complete snapshot under its lock; generated figures/summary and the concise report agree without concurrent lost edits |
+| D03 | Delivery and cleanup | Report links actual results, retained/rejected/pending approaches and remaining validation; server traces and reusable environments are retained, useless copies and jobs are cleaned, and exit is verified |
+| F01 | Follow-through | Every prior finding has a named owner, correction and observable outcome; repeated failures are not reopened without a new question |
+| F02 | Next action | The assessment ends with ordered actions, explicit owners and a next check time/condition tied to the highest-value unresolved decision |
 
 
 ## Deliver findings to the responsible owners

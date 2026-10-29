@@ -12,6 +12,7 @@ import textwrap
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
 from benchmarks.results.plots.data import Chart, Series
@@ -50,17 +51,25 @@ class FigureWriter:
         path = self.directory / f"{name}.csv"
         self.files[path.name] = path
         columns = list(dict.fromkeys(key for row in rows for key in row))
-        with path.open("w", encoding="utf-8", newline="") as stream:
-            writer = csv.DictWriter(stream, fieldnames=columns, extrasaction="ignore")
-            writer.writeheader()
-            writer.writerows(
-                {
-                    key: json.dumps(value, ensure_ascii=False)
-                    if isinstance(value, (dict, list, tuple)) else value
-                    for key, value in row.items()
-                }
-                for row in rows
-            )
+        temporary = None
+        try:
+            with NamedTemporaryFile("w", encoding="utf-8", newline="", dir=path.parent,
+                                    prefix=f".{path.name}.", suffix=".tmp", delete=False) as stream:
+                temporary = Path(stream.name)
+                writer = csv.DictWriter(stream, fieldnames=columns, extrasaction="ignore")
+                writer.writeheader()
+                writer.writerows(
+                    {
+                        key: json.dumps(value, ensure_ascii=False)
+                        if isinstance(value, (dict, list, tuple)) else value
+                        for key, value in row.items()
+                    }
+                    for row in rows
+                )
+            temporary.replace(path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         return path
 
     def figure(self, figure: Any, name: str, *, description: str | None = None) -> None:
@@ -75,7 +84,15 @@ class FigureWriter:
                     metadata = None if description is None else {
                         "Subject" if extension == "pdf" else "Description": description,
                     }
-                    figure.savefig(path, dpi=220, facecolor="white", metadata=metadata)
+                    temporary = None
+                    try:
+                        with NamedTemporaryFile("wb", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as stream:
+                            temporary = Path(stream.name)
+                        figure.savefig(temporary, dpi=220, format=extension, facecolor="white", metadata=metadata)
+                        temporary.replace(path)
+                    finally:
+                        if temporary is not None:
+                            temporary.unlink(missing_ok=True)
         finally:
             figure.clear()
 

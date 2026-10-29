@@ -40,7 +40,7 @@ Roles are `explorer`, `worker` and `experimenter`. Each can also claim independe
 
 Claim when there is available capacity. A claim atomically selects eligible ready work, reusing topic and environment context while giving older work its turn before newer arrivals. Unfinished dependencies and reviewer exclusions prevent a claim; work is not reserved for a busy member. `--wait` waits inside the tool, releasing SQLite between short checks.
 
-Without an eligible item, research-capable members receive `action: research` immediately, including when `--wait` is set. Continue from the current retained configuration and unresolved task questions rather than waiting for another producer. Other consumers receive `action: wait` when the wait ends and can advance work they already own. An empty claim is not completion of a research responsibility.
+Without an eligible item, every continuing member receives `action: research`, including when `--wait` is set. Continue from the current retained configuration and unresolved task questions rather than waiting for another producer; Workers and Experimenters can submit the next implementation or measurement stage themselves. An empty claim is not completion of a research responsibility.
 
 ## Arrange a member's next step
 
@@ -56,7 +56,7 @@ python3 -I .agents/skills/rsi/scripts/continuation.py submit \
 
 Kinds are `explorer`, `worker`, `experimenter`, `review` and `evaluation`. Topic and environment describe useful context affinity, not an exclusive executor. Repeated `--after WORK` arguments refer to existing work that must finish first. The consumer receives those result paths and reads their actual findings, including failed experiments.
 
-For review work, link implementation and execution items with `--after`. Their actual Worker and Experimenter participants, including previous owners after a handoff, cannot claim that review. Add `--exclude ID` for any other actual contributor. Independence still depends on the member's real participation and the task's review requirements.
+For review work, link implementation and execution items with `--after`. Their actual Worker and Experimenter participants, including previous owners after a handoff, cannot claim that review. An Explorer may review an exploration ancestor, but if it implemented or ran the candidate, add that identity with `--exclude ID`. Independence still depends on the member's real participation and the task's review requirements.
 
 Finish owned work with `finish --agent "$RSI_AGENT" --work "$RSI_WORK" --result "$RSI_RESULT"`, including the same harness/session arguments. The result must be an existing artifact or analysis; its contents state the outcome. Publish follow-on work as useful evidence arrives rather than waiting for a whole matrix. Use native follow-up when a known idle consumer needs to resume. Shared work admission and native agent dispatch are separate operations.
 
@@ -76,6 +76,6 @@ This pool schedule is the only evaluation timetable. A live member's idle hook o
 
 If no ready work can resolve a dependency, use `release --agent "$RSI_AGENT" --state waiting --reason "$RSI_REASON"` with the harness/session. Finish or hand off owned items before releasing. Use `done` when the responsibility is complete. A producer resumes a known waiting consumer with native follow-up when its result arrives.
 
-Member stop hooks return unfinished members to their owned work or to claiming ready work. Ordinary root tool, Stop and SessionEnd events do not request root decisions or pause the task. This does not make native agents independent of the harness lifetime.
+Member stop hooks return unfinished members to their owned work or to claiming ready work. Codex uses `SubagentStop`; Claude uses `TeammateIdle`. Codex `Stop` and `PostToolUse` remain root fallbacks that materialize a due Evaluator dispatch, so a missed member-stop event is recovered by another live event. A guarded member stop records a root notice instead of silently dropping active work; the next root `PostToolUse` adds non-blocking context, while a root `Stop` consumes the notice once and requests one review turn. `SessionEnd` only leaves durable state and never creates new work because the main thread is ending. This does not make native agents independent of the harness lifetime.
 
 On user pause or completion, use `release --state paused` or `release --state complete` with the harness/session and a reason, omitting the member ID. A root Interrupt pauses the task, and the original deadline stops new claims. Each owner still stops its own serving, build and collector jobs and verifies exit. On resumption, inspect existing jobs, activate the same task and resume members through native tools.

@@ -104,7 +104,7 @@ Generate the shared tables and charts from each iteration owner's run references
 foretoken plot --progress results/my-experiment
 ```
 
-The command produces `figures/progress/progress-summary.md`, CSV tables and the native milestone/search figures, reading metrics from existing results. Any Experimenter can refresh it after updating its own `iterations/<name>/notes/progress.yaml`; the report keeps the concise chart-and-table summary and approach descriptions without a central report writer. Default metrics are throughput and mean TPOT; use existing selections such as `--metric ttft --stat p95` for other metrics. See the [RSI progress guide](../../rsi-playbooks/templates/progress-charts.md) for records, scopes and measured parent relationships.
+The command produces `figures/progress/progress-summary.md`, CSV tables and the native milestone/search figures, reading metrics from existing results. Any Experimenter can refresh it after updating its own `iterations/<name>/notes/progress.yaml`; the report links this generated numerical view while its designated overview owner maintains metadata and short prose under the report lock. Default metrics are throughput and mean TPOT; use existing selections such as `--metric ttft --stat p95` for other metrics. See the [RSI progress guide](../../rsi-playbooks/templates/progress-charts.md) for records, scopes and measured parent relationships.
 
 Existing `foretoken plot --progress CHART.yaml [CHART.yaml ...]` remains supported. YAML files in one directory default to that directory; other selections default to `./plots`. A refresh replaces only the selected files' chart stems, preserving other conditions. Both modes accept `--output-dir`.
 

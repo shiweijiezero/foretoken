@@ -13,19 +13,32 @@ from pathlib import Path
 
 from loguru import logger
 
-from benchmarks.config.plot import DEFAULT_INTERACTIVITY, MetricSelection, TradeoffOptions
+from benchmarks.config.plot import (
+    DEFAULT_INTERACTIVITY,
+    MetricSelection,
+    TradeoffOptions,
+)
 from benchmarks.results.plots.charts.http import _http_charts
 from benchmarks.results.plots.charts.phases import phase_summary_charts
-from benchmarks.results.plots.charts.resources import _prometheus_charts, gpu_allocation_charts
+from benchmarks.results.plots.charts.resources import (
+    _prometheus_charts,
+    gpu_allocation_charts,
+)
 from benchmarks.results.plots.charts.video import _video_phase_charts
 from benchmarks.results.plots.comparison import compare_to_base
 from benchmarks.results.plots.data import Chart, _method, sweep_charts
-from benchmarks.results.plots.economics import PRICED_TOKEN_METRICS, Pricing, load_pricing, render_economics
+from benchmarks.results.plots.economics import (
+    PRICED_TOKEN_METRICS,
+    Pricing,
+    load_pricing,
+    render_economics,
+)
 from benchmarks.results.plots.metrics import derived_plot_metrics
-from benchmarks.results.plots.rendering import FigureWriter, _charts, _FORMATS
+from benchmarks.results.plots.rendering import _FORMATS, FigureWriter, _charts
 from benchmarks.results.plots.saved_results import SavedResults, read_saved_results
 from benchmarks.results.plots.tradeoffs import render_tradeoffs
 from benchmarks.results.recording.database import read_records
+from benchmarks.results.recording.files import write_json
 from benchmarks.results.recording.locks import publication_lock
 from benchmarks.results.recording.tasks import task_source
 
@@ -70,7 +83,11 @@ def render_results(
             or interactivity != DEFAULT_INTERACTIVITY
         ):
             raise ValueError("Progress export accepts sources, output_dir and directory-mode metrics; other settings come from progress records")
-        from benchmarks.results.plots.progress import _VIEWS, load_progress, render_progress
+        from benchmarks.results.plots.progress import (
+            _VIEWS,
+            load_progress,
+            render_progress,
+        )
 
         sources = tuple(dict.fromkeys(path.resolve() for path in sources))
         if len({path.stem for path in sources}) != len(sources):
@@ -99,7 +116,9 @@ def render_results(
         writer = FigureWriter(out)
         try:
             if iteration_progress:
-                from benchmarks.results.plots.progress_records import render_iteration_progress
+                from benchmarks.results.plots.progress_records import (
+                    render_iteration_progress,
+                )
 
                 render_iteration_progress(sources[0], writer, metrics)
                 owner = None
@@ -143,10 +162,10 @@ def default_output_directory(
 
 def _record_export(manifest: Path, files: Iterable[str], owner: Path | None) -> None:
     """Publish the files owned by this export and its optional measured-run identity."""
-    manifest.write_text(json.dumps({
+    write_json(str(manifest.parent), manifest.name, {
         "files": sorted(files),
         "source": Path(os.path.relpath(owner, manifest.parent)).as_posix() if owner is not None else None,
-    }, indent=2) + "\n", encoding="utf-8")
+    })
 
 
 def _render_results(

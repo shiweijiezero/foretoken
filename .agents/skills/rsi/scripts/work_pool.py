@@ -37,6 +37,7 @@ class WorkPool:
                 description TEXT NOT NULL, creator TEXT NOT NULL,
                 topic TEXT NOT NULL, environment TEXT NOT NULL,
                 state TEXT NOT NULL DEFAULT 'ready', owner TEXT,
+                previous_owner TEXT,
                 result TEXT, reason TEXT, created REAL NOT NULL,
                 PRIMARY KEY(harness,session,id),
                 FOREIGN KEY(harness,session) REFERENCES sessions(harness,session)
@@ -63,6 +64,17 @@ class WorkPool:
                 PRIMARY KEY(harness,session)
             );
         """)
+        columns = {row[1] for row in db.execute("PRAGMA table_info(work)")}
+        if "previous_owner" not in columns:
+            try:
+                db.execute("ALTER TABLE work ADD COLUMN previous_owner TEXT")
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+        # A ready item has no current owner. Preserve the old handoff owner for
+        # review independence while making legacy rows claimable after upgrade.
+        db.execute("""UPDATE work SET previous_owner=COALESCE(previous_owner, owner), owner=NULL
+            WHERE state='ready' AND owner IS NOT NULL""")
 
     def active(self) -> sqlite3.Row:
         """Require an active task before admitting work or a claim."""
@@ -78,9 +90,10 @@ class WorkPool:
     def register(self, agent: str, role: str, accepts: list[str]) -> None:
         """Advertise this member's permitted work kinds without reserving pending work."""
         self.active()
-        self.db.execute("""INSERT INTO members(harness,session,agent,role,state)
-            VALUES (?,?,?,?,'working') ON CONFLICT(harness,session,agent)
-            DO UPDATE SET role=excluded.role,state='working',reason=NULL""", (*self.identity, agent, role))
+        self.db.execute("""INSERT INTO members(harness,session,agent,role,state,next_step,notice)
+            VALUES (?,?,?,?,'working',NULL,NULL) ON CONFLICT(harness,session,agent)
+            DO UPDATE SET role=excluded.role,state='working',next_step=NULL,reason=NULL,notice=NULL""",
+                        (*self.identity, agent, role))
         self.db.execute("DELETE FROM capabilities WHERE harness=? AND session=? AND agent=?", (*self.identity, agent))
         self.db.executemany("INSERT INTO capabilities VALUES (?,?,?,?)", [
             (*self.identity, agent, kind) for kind in dict.fromkeys((*CAPABILITIES[role], *accepts))
@@ -105,7 +118,8 @@ class WorkPool:
         if task["started"] is None:
             raise ValueError("Original task start is unknown; activate with --started-at before scheduling")
         if count == 0:
-            self.db.execute("UPDATE work SET state='cancelled',reason='Evaluator count is zero' WHERE harness=? AND session=? AND kind='evaluation' AND state='ready'", self.identity)
+            self.db.execute("""UPDATE work SET state='cancelled',reason='Evaluator count is zero'
+                WHERE harness=? AND session=? AND kind='evaluation' AND creator='evaluation_schedule' AND state='ready'""", self.identity)
         self.db.execute("""INSERT INTO evaluation_schedule VALUES (?,?,?,?,?)
             ON CONFLICT(harness,session) DO UPDATE SET interval=excluded.interval,count=excluded.count""",
             (*self.identity, interval, count, task["started"] + interval))
@@ -115,12 +129,18 @@ class WorkPool:
         schedule = self.db.execute("SELECT * FROM evaluation_schedule WHERE harness=? AND session=?", self.identity).fetchone()
         if schedule is None or not schedule["count"] or schedule["next_due"] > time.time():
             return
-        pending = self.db.execute("SELECT 1 FROM work WHERE harness=? AND session=? AND kind='evaluation' AND state IN ('ready','active') LIMIT 1", self.identity).fetchone()
+        pending = self.db.execute("""SELECT 1 FROM work WHERE harness=? AND session=?
+            AND kind='evaluation' AND creator='evaluation_schedule' AND state IN ('ready','active') LIMIT 1""", self.identity).fetchone()
         if pending:
             return
         due = schedule["next_due"]
         for index in range(schedule["count"]):
-            self.submit(f"evaluation:{due}:{index}", "evaluation", (
+            work = f"evaluation:{due}:{index}"
+            retry = 0
+            while self.db.execute("SELECT 1 FROM work WHERE harness=? AND session=? AND id=?", (*self.identity, work)).fetchone():
+                retry += 1
+                work = f"evaluation:{due}:{index}:retry{retry}"
+            self.submit(work, "evaluation", (
                 f"Create one fresh Evaluator without inherited history for {task['task']}. "
                 "Give only the task, Evaluator role and working directory. Deliver findings directly to their owners; "
                 "finish this item with the completed assessment's path, not the child's dispatch notice."
@@ -136,6 +156,9 @@ class WorkPool:
         capable = {row[0] for row in self.db.execute("SELECT kind FROM capabilities WHERE harness=? AND session=? AND agent=?", (*self.identity, agent))}
         if not capable:
             raise ValueError("Register this member before claiming work")
+        member = self.db.execute("SELECT state FROM members WHERE harness=? AND session=? AND agent=?", (*self.identity, agent)).fetchone()
+        if member is None or member[0] != "working":
+            raise ValueError("Register or resume this member before claiming work")
         rows = self.ready()
         history = self.db.execute("""SELECT w.topic,w.environment FROM work w JOIN work_participants p
             ON p.harness=w.harness AND p.session=w.session AND p.work=w.id
@@ -224,7 +247,7 @@ class WorkPool:
             "SELECT work FROM dependencies WHERE harness=? AND session=? AND dependency=?", (*self.identity, work))]
 
     def contributors(self, work: str) -> set[str]:
-        """Exclude actual implementation/execution participants, including previous owners after handoff."""
+        """Exclude Worker and Experimenter participants, including previous owners after handoff."""
         rows = self.db.execute("""WITH RECURSIVE ancestry(id) AS (
             SELECT ? UNION SELECT d.dependency FROM dependencies d JOIN ancestry a ON d.work=a.id
             WHERE d.harness=? AND d.session=?)
@@ -244,26 +267,25 @@ class WorkPool:
     def handoff(self, work: str, agent: str, reason: str, from_agent: str | None = None) -> None:
         """Return work for recovery; a peer names the confirmed stopped owner in a compare-and-set."""
         previous = from_agent or agent
-        cursor = self.db.execute("""UPDATE work SET state='ready',reason=?
-            WHERE harness=? AND session=? AND id=? AND state='active' AND owner=?""", (reason, *self.identity, work, previous))
+        cursor = self.db.execute("""UPDATE work SET state='ready',owner=NULL,previous_owner=?,reason=?
+            WHERE harness=? AND session=? AND id=? AND state='active' AND owner=?""", (previous, reason, *self.identity, work, previous))
         if not cursor.rowcount:
             raise ValueError("The expected active owner no longer owns this work")
 
     def idle_action(self, agent: str) -> dict[str, str]:
-        """Tell research-capable members how to advance when no producer has queued work."""
+        """Give every continuing member a substantive next action when the queue is empty."""
         task = self.active()
-        research = self.db.execute("SELECT 1 FROM capabilities WHERE harness=? AND session=? AND agent=? AND kind='explorer'",
-                                   (*self.identity, agent)).fetchone()
+        role = self.db.execute("SELECT role FROM members WHERE harness=? AND session=? AND agent=?",
+                               (*self.identity, agent)).fetchone()
+        role_name = role[0] if role else "member"
         instruction = (
-            "Continue independent research from the current retained configuration and unresolved task questions. "
-            "Choose the next substantive investigation within the task's scope, record useful findings, "
-            "and submit implementation or experiment work when needed. An empty queue is not a research dependency. "
-            "Release as waiting only for a concrete unavailable prerequisite, or done when your research responsibility is answered."
-            if research else
-            "Await ready work with claim --wait while advancing work you already own. "
-            "Release as waiting when a concrete prerequisite prevents further useful work."
+            f"Continue your {role_name} responsibility from the latest retained configuration and unresolved task questions. "
+            "Claim eligible ready work first; if none is ready, choose the next substantive investigation or validation "
+            "within the task scope, record the evidence, and submit the next implementation or experiment stage when needed. "
+            "An empty queue is not a dependency. Release as waiting only for a concrete unavailable prerequisite, "
+            "or done only when this responsibility is actually answered."
         )
-        return {"action": "research" if research else "wait", "task": task["task"], "instruction": instruction}
+        return {"action": "research", "task": task["task"], "instruction": instruction}
 
     def item(self, work: str) -> dict[str, Any]:
         """Return one changed work item without replaying the task's history."""

@@ -146,7 +146,7 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 | `iterations/<name>/notes/iteration.md` | 指定 Experimenter 维护摘要与文档索引，追加运行结论、独立审查、决策和更正，注明时间、来源及证据链接。 |
 | `iterations/<name>/notes/` 下的其他文件 | 各作者维护完整方案、计划、分析或复核，由迭代笔记链接。 |
 | `iterations/<name>/notes/progress.yaml` | Experimenter 记录所选运行、实测父配置及各适用范围的判断，绘图命令据此生成共同对比。 |
-| `report.md` | 面向用户的简洁总览包含图表、总表和各方案简述，链接生成图及作者分析；完整命令和日志留在实验记录中。 |
+| `report.md` | 面向用户的简洁总览负责任务元数据、状态和链接。由一名指定总览负责人在 `.foretoken-report.lock` 下更新文字；数值比较来自生成的进展摘要。 |
 
 分析、审查和决定分别注明作者，每项决定写清行动和适用范围。更正结论或改变决定时，链接旧条目与新依据，保留认识变化的过程。
 
@@ -158,7 +158,7 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 
 ## 持续维护用户报告
 
-任务开始时，按[报告模板](templates/report-template_zh.md)创建 `report.md`，链接任务和结果目录，并向用户提供路径。恢复时沿用同一份报告。各 Experimenter 维护自己迭代的分析与进展记录，证据变化时更新受影响的表格行和方案简述，并刷新生成图。Experimenter 直接协调共享报告的编辑，不设中央作者收集或转抄全队指标。
+任务开始时，按[报告模板](templates/report-template_zh.md)创建 `report.md`，链接任务和结果目录，并向用户提供路径。恢复时沿用同一份报告。指定一名持续成员作为总览负责人；他只在任务级 `.foretoken-report.lock` 下更新元数据、状态、链接和简短方案说明。总览负责人不负责测量或派发，因此不会成为实验瓶颈。
 
 每个实测阶段结束或判断变化后，更新 `iterations/<name>/notes/progress.yaml`，然后执行：
 
@@ -166,7 +166,7 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 foretoken plot --progress results/decode/parallelism
 ```
 
-命令读取所有迭代所选的既有运行和判断，生成 `figures/progress/progress-summary.md`、对应 CSV 表及原生里程碑图、搜索图。使用这些生成数值更新 `report.md` 中的简洁总表，不把完整运行清单复制进去。各 scope 顶部列出已测采用分支末端及实际运行／配置／源码记录，便于后续选择适用的父配置；祖先历史仍保留。指标、重复次数、波动和已记录的源码／配置证据均来自原件。机制解释、输出差异与独立复核保留在作者的 `iteration.md` 及分析中。
+命令读取所有迭代所选的既有运行和判断，生成 `figures/progress/progress-summary.md`、对应 CSV 表及原生里程碑图、搜索图。生成摘要是数值唯一来源；`report.md` 链接它，不再手工拼接跨 scope 总表。各 scope 顶部列出已测采用分支末端及实际运行／配置／源码记录，便于后续选择适用的父配置；祖先历史仍保留。指标、重复次数、波动和已记录的源码／配置证据均来自原件。机制解释、输出差异与独立复核保留在作者的 `iteration.md` 及分析中。
 
 例如，候选的进展记录可以选择一次完成的命令及其实测父方案：
 
@@ -184,6 +184,6 @@ measurements:
 
 后续实现和探索从相应适用范围内已验证的配置出发，记录候选真正运行的父配置及已有改动。A、B 都从 P 独立测量时，它们是两个分支，采用其中一个不等于证明 A+B。组合配置需要自己的运行与判断。围绕改动边界执行最小必要验证，复用仍适用的证据，不例行重复完整矩阵或成对控制。
 
-每份进展记录由该迭代唯一的 Experimenter 维护，并按[原子发布示例](templates/progress-charts_zh.md#刷新共同视图)完整替换后刷新共同视图。命令沿用图片目录锁，将全量发现、读取和发布串行完成，排队的调用取得锁后重新读取当前记录。生成表保留实测父方案与原始运行／源码引用；里程碑只连接已记录的实测父节点，独立分支保持分开。采用是明确且限定适用范围的判断，不由最高吞吐自动决定。
+每份进展记录由该迭代唯一的 Experimenter 维护，并按[原子发布示例](templates/progress-charts_zh.md#刷新共同视图)完整替换后刷新共同视图。一个进展文件只有一个写者并原子替换；绘图命令沿用图片目录锁，将发现、读取和发布串行完成。若多个进展文件在重绘期间变化，待负责人完成后再运行一次，使摘要对应同一稳定快照。生成表保留实测父方案与原始运行／源码引用；里程碑只连接已记录的实测父节点，独立分支保持分开。采用是明确且限定适用范围的判断，不由最高吞吐自动决定。
 
-交付到文档平台时，发布或链接同一生成摘要，不再维护另一份数值报告。暂停、停止或完成时，在任务总览记录原因与剩余工作，链接各执行者真实的资源退出证据。已有人工图表 YAML 仍可用 `foretoken plot --progress CHART.yaml` 绘制。
+交付到文档平台时，发布或链接同一生成摘要，不再维护另一份数值报告。修改总览时，用报告锁包住读取当前文件、生成完整替换和写回的命令；不能把旧副本直接覆盖新报告。暂停、停止或完成时，在任务总览记录原因与剩余工作，链接各执行者真实的资源退出证据。已有人工图表 YAML 仍可用 `foretoken plot --progress CHART.yaml` 绘制。

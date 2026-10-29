@@ -13,7 +13,7 @@ Each Experimenter records its own runs and scope-specific judgment. The existing
 foretoken plot --progress results/my-experiment
 ```
 
-Results appear in `results/my-experiment/figures/progress/`: `progress-summary.md` is the readable summary, `progress-summary.csv` contains statistics and judgments, and `progress-runs.csv` links the recorded run, configuration, environment and source evidence. The Markdown embeds the matching charts. Link it from the task's report; no separate report writer or manually copied metrics are needed.
+Results appear in `results/my-experiment/figures/progress/`: `progress-summary.md` is the readable summary, `progress-summary.csv` contains statistics and judgments, and `progress-runs.csv` links the recorded run, configuration, environment and source evidence. The Markdown embeds the matching charts. Link it from the task's report; no central writer copies numerical measurements. A designated overview owner still maintains report metadata and short prose under the report lock.
 
 ## Record an approach
 
@@ -84,7 +84,7 @@ write_json("results/my-experiment/iterations/qkv/notes", "progress.yaml", {
 PY
 ```
 
-After atomic replacement, any Experimenter can run the plot command above. Directory mode discovers and reads all owner records inside the existing publication lock, then refreshes the complete view; queued calls reread when they acquire the lock. This lock serializes aggregation and publication, not direct truncating writes by other tools.
+After atomic replacement, any Experimenter can run the plot command above. One Experimenter is the sole writer for each iteration's `progress.yaml`; directory mode discovers and reads all owner records inside the existing publication lock, then refreshes the view. Queued calls reread when they acquire the lock. The lock serializes aggregation and publication, while the single-writer rule prevents direct truncating writes from racing the reader; rerun after multiple owners finish to obtain one settled cross-iteration snapshot.
 
 Default charts show output throughput and mean TPOT. Select other saved metric fields with the existing options:
 

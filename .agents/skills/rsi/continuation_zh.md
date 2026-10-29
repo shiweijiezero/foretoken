@@ -40,7 +40,7 @@ python3 -I .agents/skills/rsi/scripts/continuation.py claim \
 
 有可用容量时再领取。领取以原子操作选择满足条件的就绪工作，复用课题与环境上下文，同时让旧工作先于后续新工作获得机会。未完成依赖和审查排除条件会阻止领取，不把工作预留给忙碌成员。`--wait` 在工具内等待，短暂检查之间释放 SQLite。
 
-没有合适工作时，具备探索职责的成员立即收到 `action: research`，即使设置了 `--wait` 也不等待别人发布问题；应从当前采用配置和任务未解问题继续研究。其他使用者在等候结束后收到 `action: wait`，可以继续自己已经负责的工作。空领取不意味着研究职责结束。
+没有合适工作时，所有持续成员都立即收到 `action: research`，即使设置了 `--wait` 也不等待别人发布问题；应从当前采用配置和任务未解问题继续研究，Worker 和 Experimenter 可以自行发布下一实现或测量阶段。空领取不意味着研究职责结束。
 
 ## 安排成员的下一步
 
@@ -56,7 +56,7 @@ python3 -I .agents/skills/rsi/scripts/continuation.py submit \
 
 工作类型为 `explorer`、`worker`、`experimenter`、`review` 或 `evaluation`。课题与环境只表达可复用的上下文，不指定独占执行者。可重复的 `--after WORK` 引用已存在、需要先完成的工作；领取者会拿到这些产物路径，读取其中的实际发现，包括失败实验。
 
-发布审查时，用 `--after` 连接实现与执行工作。依赖链中实际参与的 Worker、Experimenter，包括交接前的负责人，不能领取该审查。其他真实参与者用 `--exclude ID` 排除。独立性仍应按实际参与情况与任务审查要求判断。
+发布审查时，用 `--after` 连接实现与执行工作。依赖链中实际参与的 Worker、Experimenter，包括交接前的负责人，不能领取该审查。Explorer 可以审查探索祖先；如果它实际实现或运行了候选，则用 `--exclude ID` 排除。独立性仍应按实际参与情况与任务审查要求判断。
 
 完成时运行 `finish --agent "$RSI_AGENT" --work "$RSI_WORK" --result "$RSI_RESULT"`，并传入相同 harness/session。产物必须是已有文件或分析，其中写清实际结果。有用证据到达就发布后续工作，不等整套矩阵；已知的空闲使用者需要恢复时用原生 follow-up。共享工作领取与原生 Agent 派发是两项操作。
 
@@ -76,6 +76,6 @@ python3 -I .agents/skills/rsi/scripts/continuation.py submit \
 
 没有就绪工作能解除真实依赖时，运行 `release --agent "$RSI_AGENT" --state waiting --reason "$RSI_REASON"`，并传入 harness/session。释放成员前先完成或交接所持工作，职责结束时使用 `done`。结果到达后由生产者通过原生 follow-up 恢复已知的等待成员。
 
-成员结束 hook 会让未完成职责的成员继续所持工作或领取就绪工作。普通 root 工具、Stop、SessionEnd 事件不要求主 Agent 决策，也不暂停任务；这不意味着原生 Agent 能脱离运行环境存活。
+成员结束 hook 会让未完成职责的成员继续所持工作或领取就绪工作。Codex 使用 `SubagentStop`，Claude 使用 `TeammateIdle`。Codex 的 `Stop` 和 `PostToolUse` 保留为 root fallback，也会生成到期 Evaluator 派发，因此漏掉某个成员停止事件时，另一个存活事件可以补上。被 guard 的成员停止会写入 root notice，不会静默丢掉 active 工作；下一次 root `PostToolUse` 以非阻塞上下文提示，root `Stop` 只消费一次 notice 并请求一轮检查。`SessionEnd` 只保留持久状态，不生成新工作，因为主线程正在结束。这不意味着原生 Agent 能脱离运行环境存活。
 
 用户要求暂停或任务完成时，用 `release --state paused` 或 `release --state complete`，传入 harness/session 和原因，不传成员 ID。root Interrupt 暂停任务，原始截止时间阻止新领取。各负责人仍需停止自己的服务、构建和采集作业并确认退出。恢复时先检查原作业，启用同一任务，再用原生工具恢复成员。

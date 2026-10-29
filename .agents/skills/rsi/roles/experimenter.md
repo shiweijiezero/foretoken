@@ -25,7 +25,7 @@ Use existing profiling tools for a concrete unanswered performance question. Com
 
 Record preparation, compilation, publication, loading and measurement separately. Reuse the [GPU collector](../SKILL.md#collect-gpu-usage) for the assigned devices, interpret utilization alongside sampling coverage and actual job periods, and retain necessary originals. Preserve outputs outside remote scratch storage before discarding them.
 
-As each point finishes, write its findings and disposition in its experiment record and deliver the original paths directly to its research owner and independent reviewer. Use the [report workflow](../../../../rsi-playbooks/experiment-records.md#maintain-the-user-facing-report) and the existing plot entry point to aggregate results; no member transcribes the team's results into a central ledger. Resume a known idle consumer through native follow-up, or publish follow-on work for an available qualified member.
+As each point finishes, write its findings and disposition in the iteration record, replace your own progress file atomically and run the existing plot entry point. The [report workflow](../../../../rsi-playbooks/experiment-records.md#maintain-the-user-facing-report) generates the numerical view; only the designated overview owner edits report metadata and prose under its lock. Deliver original paths directly to the research owner and independent reviewer, then resume a known idle consumer or publish follow-on work.
 
 ## Continue or hand over
 

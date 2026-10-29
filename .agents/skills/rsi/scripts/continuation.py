@@ -71,12 +71,23 @@ class Continuation:
                 state TEXT NOT NULL,
                 next_step TEXT,
                 reason TEXT,
+                notice TEXT,
                 PRIMARY KEY (harness, session, agent),
                 FOREIGN KEY (harness, session) REFERENCES sessions(harness, session)
             );
         """)
         if "started" not in {row[1] for row in self.db.execute("PRAGMA table_info(sessions)")}:
-            self.db.execute("ALTER TABLE sessions ADD COLUMN started REAL")
+            try:
+                self.db.execute("ALTER TABLE sessions ADD COLUMN started REAL")
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+        if "notice" not in {row[1] for row in self.db.execute("PRAGMA table_info(members)")}:
+            try:
+                self.db.execute("ALTER TABLE members ADD COLUMN notice TEXT")
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
 
     def session(self, harness: str, session: str) -> sqlite3.Row:
         """Require the exact activated harness/session binding for an agent command."""
@@ -139,8 +150,13 @@ class Continuation:
         )]
         pool.register(args.agent, args.role, accepts)
         prefix = f"next:{args.agent}:"
+        active = self.db.execute("""SELECT id,description FROM work WHERE harness=? AND session=? AND creator=?
+            AND substr(id,1,?)=? AND state='active' ORDER BY created,id""",
+            (args.harness, args.session, args.agent, len(prefix), prefix)).fetchall()
+        if active and active[0]["description"] == args.next_step:
+            return active[0]["id"]
         pending = self.db.execute("""SELECT id FROM work WHERE harness=? AND session=? AND creator=?
-            AND substr(id,1,?)=? AND state='ready' AND owner IS NULL ORDER BY created,id""",
+            AND substr(id,1,?)=? AND state='ready' AND owner IS NULL AND previous_owner IS NULL ORDER BY created,id""",
             (args.harness, args.session, args.agent, len(prefix), prefix)).fetchall()
         if pending:
             work = pending[0]["id"]
@@ -176,7 +192,7 @@ class Continuation:
             if active:
                 raise ValueError("Finish or hand off owned work before releasing the member: " + ", ".join(row[0] for row in active))
             result = self.db.execute(
-                """UPDATE members SET state=?,next_step=NULL,reason=?
+                """UPDATE members SET state=?,next_step=NULL,reason=?,notice=NULL
                    WHERE harness=? AND session=? AND agent=?""",
                 (args.state, args.reason, args.harness, args.session, args.agent),
             )
@@ -190,23 +206,22 @@ class Continuation:
                 (args.state, args.reason, args.harness, args.session),
             )
             self.db.execute(
-                "UPDATE members SET next_step=NULL WHERE harness=? AND session=?",
+                "UPDATE members SET next_step=NULL,notice=NULL WHERE harness=? AND session=?",
                 (args.harness, args.session),
             )
 
     def status(self, harness: str, session: str) -> dict[str, Any]:
         """Return this task's recorded continuation decisions and queued steps."""
         task = dict(self.session(harness, session))
-        task.pop("review_pending", None)
         task["members"] = [dict(row) for row in self.db.execute(
-            "SELECT agent,role,state,next_step,reason FROM members WHERE harness=? AND session=? ORDER BY role,agent",
+            "SELECT agent,role,state,next_step,reason,notice FROM members WHERE harness=? AND session=? ORDER BY role,agent",
             (harness, session),
         )]
         task["work"] = WorkPool(self.db, harness, session).status()
         return task
 
     def hook(self, harness: str, event: dict[str, Any]) -> dict[str, Any]:
-        """Return an unfinished member to its own work; ordinary root events require no decisions."""
+        """Materialize due checks on every live hook and continue only the affected member."""
         session = event.get("session_id")
         task = self.db.execute(
             "SELECT * FROM sessions WHERE harness=? AND session=?", (harness, session)
@@ -221,9 +236,62 @@ class Continuation:
         if kind == "Interrupt" and not event.get("agent_id"):
             self.db.execute("UPDATE sessions SET state='paused',reason='Interrupt',review_pending=0 WHERE harness=? AND session=?", identity)
             return {}
-        if kind not in {"SubagentStop", "TeammateIdle"} or event.get("stop_hook_active"):
-            return {}
+        pool = WorkPool(self.db, harness, session)
         agent = event.get("agent_id") or event.get("teammate_name")
+        if event.get("agent_id") and event.get("teammate_name"):
+            known = self.db.execute(
+                "SELECT 1 FROM members WHERE harness=? AND session=? AND agent=?",
+                (*identity, event["agent_id"]),
+            ).fetchone()
+            if known is None:
+                agent = event["teammate_name"]
+        if kind in {"SubagentStop", "TeammateIdle", "Stop", "PostToolUse"}:
+            # Stop and root lifecycle events are fallbacks for harnesses that do
+            # not emit a member-idle event. The transaction makes this idempotent
+            # when several members finish around the same due time.
+            pool.due_evaluations(task)
+        if event.get("stop_hook_active"):
+            if agent and kind in {"SubagentStop", "TeammateIdle", "Stop"}:
+                member = self.db.execute(
+                    "SELECT * FROM members WHERE harness=? AND session=? AND agent=?", (*identity, agent)
+                ).fetchone()
+                if member is not None and member["state"] == "working":
+                    owned = self.db.execute(
+                        "SELECT id FROM work WHERE harness=? AND session=? AND owner=? AND state='active'",
+                        (*identity, agent),
+                    ).fetchall()
+                    detail = ", ".join(row[0] for row in owned) or "no currently owned item"
+                    self.db.execute(
+                        "UPDATE members SET notice=? WHERE harness=? AND session=? AND agent=?",
+                        (f"hook guard: {kind} did not continue; inspect {detail}", *identity, agent),
+                    )
+                    self.db.execute(
+                        "UPDATE sessions SET review_pending=1 WHERE harness=? AND session=?", identity
+                    )
+            return {}
+        pending = self.db.execute(
+                "SELECT agent,notice FROM members WHERE harness=? AND session=? AND notice LIKE 'hook guard:%'",
+            identity,
+        ).fetchall()
+        if not agent and pending and kind in {"PostToolUse", "Stop"}:
+            details = "; ".join(f"{row['agent']}: {row['notice']}" for row in pending)
+            message = (
+                f"RSI continuation fallback observed guarded member stops: {details}. "
+                "Inspect the owned work and resume or hand it off through the shared pool. "
+                "A due Evaluator dispatch, if any, was materialized in the same transaction."
+            )
+            self.db.execute("UPDATE sessions SET review_pending=0 WHERE harness=? AND session=?", identity)
+            self.db.execute(
+                "UPDATE members SET notice=NULL WHERE harness=? AND session=? AND notice LIKE 'hook guard:%'",
+                identity,
+            )
+            if kind == "PostToolUse":
+                return {"hookSpecificOutput": {"hookEventName": kind, "additionalContext": message}}
+            return {"decision": "block", "reason": message}
+        if kind in {"PostToolUse", "SessionEnd"} or (kind == "Stop" and not agent):
+            return {}
+        if kind not in {"SubagentStop", "TeammateIdle", "Stop"} or not agent:
+            return {}
         member = self.db.execute("SELECT * FROM members WHERE harness=? AND session=? AND agent=?", (*identity, agent)).fetchone()
         if member is None or member["state"] in {"waiting", "done"}:
             return {}
@@ -235,10 +303,6 @@ class Continuation:
                 "Inspect existing jobs before launching anything again."
             )
         else:
-            pool = WorkPool(self.db, harness, session)
-            # A live member is enough to materialize a due evaluator dispatch;
-            # no root turn or second reminder scheduler is required.
-            pool.due_evaluations(task)
             action = pool.idle_action(agent)
             instruction = "Claim eligible ready work first. If none is ready: " + action["instruction"]
         return {"decision": "block", "reason": (
@@ -329,6 +393,11 @@ def main() -> None:
             connection.execute("PRAGMA foreign_keys=ON")
             state = Continuation(connection)
             if event is not None:
+                # Hooks run against databases created by an earlier script
+                # revision; apply the same additive schema migration before
+                # reading due work or writing a guard notice.
+                state.create()
+                WorkPool.create(connection)
                 tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 if "sessions" not in tables:
                     print("{}")
@@ -341,6 +410,7 @@ def main() -> None:
             else:
                 state.create()
                 WorkPool.create(connection)
+            connection.commit()
             wait_until = time.monotonic() + (args.wait if args.command == "claim" else 0)
             while True:
                 connection.execute("BEGIN IMMEDIATE")
