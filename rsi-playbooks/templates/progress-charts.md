@@ -7,11 +7,92 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](progress-charts_zh.md)
 
-The milestone chart follows measured cumulative versions. The search chart shows the compared approaches, the best result so far and failed attempts. Place both matching charts immediately above each overview table in the [experiment report](../experiment-records.md#maintain-the-user-facing-report).
+Each Experimenter records its own runs and scope-specific judgment. The existing plot command reads these records to produce the shared report tables and native milestone/search charts:
 
-The horizontal axis follows iteration order or elapsed time; the vertical axis shows the improvement ratio relative to the original baseline. Prefix chart data and image filenames with `progress-`, for example `progress-random-concurrency-1.yaml`.
+```bash
+foretoken plot --progress results/my-experiment
+```
 
-## Create the charts
+Results appear in `results/my-experiment/figures/progress/`: `progress-summary.md` is the readable summary, `progress-summary.csv` contains statistics and judgments, and `progress-runs.csv` links the recorded run, configuration, environment and source evidence. The Markdown embeds the matching charts. Link it from the task's report; no separate report writer or manually copied metrics are needed.
+
+## Record an approach
+
+Keep `progress.yaml` beside each approach's `notes/iteration.md`. Start the initial configuration record with:
+
+```yaml
+label: Initial configuration
+baseline: true
+measurements:
+  random-concurrency-1:
+    runs: [../runs/perf-000001]
+    status: valid
+```
+
+A later candidate records its actual measured parent and judgment:
+
+```yaml
+label: + QKV views
+measurements:
+  random-concurrency-1:
+    runs: [../runs/perf-000001]
+    parent: ../../baseline/runs/perf-000001
+    status: valid
+    retained: true
+```
+
+Paths are relative to the record. A run can name a command directory or a specific saved result directory. List additional comparable repetitions in `runs`; the existing result reader calculates their means, counts and standard deviations. Do not enter numeric measurements in this file. Link the explanation and independent review from `iteration.md`.
+
+| Field | Meaning |
+| --- | --- |
+| `label` | The full measured configuration or change from its named parent. |
+| `baseline` | Mark only the user's initial configuration, once per scope. Defaults to false. |
+| `measurements` | A mapping from comparison scope to selected runs and judgment. |
+| `runs` | Existing command/result directories for one approach and workload. |
+| `status` | `valid`, `reference`, `incorrect`, `compile_failed` or `runtime_failed`. |
+| `retained` | Whether this measured version is adopted for this scope. Defaults to false; requires `valid`. |
+| `parent` | The actual measured parent command/result directory. Required for a retained candidate; not required for the original baseline. |
+
+A scope such as `random-concurrency-1` identifies the workload and comparison condition. Separate incompatible protocols, cache conditions or hardware comparisons rather than pooling them as repetitions. The command checks known workload fields across a scope and its measured parents, requiring separate scopes for conflicting workloads. Hardware differences remain in the original environment evidence and do not by themselves reject a historical reference. Original-baseline percentages describe the recorded change; the table also retains the explicitly measured local parent and its delta. If that scope has no original baseline, values remain absolute and charts show that the baseline is unmeasured.
+
+Use `reference` when measured speed is available but an applicable output or quality question is unresolved. References appear in the search view without entering the best-so-far curve or retained milestones. Failed judgments remain visible even when they have no metrics. Retention is recorded by the responsible owner from the applicable evidence; the command does not adopt the fastest point.
+
+Each scope starts with “Measured retained branch tips”, linking the measured adopted endpoints to their actual runs, configuration and available source records. Use these branches to select an applicable parent for further work. An ancestor remains in the history but leaves the endpoint list when another retained version inherits it through recorded parent runs. Independent branches stay separate; the view neither ranks them by throughput nor declares a unique optimum.
+
+The generated retained-version chart follows actual parent-run references. A and B measured independently from P remain separate branches; they do not establish A+B. If a measured parent is outside the plotted records, the retained point remains unconnected. The run table preserves known source/configuration references and missing evidence; a captured client checkout alone does not identify deployed code.
+
+## Refresh the shared view
+
+Each iteration has one Experimenter producing its `progress.yaml`; other authors keep analyses in their own files, and different iterations use separate records. Publish the complete record with the existing atomic writer so another owner's plot command cannot read a truncated file. JSON is valid YAML and works directly in the `.yaml` file. Run this after measurement has created the iteration's `notes/` directory, replacing the path with your actual iteration:
+
+```bash
+python - <<'PY'
+from benchmarks.results.recording.files import write_json
+
+write_json("results/my-experiment/iterations/qkv/notes", "progress.yaml", {
+    "label": "+ QKV views",
+    "measurements": {
+        "random-concurrency-1": {
+            "runs": ["../runs/perf-000001"],
+            "parent": "../../baseline/runs/perf-000001",
+            "status": "valid",
+            "retained": True,
+        },
+    },
+})
+PY
+```
+
+After atomic replacement, any Experimenter can run the plot command above. Directory mode discovers and reads all owner records inside the existing publication lock, then refreshes the complete view; queued calls reread when they acquire the lock. This lock serializes aggregation and publication, not direct truncating writes by other tools.
+
+Default charts show output throughput and mean TPOT. Select other saved metric fields with the existing options:
+
+```bash
+foretoken plot --progress results/my-experiment --metric ttft --stat p95
+```
+
+Metrics ending in `_seconds` use lower-is-better ratios; other selected metrics use higher-is-better ratios. Use an explicit chart YAML for a different objective. Custom metric selections refresh that view; use the same selection for owners sharing an output directory, or choose distinct `--output-dir` destinations. The original initial configuration remains the reference across resumptions. Continue new work from the applicable validated version and record the parent that actually ran.
+
+## Existing chart YAML
 
 Use the installed Foretoken CLI. Chinese labels need an installed Chinese font, such as Noto Sans CJK SC. From the repository root:
 
@@ -28,7 +109,7 @@ foretoken plot --progress results/my-experiment/figures/progress*.yaml
 
 The command exports milestone and search charts as PNG, SVG and PDF, with names such as `progress-main-milestones.png` and `progress-main-search.png`. An unmeasured baseline produces pending-measurement charts. Use the [report template](report-template.md) to place the corresponding PNGs directly above their tables.
 
-Use a separate file for each metric and comparison condition, such as `progress-concurrency-1-throughput.yaml` and `progress-concurrency-16-latency.yaml`. Export all of the report's conditions together: each invocation replaces the previous chart files in its output directory. Inputs in one directory default to that directory; inputs from different directories default to `./plots`. Use `--output-dir` to choose another destination. Each output name uses its input's filename stem. For a style preview, copy the [synthetic example](progress-example.yaml) to a temporary directory and render that copy.
+Use a separate file for each metric and comparison condition, such as `progress-concurrency-1-throughput.yaml` and `progress-concurrency-16-latency.yaml`. Each refresh replaces only the selected YAML stems; other conditions in the output directory remain available. Inputs in one directory default to that directory; inputs from different directories default to `./plots`. Use `--output-dir` to choose another destination. Each output name uses its input's filename stem. For a style preview, copy the [synthetic example](progress-example.yaml) to a temporary directory and render that copy.
 
 ## Record the results
 

@@ -24,6 +24,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from benchmarks.results.plots.rendering import FigureWriter
 
 
+_VIEWS = ("milestones", "search")
+
+
 _FAILURES = {
     "incorrect": ("Incorrect result", "#e8a33e", "o"),
     "compile_failed": ("Compile failure", "#e45c69", "x"),
@@ -69,6 +72,7 @@ class _Point(_ProgressRecord):
     source: str = Field(min_length=1)
     label: str = ""
     checkpoint: bool = False
+    parent_x: float | None = Field(default=None, ge=0)
     label_offset: list[float] | None = Field(default=None, min_length=2, max_length=2)
 
     @model_validator(mode="after")
@@ -306,7 +310,8 @@ def _plot_search(
         if "points" in reference:
             rx = [point["x"] for point in reference["points"]]
             ry = [_gain(point["value"], data) for point in reference["points"]]
-            axis.plot(rx, ry, color=reference_color, lw=1.1, url=reference["source"])
+            axis.plot(rx, ry, color=reference_color, lw=1.1,
+                      marker="o" if len(rx) == 1 else None, ms=3.5, url=reference["source"])
             end_x, end_y = rx[-1], ry[-1]
             ratios.extend(ry)
         else:
@@ -341,7 +346,7 @@ def render_progress(data: dict[str, Any], path: Path, writer: FigureWriter) -> N
     valid = [point for point in data["points"] if point["status"] == "valid"]
     reference_points = [point for reference in data.get("references", []) for point in reference.get("points", [])]
     with rc_context(style):
-        for view in ("milestones", "search"):
+        for view in _VIEWS:
             search = view == "search"
             history = [*data["points"], *(reference_points if search else [])]
             last_x = max((point["x"] for point in history), default=0)
@@ -401,8 +406,20 @@ def render_progress(data: dict[str, Any], path: Path, writer: FigureWriter) -> N
                                    *(point for point in valid if point.get("checkpoint", False))]
                     xs = [point["x"] for point in checkpoints]
                     ratios = [_gain(point["value"], data) for point in checkpoints]
-                    axis.plot(xs, ratios, color=color, lw=1.6, marker="o", ms=3.5, zorder=3)
-                    axis.fill_between(xs, 1, ratios, color=color, alpha=0.07)
+                    if any("parent_x" in point for point in checkpoints):
+                        # Adopted siblings remain distinct measured versions. Draw only
+                        # recorded parent edges, including parents that were not retained.
+                        coordinates = {point["x"]: _gain(point["value"], data) for point in [baseline_point, *valid]}
+                        axis.scatter(xs, ratios, color=color, s=13, zorder=3)
+                        for point in checkpoints[1:]:
+                            parent = point.get("parent_x")
+                            if parent in coordinates:
+                                ratios.append(coordinates[parent])
+                                axis.plot([parent, point["x"]], [coordinates[parent], _gain(point["value"], data)],
+                                          color=color, lw=1.6, zorder=2)
+                    else:
+                        axis.plot(xs, ratios, color=color, lw=1.6, marker="o", ms=3.5, zorder=3)
+                        axis.fill_between(xs, 1, ratios, color=color, alpha=0.07)
                     ticks = xs[::max(1, math.ceil(len(xs) / 14))]
                     axis.set_xticks(sorted(set([*ticks, xs[-1]])))
                     annotations = checkpoints

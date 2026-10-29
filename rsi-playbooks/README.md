@@ -34,7 +34,7 @@ Confirm the following settings. Leave choices to the agents where you do not nee
 
 The commands below use the NVIDIA task. Replace the path to use your own task file.
 
-The checkout includes project hooks for [RSI continuation](../.agents/skills/rsi/continuation.md). They require Python 3.11+ and affect only RSI sessions activated by the lead.
+The checkout includes project hooks for [RSI continuation](../.agents/skills/rsi/continuation.md). They require Python 3.11+ and affect only explicitly activated RSI tasks.
 
 #### Claude Code
 
@@ -73,7 +73,7 @@ Choose enough slots for concurrent Explorers, Workers and Experimenters plus an 
 
 ## Follow progress
 
-The running `report.md` summarizes comparisons, performance and quality results, retained approaches and open validation questions. Follow its links for raw data and detailed analysis. See the [experiment records guide](experiment-records.md) for record formats.
+Each Experimenter records its own results and dispositions; the existing plot entry point aggregates comparisons and progress. The report links measured gains, retained approaches and open validation questions to their originals. See the [experiment records guide](experiment-records.md) for record formats.
 
 To adjust objectives, budgets or the allowed scope, state the change in the conversation. The lead updates the task record and affected work arrangements.
 
@@ -85,11 +85,11 @@ The task file expresses user requirements. The RSI skill and role instructions o
 
 | Role | Main responsibility |
 | --- | --- |
-| Lead | Choose research directions, allocate resources, make decisions and organize delivery. |
+| Root agent | Establish the task, observe records, direct corrections to owners and briefly update the user while members work independently. |
 | Explorer | Search local or online sources, study mechanisms, and propose methods and questions. |
-| Worker | Implement approaches, analyze results and improve the code or configuration. |
-| Experimenter | Prepare environments, deploy and run experiments, save results and release resources. |
-| Evaluator | Independently assess progress, research depth and resource use each round, and alert the lead to findings and decisions needing attention. |
+| Worker | Own implementation, interpret results and continue or retain approaches within the task authority. |
+| Experimenter | Claim ready experiments, reuse environments, save original results and release resources. |
+| Evaluator | Independently inspect changes and open issues, delivering actionable findings directly to their owners. |
 
 ## Execution rules and references
 

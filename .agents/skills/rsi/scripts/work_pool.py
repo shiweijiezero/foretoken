@@ -1,0 +1,224 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+"""Share substantive RSI work between native members without a dispatching agent."""
+
+from __future__ import annotations
+
+import sqlite3
+import time
+from pathlib import Path
+from typing import Any
+
+KINDS = ("explorer", "worker", "experimenter", "review", "evaluation")
+CAPABILITIES = {
+    "explorer": ("explorer", "review", "evaluation"),
+    "worker": ("worker", "review", "evaluation"),
+    "experimenter": ("experimenter", "review", "evaluation"),
+}
+
+
+class WorkPool:
+    """Own task-local readiness and atomic claims; experiment artifacts stay with their producers."""
+
+    def __init__(self, db: sqlite3.Connection, harness: str, session: str):
+        self.db, self.identity = db, (harness, session)
+
+    @staticmethod
+    def create(db: sqlite3.Connection) -> None:
+        """Add scheduling records alongside existing RSI task bindings."""
+        db.executescript("""
+            CREATE TABLE IF NOT EXISTS capabilities (
+                harness TEXT, session TEXT, agent TEXT, kind TEXT,
+                PRIMARY KEY(harness,session,agent,kind)
+            );
+            CREATE TABLE IF NOT EXISTS work (
+                harness TEXT, session TEXT, id TEXT, kind TEXT NOT NULL,
+                description TEXT NOT NULL, creator TEXT NOT NULL,
+                topic TEXT NOT NULL, environment TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'ready', owner TEXT,
+                result TEXT, reason TEXT, created REAL NOT NULL,
+                PRIMARY KEY(harness,session,id),
+                FOREIGN KEY(harness,session) REFERENCES sessions(harness,session)
+            );
+            CREATE TABLE IF NOT EXISTS work_participants (
+                harness TEXT, session TEXT, work TEXT, agent TEXT,
+                PRIMARY KEY(harness,session,work,agent),
+                FOREIGN KEY(harness,session,work) REFERENCES work(harness,session,id)
+            );
+            CREATE TABLE IF NOT EXISTS dependencies (
+                harness TEXT, session TEXT, work TEXT, dependency TEXT,
+                PRIMARY KEY(harness,session,work,dependency),
+                FOREIGN KEY(harness,session,work) REFERENCES work(harness,session,id),
+                FOREIGN KEY(harness,session,dependency) REFERENCES work(harness,session,id)
+            );
+            CREATE TABLE IF NOT EXISTS exclusions (
+                harness TEXT, session TEXT, work TEXT, agent TEXT,
+                PRIMARY KEY(harness,session,work,agent),
+                FOREIGN KEY(harness,session,work) REFERENCES work(harness,session,id)
+            );
+            CREATE TABLE IF NOT EXISTS evaluation_schedule (
+                harness TEXT, session TEXT, interval REAL NOT NULL,
+                count INTEGER NOT NULL, next_due REAL NOT NULL,
+                PRIMARY KEY(harness,session)
+            );
+        """)
+
+    def active(self) -> sqlite3.Row:
+        """Require an active task before admitting work or a claim."""
+        task = self.db.execute("SELECT * FROM sessions WHERE harness=? AND session=?", self.identity).fetchone()
+        if task is None:
+            raise ValueError("This RSI session has not been activated")
+        if task["state"] != "active":
+            raise ValueError(f"RSI task is {task['state']}")
+        if task["deadline"] is not None and task["deadline"] <= time.time():
+            raise ValueError("The task deadline has passed")
+        return task
+
+    def register(self, agent: str, role: str, accepts: list[str]) -> None:
+        """Advertise this member's permitted work kinds without reserving pending work."""
+        self.active()
+        self.db.execute("""INSERT INTO members(harness,session,agent,role,state)
+            VALUES (?,?,?,?,'working') ON CONFLICT(harness,session,agent)
+            DO UPDATE SET role=excluded.role,state='working',reason=NULL""", (*self.identity, agent, role))
+        self.db.execute("DELETE FROM capabilities WHERE harness=? AND session=? AND agent=?", (*self.identity, agent))
+        self.db.executemany("INSERT INTO capabilities VALUES (?,?,?,?)", [
+            (*self.identity, agent, kind) for kind in dict.fromkeys((*CAPABILITIES[role], *accepts))
+        ])
+
+    def submit(self, work: str, kind: str, description: str, agent: str, *, topic: str = "",
+               environment: str = "", after: list[str] = (), exclude: list[str] = ()) -> None:
+        """Publish one question or executable stage, referencing its existing evidence in the description."""
+        self.active()
+        if work in after:
+            raise ValueError("Work cannot depend on itself")
+        self.db.execute("""INSERT INTO work(harness,session,id,kind,description,creator,topic,environment,created)
+            VALUES (?,?,?,?,?,?,?,?,?)""", (*self.identity, work, kind, description, agent, topic, environment, time.time()))
+        self.db.executemany("INSERT INTO dependencies VALUES (?,?,?,?)", [(*self.identity, work, dep) for dep in after])
+        self.db.executemany("INSERT INTO exclusions VALUES (?,?,?,?)", [(*self.identity, work, who) for who in set(exclude)])
+
+    def schedule(self, interval: float, count: int) -> None:
+        """Keep a task's original evaluation anchor when enabling or resuming periodic checks."""
+        task = self.active()
+        if interval <= 0 or count < 0:
+            raise ValueError("Evaluation interval must be positive and count must be nonnegative")
+        if task["started"] is None:
+            raise ValueError("Original task start is unknown; activate with --started-at before scheduling")
+        if count == 0:
+            self.db.execute("UPDATE work SET state='cancelled',reason='Evaluator count is zero' WHERE harness=? AND session=? AND kind='evaluation' AND state='ready'", self.identity)
+        self.db.execute("""INSERT INTO evaluation_schedule VALUES (?,?,?,?,?)
+            ON CONFLICT(harness,session) DO UPDATE SET interval=excluded.interval,count=excluded.count""",
+            (*self.identity, interval, count, task["started"] + interval))
+
+    def due_evaluations(self, task: sqlite3.Row) -> None:
+        """Make one due evaluation batch claimable, without accumulating missed rounds."""
+        schedule = self.db.execute("SELECT * FROM evaluation_schedule WHERE harness=? AND session=?", self.identity).fetchone()
+        if schedule is None or not schedule["count"] or schedule["next_due"] > time.time():
+            return
+        pending = self.db.execute("SELECT 1 FROM work WHERE harness=? AND session=? AND kind='evaluation' AND state IN ('ready','active') LIMIT 1", self.identity).fetchone()
+        if pending:
+            return
+        due = schedule["next_due"]
+        for index in range(schedule["count"]):
+            self.submit(f"evaluation:{due}:{index}", "evaluation", (
+                f"Create one fresh Evaluator without inherited history for {task['task']}. "
+                "Give only the task, Evaluator role and working directory. Deliver findings directly to their owners; "
+                "finish this item with the completed assessment's path, not the child's dispatch notice."
+            ), "evaluation_schedule")
+        elapsed = int((time.time() - due) // schedule["interval"]) + 1
+        self.db.execute("UPDATE evaluation_schedule SET next_due=? WHERE harness=? AND session=?",
+                        (due + elapsed * schedule["interval"], *self.identity))
+
+    def claim(self, agent: str) -> dict[str, Any] | None:
+        """Claim ready work atomically, preferring familiar topics and environments over FIFO peers."""
+        task = self.active()
+        self.due_evaluations(task)
+        capable = {row[0] for row in self.db.execute("SELECT kind FROM capabilities WHERE harness=? AND session=? AND agent=?", (*self.identity, agent))}
+        if not capable:
+            raise ValueError("Register this member before claiming work")
+        rows = self.db.execute("""SELECT w.* FROM work w WHERE w.harness=? AND w.session=? AND w.state='ready'
+            AND NOT EXISTS (SELECT 1 FROM dependencies d JOIN work p
+                ON p.harness=d.harness AND p.session=d.session AND p.id=d.dependency
+                WHERE d.harness=w.harness AND d.session=w.session AND d.work=w.id AND p.state!='done')
+            AND NOT EXISTS (SELECT 1 FROM exclusions e WHERE e.harness=w.harness AND e.session=w.session AND e.work=w.id AND e.agent=?)
+            ORDER BY created,id""", (*self.identity, agent)).fetchall()
+        history = self.db.execute("""SELECT w.topic,w.environment FROM work w JOIN work_participants p
+            ON p.harness=w.harness AND p.session=w.session AND p.work=w.id
+            WHERE w.harness=? AND w.session=? AND p.agent=? AND w.state IN ('active','done')""", (*self.identity, agent)).fetchall()
+        topics = {r[0] for r in history if r[0]}
+        environments = {r[1] for r in history if r[1]}
+        eligible = []
+        for row in rows:
+            if row["kind"] not in capable:
+                continue
+            if row["kind"] == "review" and agent in self.contributors(row["id"]):
+                continue
+            eligible.append(row)
+        if not eligible:
+            return None
+        frontier = self.db.execute("""SELECT MAX(w.created) FROM work w JOIN work_participants p
+            ON p.harness=w.harness AND p.session=w.session AND p.work=w.id
+            WHERE w.harness=? AND w.session=? AND p.agent=?""", (*self.identity, agent)).fetchone()[0]
+        # Once familiar work overtakes older ready work, drain that finite older
+        # cohort before considering newer arrivals. Affinity cannot starve cold work.
+        older = [row for row in eligible if frontier is not None and row["created"] < frontier]
+        row = min(older or eligible, key=lambda r: (r["topic"] not in topics, r["environment"] not in environments, r["created"], r["id"]))
+        self.db.execute("UPDATE work SET state='active',owner=? WHERE harness=? AND session=? AND id=? AND state='ready'", (agent, *self.identity, row["id"]))
+        self.db.execute("INSERT OR IGNORE INTO work_participants VALUES (?,?,?,?)", (*self.identity, row["id"], agent))
+        self.db.execute("UPDATE members SET state='working' WHERE harness=? AND session=? AND agent=?", (*self.identity, agent))
+        result = dict(row)
+        result.update(state="active", owner=agent)
+        result["dependencies"] = [dict(r) for r in self.db.execute("""SELECT p.id,p.result FROM dependencies d JOIN work p
+            ON p.harness=d.harness AND p.session=d.session AND p.id=d.dependency
+            WHERE d.harness=? AND d.session=? AND d.work=?""", (*self.identity, row["id"]))]
+        return result
+
+    def contributors(self, work: str) -> set[str]:
+        """Exclude actual implementation/execution participants, including previous owners after handoff."""
+        rows = self.db.execute("""WITH RECURSIVE ancestry(id) AS (
+            SELECT ? UNION SELECT d.dependency FROM dependencies d JOIN ancestry a ON d.work=a.id
+            WHERE d.harness=? AND d.session=?)
+            SELECT p.agent FROM work_participants p JOIN ancestry a ON p.work=a.id
+            JOIN work w ON w.harness=p.harness AND w.session=p.session AND w.id=p.work
+            WHERE p.harness=? AND p.session=? AND w.kind IN ('worker','experimenter')""", (work, *self.identity, *self.identity))
+        return {row[0] for row in rows}
+
+    def finish(self, work: str, agent: str, result: Path) -> None:
+        """Complete owned work with an original artifact or analysis; success is judged in that artifact."""
+        path = result.resolve(strict=True)
+        cursor = self.db.execute("""UPDATE work SET state='done',result=?,reason=NULL
+            WHERE harness=? AND session=? AND id=? AND state='active' AND owner=?""", (str(path), *self.identity, work, agent))
+        if not cursor.rowcount:
+            raise ValueError("Only the active owner can finish this work")
+
+    def handoff(self, work: str, agent: str, reason: str, from_agent: str | None = None) -> None:
+        """Return work for recovery; a peer names the confirmed stopped owner in a compare-and-set."""
+        previous = from_agent or agent
+        cursor = self.db.execute("""UPDATE work SET state='ready',reason=?
+            WHERE harness=? AND session=? AND id=? AND state='active' AND owner=?""", (reason, *self.identity, work, previous))
+        if not cursor.rowcount:
+            raise ValueError("The expected active owner no longer owns this work")
+
+    def idle_action(self, agent: str) -> dict[str, str]:
+        """Tell research-capable members how to advance when no producer has queued work."""
+        task = self.active()
+        research = self.db.execute("SELECT 1 FROM capabilities WHERE harness=? AND session=? AND agent=? AND kind='explorer'",
+                                   (*self.identity, agent)).fetchone()
+        instruction = (
+            "Continue independent research from the current retained configuration and unresolved task questions. "
+            "Choose the next substantive investigation within the task's scope, record useful findings, "
+            "and submit implementation or experiment work when needed. An empty queue is not a research dependency. "
+            "Release as waiting only for a concrete unavailable prerequisite, or done when your research responsibility is answered."
+            if research else
+            "Await ready work with claim --wait while advancing work you already own. "
+            "Release as waiting when a concrete prerequisite prevents further useful work."
+        )
+        return {"action": "research" if research else "wait", "task": task["task"], "instruction": instruction}
+
+    def item(self, work: str) -> dict[str, Any]:
+        """Return one changed work item without replaying the task's history."""
+        return dict(self.db.execute("SELECT * FROM work WHERE harness=? AND session=? AND id=?", (*self.identity, work)).fetchone())
+
+    def status(self) -> list[dict[str, Any]]:
+        """Expose work ownership and results without inferring native member activity."""
+        return [dict(row) for row in self.db.execute("SELECT * FROM work WHERE harness=? AND session=? ORDER BY created,id", self.identity)]

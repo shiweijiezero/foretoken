@@ -31,13 +31,13 @@ Expected outcome / completion criteria: keep increasing throughput and reducing 
   Explain the evidence for stopping. Distinguish approaches tested without benefit, implementations that could not run, and ideas not yet implemented or tested.
 Deliverables (<iteration> is the approach name passed to --iteration):
   - Iteration notes: record motivation, code and configuration changes, complete commands, results and next steps in results/qwen3.5-35b-a3b-nvidia/iterations/<iteration>/notes/iteration.md.
-  - Performance comparisons: in the notes, list output throughput (tokens/s) and mean TPOT (ms/token) at concurrency 1 and 16 for each workload. Compare results with the initial approach and previous iteration, explaining percentage changes and their causes.
+  - Performance comparisons: in the notes, list output throughput (tokens/s) and mean TPOT (ms/token) at concurrency 1 and 16 for each workload. Compare results with the original baseline and actual measured parent, explaining percentage changes and their causes.
   - Evidence: command artifacts are saved under runs/ in the same iteration directory; link raw results, plots and W&B from the notes.
   - Execution efficiency: report the time-weighted mean number of active subagents and each node's mean GPU utilization over the full task. State the interval, resource scope, sampling coverage and reasons for low utilization, with raw records.
   - User-facing report: continuously update rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia/<experiment>/report.md with per-workload comparisons, changes from baseline, the retained approach and its code/configuration, conclusions and execution efficiency. Link iteration notes and W&B; place key plots in figures/ beside the report and use relative links.
 ```
 
-Follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and resource scheduling. Keep evidence using the [experiment records guide](../experiment-records.md), and organize the report with the [report template](../templates/report-template.md).
+Follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and resource scheduling. New work starts from the latest applicable validated retained configuration. Record the actual parent and delta, and measure useful branches after integration with the latest retained combination. Keep evidence using the [experiment records guide](../experiment-records.md), and organize the report with the [report template](../templates/report-template.md).
 
 ## Starting deployment
 

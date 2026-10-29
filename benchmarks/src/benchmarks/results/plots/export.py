@@ -22,7 +22,7 @@ from benchmarks.results.plots.comparison import compare_to_base
 from benchmarks.results.plots.data import Chart, _method, sweep_charts
 from benchmarks.results.plots.economics import PRICED_TOKEN_METRICS, Pricing, load_pricing, render_economics
 from benchmarks.results.plots.metrics import derived_plot_metrics
-from benchmarks.results.plots.rendering import FigureWriter, _charts
+from benchmarks.results.plots.rendering import FigureWriter, _charts, _FORMATS
 from benchmarks.results.plots.saved_results import SavedResults, read_saved_results
 from benchmarks.results.plots.tradeoffs import render_tradeoffs
 from benchmarks.results.recording.database import read_records
@@ -62,19 +62,19 @@ def render_results(
     if columns not in (1, 2):
         raise ValueError("columns must be 1 or 2")
     sources = (Path(source), *map(Path, others))
+    iteration_progress = progress and len(sources) == 1 and sources[0].is_dir()
     if progress:
         if (
-            columns != 1 or metrics or methods or base is not None or tradeoff is not None
+            columns != 1 or (metrics and not iteration_progress) or methods or base is not None or tradeoff is not None
             or pricing_path is not None or min_interactivity is not None or gpu_count is not None
             or interactivity != DEFAULT_INTERACTIVITY
         ):
-            raise ValueError("Progress export accepts sources and output_dir; plot settings come from the YAML files")
-        from benchmarks.results.plots.progress import load_progress, render_progress
+            raise ValueError("Progress export accepts sources, output_dir and directory-mode metrics; other settings come from progress records")
+        from benchmarks.results.plots.progress import _VIEWS, load_progress, render_progress
 
         sources = tuple(dict.fromkeys(path.resolve() for path in sources))
         if len({path.stem for path in sources}) != len(sources):
             raise ValueError("Progress data files need distinct names when exported together")
-        progress_data = [(path, load_progress(path)) for path in sources]
     else:
         for selected in (*sources, *((base,) if base is not None else ())):
             if not selected.is_dir():
@@ -88,12 +88,26 @@ def render_results(
         manifest = out / ".foretoken-plots.json"
         previous = json.loads(manifest.read_text(encoding="utf-8")) if manifest.is_file() else []
         previous = set(previous["files"] if isinstance(previous, dict) else previous)
+        # Legacy callers may redraw only some YAML conditions. Those exports
+        # own their selected stems, while directory mode always reads every owner.
+        preserved = set()
+        if progress and not iteration_progress:
+            selected_files = {f"{path.stem}-{view}.{extension}" for path in sources
+                              for view in _VIEWS for extension in _FORMATS}
+            preserved = previous - selected_files
         _record_export(manifest, previous, None)
         writer = FigureWriter(out)
         try:
-            if progress:
-                for path, data in progress_data:
-                    render_progress(data, path, writer)
+            if iteration_progress:
+                from benchmarks.results.plots.progress_records import render_iteration_progress
+
+                render_iteration_progress(sources[0], writer, metrics)
+                owner = None
+            elif progress:
+                # Read after acquiring the publication lock so a queued redraw
+                # cannot replace newer figures with a previously captured snapshot.
+                for path in sources:
+                    render_progress(load_progress(path), path, writer)
                 owner = None
             else:
                 owner = _render_results(
@@ -102,10 +116,10 @@ def render_results(
                     interactivity=interactivity,
                     gpu_count=gpu_count,
                 )
-            for filename in previous - writer.files.keys():
+            for filename in previous - writer.files.keys() - preserved:
                 if Path(filename).name == filename:
                     (out / filename).unlink(missing_ok=True)
-            _record_export(manifest, writer.files, owner)
+            _record_export(manifest, preserved | writer.files.keys(), owner)
         except BaseException:
             try:
                 _record_export(manifest, previous | writer.files.keys(), None)
@@ -120,6 +134,8 @@ def default_output_directory(
 ) -> Path:
     """Choose the shared default for the standalone CLI and automatic result exporter."""
     if progress:
+        if not others and Path(source).is_dir():
+            return Path(source) / "figures" / "progress"
         parents = {Path(path).resolve().parent for path in (source, *others)}
         return parents.pop() if len(parents) == 1 else Path("plots")
     return Path("plots") if others or base is not None else Path(source) / "plots"

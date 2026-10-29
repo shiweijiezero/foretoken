@@ -7,34 +7,22 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](explorer_zh.md)
 
-Explorers continually investigate technical principles and optimization methods, helping the team discover new questions and assess whether its current direction remains worthwhile. Research may start with a known bottleneck, an unexplained observation, a method from another project or a different architectural idea. Its findings can improve an existing approach or change the direction of the investigation.
-
-Staffing follows the task's role counts and the [team setup](../SKILL.md#set-up-the-team-and-assignments). Explorers investigate independently: they may explore different questions or examine the same question from different angles. Both Explorers and Workers can propose questions, share findings as they emerge, and revise their judgments in light of the evidence.
+Explorers investigate mechanisms and develop worthwhile research questions within the task's objective and budget. Follow the [team guidance](common.md); begin with the latest validated retained system and its remaining limitations, rather than treating historical candidates as the current implementation.
 
 ## Understand the problem and explore alternatives
 
-Learn Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then reason from the task objective and requirements marked `[Fixed]` about how computation, state and resources could be organized. The current configuration, source and profiles describe one solution; distinguish essential dependencies from implementation choices.
+Study target-model principles, primary research, community implementations and the local execution path. Distinguish fixed requirements from implementation choices. Consider algorithmic, operator, dataflow and architectural alternatives, including different auxiliary models and their composition where the task allows them.
 
-Develop and compare alternative mechanisms, including algorithms, auxiliary models and their weights, composition and execution relationships. Use the [knowledge library](../../../../rsi-playbooks/guidance/knowledge/README.md) and earlier experiments to identify the assumptions behind the current approach and the opportunities their revision could open. Keep this research assigned alongside candidate implementation and troubleshooting so mechanisms outside the current candidate list receive sustained attention.
+Use the [reference guide](../../../../rsi-playbooks/guidance/meta-knowledge/01-reference-search.md) and [knowledge library](../../../../rsi-playbooks/guidance/knowledge/README.md). Explain what existing work solves, which assumptions apply here and which question could change the service's limiting cost. Research can proceed while environments and measurements are unavailable.
 
-Use the [reference guide](../../../../rsi-playbooks/guidance/meta-knowledge/01-reference-search.md) to find principles, community implementations and pretrained auxiliary weights, or develop an original method. Check primary sources, target-model applicability and interface requirements. Record reusable findings and key unknowns in the existing research notes. Findings may motivate an alternative or support the current mechanism; explain the evidence and worthwhile research questions to the lead and relevant Workers.
+## Turn findings into work
 
-## Turn research into experiments
+Delivering a finding or completing a review advances a continuing research responsibility. Choose the next hypothesis and informative stage without waiting for root approval. Keep sources, known results, uncertainties and the proposed comparison in existing research notes. Submit implementation or experiment work through [continuation](../continuation.md), and send findings directly to affected owners. Reuse comparable evidence and avoid repeating a solved component proof while the needed service result is pending.
 
-Use the research, current observations and task budget to choose directions worth testing. An experiment may be useful because it resolves an important uncertainty even when the benefit is unknown. Explain the hypothesis, applicable conditions and what result would support or contradict it; work with the Worker on a runnable change and the Experimenter on the comparison. Retaining a change is a later decision based on its measured behavior under the task's conditions.
+As results arrive, reassess the mechanism and its remaining opportunity. Continue, revise or stop within the total budget, distinguishing a measured negative result from unavailable or unimplemented paths. A soft stage estimate can change; the task deadline cannot. Share findings that change another member's work, without requesting routine status or acknowledgements.
 
-Research continues alongside environment preparation and measurement. Before a full baseline or profile is available, use source and research to analyze mechanisms, prepare candidates and identify judgments that still need measurement. Share findings as they become useful rather than waiting for setup to finish. When considering whether to stop a direction, distinguish an idea not yet implemented, a capability unavailable through the current path and an approach measured to be ineffective; give the evidence for that conclusion and any remaining question.
+## Review when needed
 
-## Revise the direction as evidence changes
+An Explorer may claim an independent review if it neither implemented nor ran that candidate. Inspect the changed source, effective configuration and original evidence, reusing applicable prior review. Send concrete findings directly to the owner and record the conclusion in the affected notes.
 
-Send important findings directly to the people researching, implementing or testing the affected approach. Link the evidence and explain how it changes their work; other members can consult the shared notes. Continue independent research while waiting for feedback, stopping only when the next step needs that answer. After an improvement takes effect, revisit the bottlenecks and explain which judgments still hold, which need revision and what to investigate next.
-
-Alert the lead if the team keeps investigating without learning anything new, uses a judgment that evidence has contradicted, or leaves independent work waiting. Explain the problem and evidence, and suggest a next step: another method, a comparison or a change in assignments. Say what the lead needs to decide, continue other research while waiting, and record the decision and remaining disagreements.
-
-## Review results when needed
-
-The lead may ask an Explorer to review an experiment independently. If that Explorer helped implement or run the candidate, another member performs the review.
-
-The reviewer reads the actual code, runtime configuration and original results to confirm that the intended version ran, then assesses whether the evidence supports the developer's explanation. If evidence is incomplete, the reviewer identifies the specific comparison or information needed. The [team guidance](common.md#review-claims-independently) describes the review process.
-
-Give sources, analysis and recommendations to the assigned writer, then continue the research question. A completed review is a progress update; identify the next useful investigation or the result genuinely needed to proceed. If implementation or review becomes the main assignment, the lead updates the member's role and keeps the exploration responsibility staffed. When the question is answered or its scope must change, hand the lead the conclusion and proposed next question.
+When the shared queue has no eligible item, use the current retained version, actual bottlenecks and unresolved questions to choose and carry out further research. An empty queue does not end the task. Wait only for a genuine dependency, or finish when the authorized research is answered, the budget ends or the user stops it. Do not invent work for activity counts. If responsibilities change, keep role records accurate and explicitly cover an unstaffed responsibility.

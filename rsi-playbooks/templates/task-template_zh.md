@@ -19,8 +19,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 最终部署预算：<保留方案的节点安排、GPU／CPU／内存总上限，说明涵盖的工作负载；也可由 Agent 选择>
 可用资源：<节点数与每节点可用的 GPU、CPU 核数、内存，如 2*8 卡 C500，每节点 64 核 CPU、512 GiB 内存>
 Explorer 数量：4
-Worker 数量：<该角色并行子 Agent 数，不含主 Agent；非负整数，留空由主 Agent 安排>
-Experimenter 数量：<该角色并行子 Agent 数，不含主 Agent；非负整数，留空由主 Agent 安排>
+Worker 数量：<该角色并行子 Agent 数，不含主 Agent；非负整数，留空在初始化时确定>
+Experimenter 数量：<该角色并行子 Agent 数，不含主 Agent；非负整数，留空在初始化时确定>
 Evaluator 数量：1
 Evaluator 巡查间隔：<两轮团队巡查之间的时间，例如 1h>
 Codex 模型：Explorer 01-02 = gpt-6-astra/high；Explorer 03-04 = gpt-6.1-sol/high；Worker、Experimenter = gpt-6.1-terra/xhigh；Evaluator = gpt-6-astra/high
@@ -33,9 +33,9 @@ Claude 模型：Explorer 01-02 = Fable/Opus/high；Explorer 03-04 = sonnet/high�
 交付结果：<完整迭代过程：每轮动机、方案与改动、测量结果、分析、耗时和下一步决定；最终收益、保留方案、代码改动与结果链接>
 ```
 
-起始配置提供比较起点，未标记为固定的结构与参数均可重新选择。目标模型固定时，仍可在任务约束内研究辅助模型及其权重和执行机制。没有提供时，自主选择初始部署并记录，再进行对照；历史保留结果在条件仍适用时继续复用。
+起始配置提供比较起点，未标记为固定的结构与参数均可重新选择。目标模型固定时，仍可在任务约束内研究辅助模型及其权重和执行机制。没有提供时，自主选择初始部署并记录，再进行对照；历史保留结果在条件仍适用时继续复用。新研究默认使用最新适用的采用源码，记录候选实际父配置；有用分支整合到最新组合后再测量，原始 baseline 始终保留为比较参照。
 
-Evaluator 数量指每轮新建的巡查 Agent 数。省略或留空时默认 1，设为 0 则关闭巡查。启用时在这里填写间隔；主 Agent 补齐未填写的间隔，并在任务开始时按 [RSI skill](../../.agents/skills/rsi/SKILL_zh.md#定期检查团队状态)启用定时提醒，每轮创建新 Evaluator。
+Evaluator 数量指每轮新建的巡查 Agent 数。省略或留空时默认 1，设为 0 则关闭巡查。启用时在这里填写间隔；初始化时补齐未填写的间隔。可用成员按 [RSI skill](../../.agents/skills/rsi/SKILL_zh.md#定期检查团队状态)领取到期巡查派发工作，每轮创建新 Evaluator，不依赖主 Agent 日常派发。
 
 最大并行实验数约束同时开展的独立实验；请求并发在评测负载中设置。区分最终部署预算与单次实验需求，小型诊断可以使用更少设备，将余下资源安排给其他有效工作，同时保持对照条件。
 

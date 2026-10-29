@@ -47,17 +47,19 @@ For example, when logged in to W&B, replace the recipe's output options with:
 
 ```text
 results/decode/parallelism/
-├── report.md                  # Agent-maintained overall report
+├── report.md                  # Task overview linking generated results
 ├── figures/
-│   ├── progress-main.yaml          # Chart data for one metric and comparison condition
-│   ├── progress-main-milestones.png
-│   └── progress-main-search.png
+│   └── progress/
+│       ├── progress-summary.md     # Generated comparisons and figures
+│       ├── progress-summary.csv
+│       └── progress-runs.csv
 ├── team/                      # Agent-maintained team and assessment notes
 │   ├── README.md              # Task, reminders and follow-up decisions
 │   └── evaluations/          # One dated note per Evaluator check
 └── iterations/tp2/
     ├── notes/
-    │   ├── iteration.md       # Summaries, document links and decisions
+    │   ├── iteration.md       # Owner analysis, document links and decisions
+    │   ├── progress.yaml      # Run references and scope-specific judgments
     │   ├── plan.md            # Example: full proposal and execution plan
     │   └── analysis.md        # Example: detailed result analysis
     └── runs/perf-000001/
@@ -77,7 +79,7 @@ Records are saved on the machine running the evaluation. Relative paths start fr
 
 Keep each approach's question, hypothesis, results and decisions in `<output-dir>/iterations/<name>/notes/iteration.md`. A short experiment needs only this note and links to its original results. Reuse the approach name with `--iteration` when running follow-up measurements.
 
-Split out a longer proposal, analysis or independently authored review only when it needs its own document, then link it from `iteration.md`. Keep dated findings and decisions in the note. `report.md` summarizes goals, comparisons and conclusions across approaches and links these records.
+Split out a longer proposal, analysis or independently authored review only when it needs its own document, then link it from `iteration.md`. Keep dated findings and decisions in the note. `report.md` states the task goal and links the generated comparisons and these records.
 
 The lead provides all members with a readable experiment directory, its host and absolute path. Use that absolute `--output-dir` across checkouts sharing a filesystem, with `--iteration` distinguishing candidates. For records on hosts without shared storage, link their actual locations and access instructions from the report.
 
@@ -87,11 +89,11 @@ Follow the [team's communication guidance](../.agents/skills/rsi/roles/common.md
 
 For example, a throughput improvement points to the reference and candidate `metrics.json` files and the compared fields. An error points to the log file and relevant lines or time range; a code finding identifies the revision, file and function. Findings about agent decisions or tool calls point to the session record and message or time range. Send the finding with these source locations so recipients can read the relevant portions first, expanding the context when needed.
 
-Supporting research, scripts, preparation logs and cleanup records also belong under the iteration's `notes/`, organized as needed. Filenames such as `plan.md` and `analysis.md` are examples. Benchmark commands create missing iteration notes without replacing existing content; members maintain the report and additional files. Keep original run artifacts under `runs/`. Before deleting a referenced checkout, preserve its required code and update the links; retain cited evidence.
+Supporting research, scripts, preparation logs and cleanup records also belong under the iteration's `notes/`, organized as needed. Filenames such as `plan.md` and `analysis.md` are examples. Benchmark commands create missing iteration notes without replacing existing content; owners maintain their analysis and progress records. Keep original run artifacts under `runs/`. Before deleting a referenced checkout, preserve its required code and update the links; retain cited evidence.
 
 ## Keep team and session records
 
-The lead keeps the check schedule in `<output-dir>/team/README.md` and links each Evaluator note under `team/evaluations/`. Existing task records hold action owners, decisions and expected results. Keep unresolved findings linked to their first note, update their progress there, and have the report link to this current state. Each assessment preserves the evidence and judgment from that check.
+The check schedule belongs in `<output-dir>/team/README.md`; the Evaluator stores its dated findings under `team/evaluations/`. Existing task records hold action owners, decisions and expected results. Keep unresolved findings linked to their first note, update their progress there, and have the report link to this current state. Each assessment preserves the evidence and judgment from that check.
 
 Task records describe intent, ownership and decisions. Read actual agent activity from the native harness, hook bindings from continuation status, and jobs from their execution owner. When a report needs a snapshot, include its observation time and source. Avoid maintaining another live-state copy in each task, member and report file. Close an action with its owner's link to the resulting change or explanation of the decision to stop.
 
@@ -143,11 +145,12 @@ Keep execution evidence, the history of judgments, and the current summary disti
 | Completed run artifacts | Preserve the original commands, metrics, responses, and logs. Later analysis links to them. In-progress files remain owned by their runner. |
 | `iterations/<name>/notes/iteration.md` | The assigned Experimenter maintains the summary and document index, and appends run findings, independent reviews, decisions, and corrections with timestamps, sources, and evidence links. |
 | Other files under `iterations/<name>/notes/` | Each author maintains the full proposal, plan, analysis or review linked from the iteration notes. |
-| `report.md` | The designated writer updates overall comparisons, the retained approach and open questions, linking the relevant iteration entries and decisions. |
+| `iterations/<name>/notes/progress.yaml` | The Experimenter records selected runs, measured parent and judgments for each scope. The plot command derives the shared comparisons from these records. |
+| `report.md` | The task overview links the generated results and owner analyses. It contains no manually copied metric table. |
 
 Attribute analysis, reviews, and decisions to their authors. Each decision states the action and its scope. When correcting a conclusion or changing a decision, link the earlier entry and new evidence so readers can follow how the understanding changed.
 
-After each run, the Experimenter adds its original location and finding to the [iteration notes](templates/iteration-template.md), then delivers them to the Worker, any assigned reviewer and report writer using the [team workflow](../.agents/skills/rsi/roles/common.md#return-results-as-work-finishes). For example, a diagnostic command can finish with exit 0 while its saved output comparison fails. Record both facts and link the comparison; distinguish measured speed, applicable validation evidence and the retention decision.
+After each run, the Experimenter adds its original location and finding to the [iteration notes](templates/iteration-template.md), then directly resumes the Worker and any assigned reviewer using the [team workflow](../.agents/skills/rsi/roles/common.md#return-results-as-work-finishes). For example, a diagnostic command can finish with exit 0 while its saved output comparison fails. Record both facts and link the comparison; distinguish measured speed, applicable validation evidence and the retention decision.
 
 Include formal measurements, diagnostic controls and tool-validation runs with their purposes and sample counts. Link auxiliary artifacts even when they have no `metrics.json`. On remote runs, the Experimenter preserves the agreed result location, including any transfer from scratch storage. Recipients read the originals there or use the delivered copy. On recovery, check the recorded remote job and result location.
 
@@ -155,14 +158,32 @@ Keep the report's current conclusions aligned with the iteration history and lin
 
 ## Maintain the user-facing report
 
-At experiment start, the lead or a designated writer creates `report.md` using the [report template](templates/report-template.md) and shares its path with the user. Use the task's delivery location, or the experiment root when none is specified. Link the task, experiment directory and iteration notes from the report, resolving links from its actual location. Keep the same report when resuming. The same writer maintains the report and its [progress chart data and figures](templates/progress-charts.md); benchmark commands save the underlying evidence.
+At task setup, create `report.md` using the [report template](templates/report-template.md), link the task and result directory, and share its path. Keep the same overview when resuming. Each Experimenter maintains its own iteration's analysis and progress record; no member collects other owners' measurements into a second table.
 
-The writer receives run deliveries directly and follows them through the tables, explanation and figures. Choose an existing member with time for this responsibility when the lead is occupied with execution. A resumed session or new result directory adds to the same continuous report: retain the original configuration, earlier approaches and adopted milestones. The user's initial configuration remains the only baseline. Record changed conditions and later controls as named references in the overview instead of dividing it into execution rounds or resetting the baseline.
+After a measured stage or a changed judgment, update `iterations/<name>/notes/progress.yaml` and run:
 
-Update the report after each measured iteration, including failed attempts, and whenever analysis changes a conclusion or the retained approach. Follow the [template](templates/report-template.md): one overview table per task type, with its iteration chart immediately above it. Each row summarizes one approach and matches its chart point for that metric and condition; repeated runs contribute a stated summary statistic. Include rejected approaches and regressions as well as retained changes. Use matching descriptive names linked to the approach details. Keep complete commands, logs, individual measurements and decision history in the iteration notes.
+```bash
+foretoken plot --progress results/decode/parallelism
+```
 
-Write for readers who did not participate in the experiment, separating supported conclusions from hypotheses and pending validation. Before measurements are available, state the objective, starting conditions and what remains unmeasured.
+The command reads every iteration's selected saved runs and judgments, then generates `figures/progress/progress-summary.md`, matching CSV tables and the native milestone/search charts. Link that generated summary from `report.md`. Each scope starts with measured retained branch tips and actual run/configuration/source links for choosing an applicable next parent; adopted ancestors remain in the history. Metrics, repetition counts, variability and recorded code/configuration evidence come from the existing run records. Do not copy them into the YAML or the overview. Detailed mechanisms, output differences and independent reviews stay in the owner's `iteration.md` and linked analyses.
 
-Deliver measurements and findings first. Refresh chart data and inspect regenerated figures at a stage summary or report delivery when plotted values or judgments have changed. Text-only updates need no redraw. Tables and plots use the same saved results and interpretation.
+For example, a candidate's progress record can select one completed command and its measured parent:
 
-On pause, stop or completion, update the same report with the reason, results obtained, retained changes and unfinished validation. Replace obsolete plans with the actual state and share the report path again.
+```yaml
+label: + QKV views
+measurements:
+  random-concurrency-1:
+    runs: [../runs/perf-000001]
+    parent: ../../baseline/runs/perf-000001
+    status: valid
+    retained: true
+```
+
+Paths start from this YAML's directory. A scope names a workload and comparison condition; keep different protocols and conditions separate. Select only comparable repetitions in each scope. Mark the user's initial configuration with `baseline: true` in that iteration's record; later controls remain ordinary named approaches. Use `reference` while an applicable output or quality question remains unresolved, and record rejected or failed approaches as well. The [progress guide](templates/progress-charts.md) defines the fields and custom metric selection.
+
+Continue implementation and exploration from the current validated configuration for the relevant scope. Record the actual parent that the candidate ran, including its existing changes. Independently measured A and B from P are two branches; adopting either does not establish A+B. A combined configuration needs its own run and judgment. Use the smallest execution that verifies the changed boundary; reuse applicable evidence rather than routinely repeating full matrices or paired controls.
+
+Each iteration has one Experimenter publishing its progress record through the [atomic update example](templates/progress-charts.md#refresh-the-shared-view), then refreshing the shared view directly. The command serializes discovery, reading and publication under the existing figure-directory lock; queued refreshes read the latest records when they acquire that lock. The generated tables retain each measured parent and actual run/source references. Milestones connect only recorded measured parents, leaving independent branches distinct. Retention is an explicit scope-specific judgment, never a choice made from maximum throughput.
+
+For a document platform, publish or link the same generated summary rather than maintaining another numerical report. On pause, stop or completion, record the reason and remaining work in the task overview and link the owners' actual cleanup evidence. Existing manually authored chart YAML remains supported by `foretoken plot --progress CHART.yaml`.

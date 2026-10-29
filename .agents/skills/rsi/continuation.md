@@ -3,58 +3,77 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Continue RSI assignments
+# Continue RSI work
 
 English | [简体中文](continuation_zh.md)
 
-Project hooks help members finish the next part of an assigned research question and remind the lead to arrange follow-up work. They act only on explicitly activated RSI sessions; unbound sessions continue unchanged. Each root session belongs to one RSI task. Use a new root session for a different task.
+Task-scoped work is shared by native members through `scripts/continuation.py`. Members claim ready questions or informative stages and deliver evidence directly, without a dispatching agent. Existing experiment notes hold the detailed brief and original artifacts.
 
 ## Enable the task
 
-Use Python 3.11+ and the hooks shipped in the checkout. Codex discovers `.codex/hooks.json`; review and trust the project definitions under Settings → Hooks in the desktop app, or through `/hooks` in the terminal CLI. Claude Code loads `.claude/settings.json` for the project. Neither setup installs hooks globally. See the native [Codex](https://learn.chatgpt.com/docs/hooks) and [Claude Code](https://code.claude.com/docs/en/hooks) hook instructions.
+Use Python 3.11+ and the project's trusted hooks. Codex discovers `.codex/hooks.json`; review it in Settings → Hooks or `/hooks`. Claude Code loads `.claude/settings.json`. For linked Codex worktrees, keep hook configuration in the primary checkout and the script in each task checkout; check which definitions the harness loaded.
 
-For Codex linked worktrees, keep the hook configuration in the primary checkout and the continuation script in each task checkout. Older checkouts without the script skip these hooks. Check the project source path in Hooks settings or the CLI's `/hooks` view to confirm which definitions are loaded.
-
-The lead activates continuation after establishing the task and its original deadline. Set `RSI_HARNESS` to `codex` or `claude`, `RSI_SESSION` to the native root session ID, and `RSI_TASK` to the task file. Set `RSI_DEADLINE` to the task's ISO deadline with a UTC offset, then run from a task checkout:
+At initialization, set `RSI_HARNESS` to `codex` or `claude`, `RSI_SESSION` to the task's native root ID, `RSI_TASK` to its task file and `RSI_DEADLINE` to its original ISO deadline with a UTC offset. Run from a task checkout:
 
 ```bash
-python -I .agents/skills/rsi/scripts/continuation.py activate \
+python3 -I .agents/skills/rsi/scripts/continuation.py activate \
   --harness "$RSI_HARNESS" --session "$RSI_SESSION" \
   --task "$RSI_TASK" --deadline "$RSI_DEADLINE"
 ```
 
-Omit `--deadline` for a task without a time budget. Repeat activation to resume a paused task with its original deadline; completed tasks stay closed. The returned state describes hook bindings, not the harness's actual active-agent count.
+Omit the deadline only for an unbounded task. Repeat activation to resume with the same task and original deadline; a completed task remains closed. New tasks record their start automatically. When adopting an older binding without a start time, use `--started-at` with the original ISO start before configuring checks. The shared SQLite file is in the repository's Git common directory, separated by harness and task session. It records work ownership, not GPU allocation or native agent activity.
+
+## Register and claim work
+
+Each continuing member sets `RSI_AGENT` to its own native ID and registers its role. For example, a Worker runs:
+
+```bash
+python3 -I .agents/skills/rsi/scripts/continuation.py register \
+  --harness "$RSI_HARNESS" --session "$RSI_SESSION" \
+  --agent "$RSI_AGENT" --role worker
+python3 -I .agents/skills/rsi/scripts/continuation.py claim \
+  --harness "$RSI_HARNESS" --session "$RSI_SESSION" \
+  --agent "$RSI_AGENT" --wait 30
+```
+
+Roles are `explorer`, `worker` and `experimenter`. Each can also claim independent review and periodic-check dispatch. Use repeated `--accept` arguments for explicitly combined responsibilities when dedicated staffing is absent. Fresh Evaluators do not register as continuing members.
+
+Claim when there is available capacity. A claim atomically selects eligible ready work, reusing topic and environment context while giving older work its turn before newer arrivals. Unfinished dependencies and reviewer exclusions prevent a claim; work is not reserved for a busy member. `--wait` waits inside the tool, releasing SQLite between short checks.
+
+Without an eligible item, research-capable members receive `action: research` immediately, including when `--wait` is set. Continue from the current retained configuration and unresolved task questions rather than waiting for another producer. Other consumers receive `action: wait` when the wait ends and can advance work they already own. An empty claim is not completion of a research responsibility.
 
 ## Arrange a member's next step
 
-For example, a Worker implementing a candidate can later investigate an unresolved part of the call path while the candidate is measured. Use `queue` to record that later step while the member is running. Set `RSI_AGENT` to its native ID, `RSI_ROLE` to `explorer`, `worker` or `experimenter`, and `RSI_NEXT_STEP` to the next question and its relevant source paths:
+Keep the full brief in existing iteration notes. Set `RSI_WORK` to a unique work name, `RSI_BRIEF` to the existing brief path, and `RSI_TOPIC` and `RSI_ENVIRONMENT` to its topic and reusable environment. Submit the next question or stage:
 
 ```bash
-python -I .agents/skills/rsi/scripts/continuation.py queue \
+python3 -I .agents/skills/rsi/scripts/continuation.py submit \
   --harness "$RSI_HARNESS" --session "$RSI_SESSION" \
-  --agent "$RSI_AGENT" --role "$RSI_ROLE" --next-step "$RSI_NEXT_STEP"
+  --agent "$RSI_AGENT" --work "$RSI_WORK" --kind experimenter \
+  --description "Measure the candidate described in $RSI_BRIEF" \
+  --topic "$RSI_TOPIC" --environment "$RSI_ENVIRONMENT"
 ```
 
-Use the member's native ID returned by the harness. If Codex returns only a task name, the member can include its own `CODEX_THREAD_ID` in its first progress update. Keep `RSI_SESSION` set to the lead's ID when registering that member. Claude teammates may use their explicit teammate name. Evaluators and one-time review agents remain unregistered and end normally.
+Kinds are `explorer`, `worker`, `experimenter`, `review` and `evaluation`. Topic and environment describe useful context affinity, not an exclusive executor. Repeated `--after WORK` arguments refer to existing work that must finish first. The consumer receives those result paths and reads their actual findings, including failed experiments.
 
-At `SubagentStop`, the hook consumes the registered step and asks the same member to continue. Claude's `TeammateIdle` uses the same pending work. A step is delivered once; another stop does not repeat it.
+For review work, link implementation and execution items with `--after`. Their actual Worker and Experimenter participants, including previous owners after a handoff, cannot claim that review. Add `--exclude ID` for any other actual contributor. Independence still depends on the member's real participation and the task's review requirements.
 
-When a member finishes without a queued step, `PostToolUse` reminds the lead after the next tool result; `Stop` is the fallback. Completions before that boundary share one reminder. The lead reads the evidence, assigns the next useful work and updates records; an Evaluator completion is recorded and acted on normally.
+Finish owned work with `finish --agent "$RSI_AGENT" --work "$RSI_WORK" --result "$RSI_RESULT"`, including the same harness/session arguments. The result must be an existing artifact or analysis; its contents state the outcome. Publish follow-on work as useful evidence arrives rather than waiting for a whole matrix. Use native follow-up when a known idle consumer needs to resume. Shared work admission and native agent dispatch are separate operations.
 
-Use `status` with the same harness and root session to inspect pending steps and recorded decisions. It describes continuation bindings, not native activity: a resumed member may still show `waiting`, and its next completion still notifies the lead. `queue` records future work; it does not start or resume a member. Resume an idle member with the native follow-up tool.
+Use `handoff --agent "$RSI_AGENT" --work "$RSI_WORK" --reason "$RSI_REASON"` with the same harness/session to return the same item for another member. The reason locates the original live jobs, artifacts and next recovery action. The successor inspects them instead of treating the handoff as a new experiment. If the previous native owner has stopped, a peer can use `handoff --from-agent EXPECTED_OWNER`, recording that evidence and the original jobs in the reason. It changes ownership only if that owner still holds the item; the peer then claims eligible work normally. `status` shows work, ownership and results. Legacy `queue` replaces that member’s unclaimed next step in the shared pool. Active work and handed-off recovery work remain unchanged; the pending step is not reserved for its named member.
+
+## Periodic checks
+
+Configure `schedule --interval 3600 --count 1` with the harness/session for an hourly fresh check, using the task's actual interval and count. Count 0 cancels unclaimed checks; an already running assessment stays with its owner until finished. Rescheduling preserves the original anchor. A claim makes a due `evaluation` dispatch item available; missed rounds do not accumulate while a batch remains unfinished.
+
+An available member claims the dispatch, creates a fresh Evaluator with only the task, role and working directory, and receives its assessment path. Finish the dispatch item with that actual saved assessment, not a launch notice. The Evaluator sends actionable findings directly to their owners. No permanent scheduler or report writer is created.
+
+This pool schedule is the only evaluation timetable. Live native members consume it; it is not a daemon and cannot dispatch after the harness exits. Do not create a second evaluation schedule through reminders.
 
 ## Wait, pause or finish
 
-When progress depends on an unavailable result, release the member as `waiting`; use `done` when its question is answered. Set `RSI_REASON` to the outcome, or the missing evidence and condition for resuming:
+If no ready work can resolve a dependency, use `release --agent "$RSI_AGENT" --state waiting --reason "$RSI_REASON"` with the harness/session. Finish or hand off owned items before releasing. Use `done` when the responsibility is complete. A producer resumes a known waiting consumer with native follow-up when its result arrives.
 
-```bash
-python -I .agents/skills/rsi/scripts/continuation.py release \
-  --harness "$RSI_HARNESS" --session "$RSI_SESSION" \
-  --agent "$RSI_AGENT" --state waiting --reason "$RSI_REASON"
-```
+Member stop hooks return unfinished members to their owned work or to claiming ready work. Ordinary root tool, Stop and SessionEnd events do not request root decisions or pause the task. This does not make native agents independent of the harness lifetime.
 
-The lead then resumes the member through the native tools with another useful question, or records why the role is temporarily unfilled. Register a further step with `queue` when one is ready.
-
-Before pausing the task or using the same chat for ordinary work, release the root binding with `--state paused`, omitting `--agent`. Use `--state complete` on completion. Pending steps are cleared; experiment and collector cleanup still follows the RSI workflow. The hook also stops continuing work at the deadline or session end; Codex's `Interrupt` pauses the binding. On resume, activate the same task, resume members through native tools, and queue further work as needed.
-
-Bindings are stored once in the repository's Git common directory, shared by linked worktrees and separated by harness and root session. Experiment records remain in their existing locations. Keep the root session and member identities with the team assignments so a resumed lead can manage the same bindings.
+On user pause or completion, use `release --state paused` or `release --state complete` with the harness/session and a reason, omitting the member ID. A root Interrupt pauses the task, and the original deadline stops new claims. Each owner still stops its own serving, build and collector jobs and verifies exit. On resumption, inspect existing jobs, activate the same task and resume members through native tools.

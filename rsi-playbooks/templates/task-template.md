@@ -19,8 +19,8 @@ Deployment layout: <for example, colocated serving, prefill/decode disaggregatio
 Final deployment budget: <node placement and total GPU, CPU, and memory limits for the retained service; specify which workloads are included, or leave agent-selected>
 Available resources: <node count and available GPUs, CPU cores and memory per node; for example, 2*8 C500 GPUs with 64 CPU cores and 512 GiB memory per node>
 Explorer count: 4
-Worker count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank for the lead to choose>
-Experimenter count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank for the lead to choose>
+Worker count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank to choose at initialization>
+Experimenter count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank to choose at initialization>
 Evaluator count: 1
 Evaluator check interval: <time between team checks, for example 1h>
 Codex models: Explorer 01-02 = gpt-6-astra/high; Explorer 03-04 = gpt-6.1-sol/high; Worker and Experimenter = gpt-6.1-terra/xhigh; Evaluator = gpt-6-astra/high
@@ -33,9 +33,9 @@ Work and completion conditions: <clock start and total work period or target-bas
 Deliverables: <full iteration history: motivation, approach and changes, measurements, analysis, time spent and next decision for each iteration; overall gains, retained approach, code changes and result links>
 ```
 
-The starting configuration provides a comparison point. Its structure and parameters remain design choices unless marked as fixed. A fixed target model still permits research into auxiliary models and their weights, and execution mechanisms within the task requirements. Without a starting configuration, discover an initial deployment and record it before making comparisons. Use prior retained results when their conditions still apply.
+The starting configuration provides a comparison point. Its structure and parameters remain design choices unless marked as fixed. A fixed target model still permits research into auxiliary models and their weights, and execution mechanisms within the task requirements. Without a starting configuration, discover an initial deployment and record it before making comparisons. Use prior retained results when their conditions still apply. New research defaults to the latest applicable retained source; record each candidate's actual parent, and measure useful branches after integration into the latest combination. The original baseline remains the comparison reference.
 
-Evaluator count is the number of new agents created for each check. It defaults to 1 when omitted or blank; set it to 0 to disable checks. When enabled, specify the interval here. The lead fills in a missing interval and enables the recurring reminder at task start, creating fresh Evaluators each round as described in the [RSI skill](../../.agents/skills/rsi/SKILL.md#arrange-periodic-team-checks).
+Evaluator count is the number of new agents created for each check. It defaults to 1 when omitted or blank; set it to 0 to disable checks. When enabled, specify the interval here. Resolve a missing interval at initialization. Available members claim due check dispatches and create fresh Evaluators through the [RSI skill](../../.agents/skills/rsi/SKILL.md#arrange-periodic-team-checks), without routine root dispatch.
 
 The parallel-experiment limit counts independent experiments running at once; request concurrency belongs in the workload. Distinguish the final deployment budget from each experiment's needs. Smaller diagnostic experiments may use fewer devices; allocate the remaining resources to other useful work while preserving comparison conditions.
 

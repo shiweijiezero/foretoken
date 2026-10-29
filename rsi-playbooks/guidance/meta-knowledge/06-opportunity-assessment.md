@@ -7,13 +7,13 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](06-opportunity-assessment_zh.md)
 
-Pareto-Guided Exploration (PGE) helps a team pursue important problems with substantial improvement potential through changes to algorithms, operators, dataflow and execution architecture. The lead selects primary directions and funds sustained work, with smaller improvements and independent alternatives progressing in parallel. The Evaluator assesses progress, costs and gains so the lead can adjust the research portfolio.
+Pareto-Guided Exploration (PGE) helps a team pursue important problems with substantial improvement potential through changes to algorithms, operators, dataflow and execution architecture. Research owners choose and develop directions within the task objective and total budget, with independent alternatives progressing in parallel. The Evaluator checks evidence and returns actionable findings directly to the affected owners.
 
 ## Organize research before ranking candidates
 
-Identify the limitations that matter most to the target workload and investigate mechanisms that could change them. Explorers keep developing new ideas; the lead gives the primary questions time for core implementation and informative experiments. Quick improvements can use parallel capacity, while research priority follows importance and potential impact.
+Identify the limitations that matter most to the target workload and investigate mechanisms that could change them. Explorers keep developing new ideas; research owners give important questions sustained core implementation and informative experiments. Quick improvements can use parallel capacity, while research priority follows importance and potential impact.
 
-Compare existing candidates by their gains and costs. Research on new mechanisms starts from a question, a hypothesis and its key uncertainties. Gain and integration estimates develop through source analysis and prototyping. The lead invests according to the potential of the research direction, giving important untested ideas room to develop.
+Compare existing candidates by their gains and costs. Research on new mechanisms starts from a question, a hypothesis and its key uncertainties. Gain and integration estimates develop through source analysis and prototyping. Owners invest according to the potential of the research direction and remaining total budget, giving important untested ideas room to develop.
 
 For example, research questions at different stages can be described as follows:
 
@@ -37,7 +37,7 @@ Each estimate names its author, time, assumptions, source and range. State wheth
 
 ## Describe gain, evidence and cost
 
-Keep raw values first and summarize them with the following 0–4 scores for discussion. Report score ranges when values span bands. Use consistent anchors within a task; explain changes and update all entries being compared.
+Keep raw values first. The following 0–4 scores are available when they clarify a material comparison; routine checks reuse applicable assessments rather than refilling every score. Report score ranges when values span bands. Use consistent anchors within a task; explain changes and update all entries being compared.
 
 ### Gain and headroom: G
 
@@ -91,11 +91,11 @@ Assess environment work through the experiments it enables and preparation time 
 
 Estimate net cumulative preparation savings as `N × saving_per_use − remaining_repair_and_validation_time`, with N limited to plausible remaining uses and deployment included. Savings count as task wall time only on the serial critical path; overlapping preparation needs a schedule-based estimate. Show GPU and Agent cost separately. When a repair removes an execution blocker, identify the experiment and its research value.
 
-The Evaluator uses period and task-to-date costs to report which work preparation enabled, what remains blocked and how this affects primary research, so the lead can adjust the allocation.
+The Evaluator uses period and task-to-date costs to identify which work preparation enabled and what remains blocked. Findings go directly to the owners who can repair the path or adjust their next investment.
 
 ## Identify non-dominated opportunities
 
-Pareto dominance means no worse on every compared objective and strictly better on at least one. Compare raw gain vectors and additional cost dimensions under the lead's common workload, milestone and resource scope. F, E and I accompany the raw values to explain the trade-offs.
+Pareto dominance means no worse on every compared objective and strictly better on at least one. Compare raw gain vectors and additional cost dimensions under the task's common workload, milestone and resource scope. F, E and I accompany the raw values to explain the trade-offs.
 
 For bounded estimates, A robustly dominates B only if every gain lower bound of A is at least B's upper bound and every cost upper bound of A is at most B's lower bound, with one strict inequality. Check these conditions using raw values and state the assumptions; leave dominance unresolved when evidence is insufficient.
 
@@ -103,4 +103,4 @@ For example, two paths to the same validation milestone use the same reference: 
 
 Compare the front among candidates that meet the task’s constraints, and keep recording uncertainties and research progress for ideas whose feasibility is unresolved. Directions on the front have different trade-offs; primary research also considers importance and breakthrough potential. The Evaluator checks whether important mechanisms receive sustained ownership, implementation time and experiment access, and reports when small changes, reporting or environment work displace them.
 
-The lead responds by choosing or revising the research portfolio: the primary problems, independent alternatives, smaller concurrent work, owners, stage budgets and expected learning or implementation outcomes. Give important questions sustained attention and return prototype failures or slowdowns to their owners for analysis. Adjust directions based on new understanding, potential gains and the value of further work. Subsequent evaluations compare the allocation and progress with these decisions.
+Research owners choose their next question, implementation and informative comparison using the evidence, opportunity and remaining total budget. They may revise soft stage estimates, continue a promising mechanism or stop an unproductive path without routine root approval. Experimenters coordinate actual shared-resource conflicts; no new central decision maker is required. Subsequent evaluations check the resulting work and open issues. The task's hard deadline and fixed requirements remain binding.

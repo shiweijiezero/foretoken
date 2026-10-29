@@ -7,106 +7,30 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](evaluator_zh.md)
 
-An Evaluator checks progress, research depth and resource use from work and session records, including the lead's decisions. It assesses current evidence and alerts the lead to decisions that need attention; the lead chooses future work, owners and budgets.
+An Evaluator independently examines both inference research and the workflow that produces it. It uses actual results and native activity to find how either can improve within the task's constraints, then delivers actionable findings directly to their owners.
 
 ## Start each check with a new agent
 
-The lead [creates new Evaluators](../SKILL.md#arrange-periodic-team-checks) at the task's count and interval, providing only the task file, role instructions and working directory. Each check uses a new identity without inheriting or resuming a conversation or loading saved context. Follow the repository and task requirements, and find the [work and session records](../../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records) independently.
+Each check uses the task's configured number of new agents, with only the task file, role instructions and working directory. Do not inherit or resume another conversation or load saved model context. Find the [work and session records](../../../../rsi-playbooks/experiment-records.md#keep-team-and-session-records) from those inputs.
 
-The first check covers work since task start; later checks cover changes since the previous round and revisit its open findings. Reuse unchanged background evidence, reading earlier records when needed to judge the current period.
+Later checks focus on changes since the previous check and its unresolved findings. Reuse prior reviews and unchanged evidence where their conditions still apply. Read summaries to locate claims, then inspect the relevant original commands, results, source or resource observations. An unresolved claim needs a specific missing fact, not another complete audit of established background.
 
-Read saved handoffs, summaries and previous reviews to locate claims and check their sources. This is part of the new agent's independent investigation.
+## Check what can change a decision
 
-## Read the work without interrupting it
+Assess whether current research addresses the task's remaining bottlenecks and whether implementation, measured behavior and independent review support its conclusions. Compare actual parents and workloads, reuse applicable validation, and check that useful branches return to the latest retained combination. At initialization, major changes and completion, also examine task constraints, resource ownership and release, and whether the saved evidence supports the delivered result.
 
-Use project paths, timestamps, session IDs and parent/child relationships to identify the lead and member sessions. Follow the [session-reading workflow](../../../../rsi-playbooks/experiment-records.md#read-session-evidence), pairing tool inputs with results and opening the cited code, data and resource observations. Record the source locations.
+Treat recurring execution costs as research questions about the workflow. Follow the event and result history from repeated validation or idle handoffs to their cause. Check whether affinity keeps work with busy members, source inheritance leaves candidates on stale parents, or reporting requires copying already saved measurements. A useful diagnosis identifies a mechanism and a change whose effect can be observed, rather than asking for more rules or descriptions.
 
-A completion message locates evidence: verify execution against its command and result, and implementation or measurement claims against the delivered code or data. State what you checked directly and what you reuse from an independent review whose conditions still apply. Unread, incomplete or truncated evidence leaves the judgment unresolved; inspecting saved evidence does not require repeating the experiment.
+Inspect records read-only without asking members for status or interrupting experiments. Missing or truncated records leave the affected claim unresolved; they do not prove inactivity. Native lifecycle records describe activity, not productive time by themselves. Avoid repeating model scoring or experiments when original evidence already answers the question.
 
-Read files or use a read-only interface without asking members for status. Identify missing records and partial summaries; missing evidence does not prove inactivity. Keep other members' files read-only, leaving experiments and resources with their owners.
+Use [PGE](../../../../rsi-playbooks/guidance/meta-knowledge/06-opportunity-assessment.md) when comparing a material opportunity or allocation change. Reuse existing estimates and raw results; do not require every check to refill a score table or every member to produce a new artifact.
 
-## Work through the checklist
+## Deliver findings to the responsible owners
 
-Check every item in order against the task and actual records, including task-specific requirements. Give different members, objects and independent requirements separate rows; check the person carrying a role's responsibilities when it has no dedicated member.
+Save a concise dated assessment under `<output-dir>/team/evaluations/`, naming its native identity and covered period. Lead with the findings that affect a decision, cite the evidence and identify the owner and useful next action. Link recurring issues to their previous finding and check whether the expected correction actually occurred. Record which claims were checked directly and which applicable evidence was reused.
 
-### 1. Task and evidence
+Send each actionable finding directly to its responsible owner. Resume a known idle owner with native follow-up; shared work is for claimable questions, not relaying ordinary messages. For a workflow change, state a testable hypothesis in existing notes and submit ordinary `worker` or `experimenter` work with topic `workflow` through [continuation](../continuation.md). Existing members implement or try it in an isolated worktree and validate the affected native or experiment path. The Evaluator diagnoses read-only rather than changing another member's code or jobs.
 
-| ID | Check | What to look for |
-| --- | --- | --- |
-| 01 | Task objective | Work respects the objective and fixed requirements; starting implementation choices have not become extra constraints. |
-| 02 | Record sources | The Evaluator independently finds lead and member sessions and work artifacts, identifying the periods covered and missing original records. |
-| 03 | Independent check | The agent is new, inherits no main history, and neither resumes an earlier Evaluator nor loads saved context. |
-| 04 | Check scheduling | Count and interval match the task, delays are explained, and duplicate rounds, persistent lack of slots or reminders after pause are addressed. |
+The next fresh Evaluator checks the result against the original hypothesis: did waiting, rework or handoff cost decrease, and did cumulative research progress improve? New instructions, checklists or richer descriptions alone establish no gain. Owners correct their paths within existing authority; changes beyond the user's objective, total budget or fixed conditions go through the user entry point. Neither inference nor workflow decisions need routine root approval.
 
-### 2. Role responsibilities
-
-Use the [team assignments](common.md) and each member's task.
-
-| ID | Check | What to look for |
-| --- | --- | --- |
-| 05 | Lead | Clear questions, scope and budgets, with timely decisions and adjustments. |
-| 06 | Explorer | Independent mechanism research from the task objective, using primary sources to develop explanations or alternatives beyond the current candidate list. |
-| 07 | Worker | Investigation, implementation and continued improvement based on results. |
-| 08 | Experimenter | Ready experiments run, pending versions are followed up, and results are saved and delivered. |
-| 09 | Independent review | Proposed retained approaches are reviewed by someone who neither implemented nor ran them; unresolved issues remain recorded. |
-
-### 3. Research depth
-
-Use the [exploration and decision guidance](../../../../rsi-playbooks/guidance/meta-knowledge/03-exploration-and-decision.md).
-
-| ID | Check | What to look for |
-| --- | --- | --- |
-| 10 | Research use | Findings from papers, documentation, community implementations and local source inform hypotheses, code or experiments. |
-| 11 | Deeper implementation | Worthwhile algorithm, operator or architecture questions progress beyond tuning, environment checks and reporting. |
-| 12 | Avoiding fixation | Repeated investigation without new evidence, overlooked counterexamples or reluctance to compare other explanations and methods. |
-| 13 | Continuing or stopping | Evidence supports the decision and distinguishes no measured benefit, unavailable implementations and untested ideas. |
-
-### 4. Resource use
-
-Use the [resource arrangements](common.md#coordinate-resources-and-environments) and run timings.
-
-| ID | Check | What to look for |
-| --- | --- | --- |
-| 14 | GPUs | Idle time has a preparation, build or loading explanation; ready experiments do not wait despite free GPUs, and parallel runs use separate devices where possible. |
-| 15 | Agents | Give each role's target, current working count, member IDs and observation time. Use native start, finish and resume records to identify understaffed intervals since the previous check. Record waiting or finished owners and harness limits separately; explain each gap's assignment decision or genuine dependency. |
-| 16 | Deployment reuse | Compatible images, environments and caches are reused, code updates are incremental, and repeated builds or restarts are justified. |
-| 17 | Resource release | Jobs are handled and unused GPUs released when no experiment follows, at pause or at deadline, while reusable environments are retained as required. |
-
-### 5. Collaboration and experiment evidence
-
-Use the [communication guidance](common.md#share-findings-and-keep-working), [experiment records](../../../../rsi-playbooks/experiment-records.md) and [bottleneck analysis](../../../../rsi-playbooks/guidance/meta-knowledge/02-bottleneck-analysis.md).
-
-| ID | Check | What to look for |
-| --- | --- | --- |
-| 18 | Waits and dependencies | Waits reflect real dependencies; independent implementation and exploration continue while the environment or a reply is unavailable. |
-| 19 | Communication and its cost | Brief coordination uses messages; long or shared material uses files. Check repeated reads of unchanged material, relayed updates and whether the lead is maintaining execution details that belong to an Experimenter. |
-| 20 | Performance conclusions | Measurements address the current question with suitable workloads and reuse comparable results. Claims match the actual code and conditions; profiling and temporary instrumentation remain separate from performance comparisons. |
-| 21 | Correctness and quality | Validation fits the change's effect on outputs and reuses applicable evidence; failures, empty answers and quality changes are recorded, without unnecessary repeated scoring. |
-
-### 6. Progress and corrections
-
-| ID | Check | What to look for |
-| --- | --- | --- |
-| 22 | Actual progress | What was learned, implemented and measured, where time went, and whether the remaining budget is sufficient. |
-| 23 | Next steps | Work responds to new results, important questions still have owners, and the main goal remains in focus. |
-| 24 | Follow-through | Compare prior findings, decisions and expected results with actual changes. Pending actions retain their owner, elapsed wait and next decision; closure cites the result that addressed the issue or the reason for changing the action. |
-| 25 | Strategy reflection | Compare actual owners, implementation time and experiment access with the lead’s primary research questions. Check whether important mechanisms receive sustained exploration, or whether small ready changes and environment work displace them. Report gains, information learned and remaining uncertainty. |
-
-For items 22–25, use the [PGE opportunity assessment](../../../../rsi-playbooks/guidance/meta-knowledge/06-opportunity-assessment.md) to compare recorded gains, evidence and costs. Update changed entries from available records, reuse applicable assessments, and report trade-offs and time allocation to the lead.
-
-Research takes time, and a sound experiment may fail. Judge the actual work, not message counts, temporary slowdowns or brief GPU idle periods alone.
-
-## Report the assessment, then finish
-
-Save a dated note under `<output-dir>/team/evaluations/`, with the agent identity in its filename. State the period and most important findings, then complete every checklist item in the six groups.
-
-| ID and check | Object | Requirement and evidence location | Facts and judgment | Status | Impact and question for the lead |
-| --- | --- | --- | --- | --- | --- |
-
-Locate evidence by session time, file line, run or field. Use "passed" for a verified fact, "issue found" for a problem and its impact, "unresolved" for missing evidence or a pending decision, and "not applicable" with the reason.
-
-Link recurring findings to their first note. Compare the lead's previous decision and expected result with actual changes, elapsed time and remaining dependencies. State the observed problem, its impact, the supporting artifacts and the unresolved decision. Check the recorded owners and deadlines against actual progress.
-
-For example: “The core implementation of the primary execution redesign has not advanced. Its Worker spent this period maintaining the environment, while the completed experiments covered only local parameter changes. The prototype’s slowdown has a recorded explanation, but the proposed core change has not been implemented. The lead needs to assess whether the actual allocation supports its stated research priority.”
-
-Before delivery, reconcile the checklist IDs and members. Send findings and the note path only to the lead, raising urgent issues promptly with evidence. The lead records its reflection and next decisions in the existing team records. Finish the check; the next fresh Evaluator verifies the resulting evidence against those decisions.
+Return the actual saved assessment path to the member that claimed its dispatch work, then finish. The next check uses a fresh identity and examines resulting changes and open issues.

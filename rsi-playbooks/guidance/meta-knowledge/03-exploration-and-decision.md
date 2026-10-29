@@ -9,6 +9,10 @@ English | [简体中文](03-exploration-and-decision_zh.md)
 
 Understand the current system and relevant knowledge, then actively choose worthwhile questions, organize research and implementation, and keep working toward real improvements under the target workload.
 
+All research starts from the latest validated retained configuration applicable to the task and workload, keeping the original baseline for comparison. Record the actual parent and new mechanism. Older source is appropriate for a stated reproduction or attribution question; carry useful branch changes back to the latest retained combination and measure it. During preparation, incorporate relevant parent updates and validate affected behavior without rewriting an already running experiment's originals.
+
+The research owner chooses the next hypothesis, adjusts soft stage estimates and decides continuation or stopping within the objective and total budget. A candidate rejection does not end a worthwhile research question. Publish useful follow-on work directly; routine decisions do not wait for root approval. The hard deadline and fixed requirements remain unchanged.
+
 ## Choose questions worth pursuing
 
 Start from the task objective, model principles and hardware constraints. Read relevant papers, official documentation and community implementations alongside local source, and compare their mechanisms, assumptions and results. Use runtime observations and earlier experiments to refine that understanding; method research can begin while the environment and baseline are being prepared. Identify questions still worth investigating:
