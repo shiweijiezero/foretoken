@@ -48,7 +48,7 @@ measurements:
 | `baseline` | 仅标记用户最初配置，每个 scope 一项；默认 false。 |
 | `measurements` | 从比较范围 scope 到所选运行和判断的映射。 |
 | `runs` | 一个方案、一个负载的既有命令／结果目录；发生在评测前的失败可省略此项，由 `iteration.md` 链接构建／诊断日志。 |
-| `status` | `valid`、`reference`、`incorrect`、`compile_failed` 或 `runtime_failed`。 |
+| `status` | `valid`、`reference`、`pending`、`rejected`、`incorrect`、`compile_failed` 或 `runtime_failed`；`pending` 和 `rejected` 不进入采用曲线。 |
 | `retained` | 是否在此 scope 采用该实测版本；默认 false，采用项必须为 `valid`。 |
 | `parent` | 实测父方案的命令／结果目录。采用的候选必须填写，最初 baseline 不需要。 |
 
