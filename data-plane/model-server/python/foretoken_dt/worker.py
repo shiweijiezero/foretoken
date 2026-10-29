@@ -66,7 +66,7 @@ class WorkerExtension(ProfilingWorkerExtension):
 
     def init_worker_extension(self):
         """Install remote proposal execution after device setup and before model loading."""
-        from .proposer import RemoteProposer
+        from .proposer import RemoteProposer, RemoteProposerPool
 
         validate_config(self.vllm_config)
         settings = Settings.from_engine(self.vllm_config)
@@ -84,7 +84,12 @@ class WorkerExtension(ProfilingWorkerExtension):
             raise ValueError(
                 "This neural Draft requires Target KV, which DT does not transfer yet"
             )
-        self.model_runner.speculator = RemoteProposer(self, settings)
+        proposer = (
+            RemoteProposerPool(self, settings)
+            if len(settings.endpoints) > 1
+            else RemoteProposer(self, settings)
+        )
+        self.model_runner.speculator = proposer
         runner = self.model_runner
         original_warmup = self.compile_or_warm_up_model
 
@@ -99,10 +104,12 @@ class WorkerExtension(ProfilingWorkerExtension):
 
     def destroy_worker_extension(self):
         """Close an initialized remote proposer before the native worker releases its device."""
-        from .proposer import RemoteProposer
+        from .proposer import RemoteProposer, RemoteProposerPool
 
         runner = getattr(self, "model_runner", None)
-        if runner is not None and isinstance(runner.speculator, RemoteProposer):
+        if runner is not None and isinstance(
+            runner.speculator, (RemoteProposer, RemoteProposerPool)
+        ):
             runner.speculator.close()
 
 

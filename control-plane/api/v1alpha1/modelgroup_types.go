@@ -298,8 +298,8 @@ type ModelGroupRuntime struct {
 	InternalGenerateRequestBodyLimitBytes int64 `json:"internalGenerateRequestBodyLimitBytes"`
 }
 
-// DraftGroupBinding pins a Target cohort to one prepared Draft Group.
-// Native startup and retirement share this immutable instance dependency.
+// DraftGroupBinding pins one Target cohort to a prepared Draft Group in its shared pool.
+// Native startup, request routing and retirement share this immutable dependency.
 type DraftGroupBinding struct {
 	PoolRef  LocalObjectReference `json:"poolRef"`
 	Revision string               `json:"revision"`
@@ -336,8 +336,8 @@ type ModelGroupSpec struct {
 	// +kubebuilder:validation:Enum=tcp;rdma;nccl
 	DTProtocol string `json:"dtProtocol,omitempty"`
 
-	// DraftGroups contains the prepared candidates for this immutable Target revision.
-	// SelectedDraftGroup owns the process-lifetime assignment used by runtime and lifecycle consumers.
+	// DraftGroups contains every prepared peer in this immutable Target revision's shared Draft pool.
+	// Runtime assigns requests to these peers while lifecycle consumers keep the whole pool ready.
 	// +optional
 	// +listType=atomic
 	DraftGroups []DraftGroupBinding `json:"draftGroups,omitempty"`
@@ -473,8 +473,8 @@ func (allocation *RDMAAllocation) Canonical() *RDMAAllocation {
 	return &result
 }
 
-// SelectedDraftGroup returns this Target's fixed Draft assignment for launch, readiness, and retirement.
-// The binding is borrowed from the immutable Group spec; other roles and unbound Targets return nil.
+// SelectedDraftGroup returns the deterministic first binding for legacy callers.
+// New launch and lifecycle paths consume DraftGroups as a shared pool.
 func (spec ModelGroupSpec) SelectedDraftGroup() *DraftGroupBinding {
 	if spec.SpeculationRole != SpeculationRoleTarget || len(spec.DraftGroups) == 0 {
 		return nil

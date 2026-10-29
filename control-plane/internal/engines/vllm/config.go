@@ -42,12 +42,13 @@ type LaunchPlanV1 struct {
 	Profiling                             *inferencev1alpha1.ProfilingConfig `json:"profiling,omitempty"`
 }
 
-// LaunchDTPlan supplies native workers with resolved role, checkpoint, and discovery inputs.
+// LaunchDTPlan supplies native workers with resolved role, checkpoint, and Draft-pool inputs.
 // Kubernetes references remain in the immutable Group contract rather than engine arguments.
 type LaunchDTPlan struct {
 	Role           inferencev1alpha1.SpeculationRole `json:"role"`
 	DraftArtifacts *runtimeconfig.ModelArtifacts     `json:"draftArtifacts,omitempty"`
 	DraftEndpoint  string                            `json:"draftEndpoint,omitempty"`
+	DraftEndpoints []string                          `json:"draftEndpoints,omitempty"`
 	Protocol       string                            `json:"protocol"`
 }
 

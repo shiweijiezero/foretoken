@@ -182,12 +182,12 @@ spec:
                 type: object
               draftGroups:
                 description: |-
-                  DraftGroups contains the prepared candidates for this immutable Target revision.
-                  SelectedDraftGroup owns the process-lifetime assignment used by runtime and lifecycle consumers.
+                  DraftGroups contains every prepared peer in this immutable Target revision's shared Draft pool.
+                  Runtime assigns requests to these peers while lifecycle consumers keep the whole pool ready.
                 items:
                   description: |-
-                    DraftGroupBinding pins a Target cohort to one prepared Draft Group.
-                    Native startup and retirement share this immutable instance dependency.
+                    DraftGroupBinding pins one Target cohort to a prepared Draft Group in its shared pool.
+                    Native startup, request routing and retirement share this immutable dependency.
                   properties:
                     endpoint:
                       type: string

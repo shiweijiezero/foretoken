@@ -39,18 +39,20 @@ func (reconciler *PoolReconciler) resolveDraftPools(ctx context.Context, pool *a
 		return false, err
 	}
 	// A Draft can retire between dependency resolution and Target creation.
-	// Retire that unreachable Target even when no replacement Draft is ready yet.
+	// Retire a Target when any member of its shared Draft pool is unreachable;
+	// the launch plan opens every frozen peer connection.
 	for index := range groups.Items {
 		group := &groups.Items[index]
 		if !servingconfig.ModelGroupOwnedBy(group, pool) || group.Spec.SpeculationRole != api.SpeculationRoleTarget {
 			continue
 		}
-		binding := group.Spec.SelectedDraftGroup()
-		if binding == nil {
+		if len(group.Spec.DraftGroups) == 0 {
 			continue
 		}
-		missing := !slices.ContainsFunc(groups.Items, func(draft api.ModelGroup) bool {
-			return draft.Name == binding.GroupRef.Name && string(draft.UID) == binding.GroupRef.UID && draft.Spec.ModelPoolRef == binding.PoolRef && draft.Spec.Revision == binding.Revision
+		missing := slices.ContainsFunc(group.Spec.DraftGroups, func(binding api.DraftGroupBinding) bool {
+			return !slices.ContainsFunc(groups.Items, func(draft api.ModelGroup) bool {
+				return draft.Name == binding.GroupRef.Name && string(draft.UID) == binding.GroupRef.UID && draft.Spec.ModelPoolRef == binding.PoolRef && draft.Spec.Revision == binding.Revision
+			})
 		})
 		if missing {
 			if err := retireModelGroup(ctx, reconciler.Client, group); err != nil {
@@ -130,7 +132,12 @@ func (reconciler *PoolReconciler) poolsForDraftPool(ctx context.Context, object 
 func (reconciler *PoolReconciler) poolsForDraftGroup(ctx context.Context, object client.Object) []reconcile.Request {
 	group := object.(*api.ModelGroup)
 	var requests []reconcile.Request
-	if binding := group.Spec.SelectedDraftGroup(); binding != nil {
+	seen := make(map[string]struct{}, len(group.Spec.DraftGroups))
+	for _, binding := range group.Spec.DraftGroups {
+		if _, ok := seen[binding.PoolRef.Name]; ok {
+			continue
+		}
+		seen[binding.PoolRef.Name] = struct{}{}
 		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKey{Namespace: group.Namespace, Name: binding.PoolRef.Name}})
 	}
 	if group.Spec.SpeculationRole == api.SpeculationRoleDraft {

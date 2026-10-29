@@ -107,7 +107,7 @@ func nativeDraftProfile(targetModel, draftModel string, args api.EngineArguments
 	return apiextensionsv1.JSON{Raw: raw}, err
 }
 
-// buildDTPlan projects the controller-selected common transport and native proposal inputs.
+// buildDTPlan projects the controller-selected transport and every frozen Draft peer.
 func buildDTPlan(group api.ModelGroupSpec) (*LaunchDTPlan, error) {
 	if group.SpeculationRole == "" {
 		return nil, nil
@@ -124,11 +124,21 @@ func buildDTPlan(group api.ModelGroupSpec) (*LaunchDTPlan, error) {
 	}
 	plan := &LaunchDTPlan{Role: group.SpeculationRole, DraftArtifacts: draft, Protocol: group.DTProtocol}
 	if group.SpeculationRole == api.SpeculationRoleTarget {
-		binding := group.SelectedDraftGroup()
-		if binding == nil {
+		seen := make(map[string]struct{}, len(group.DraftGroups))
+		for _, binding := range group.DraftGroups {
+			if binding.Endpoint != "" {
+				if _, exists := seen[binding.Endpoint]; exists {
+					continue
+				}
+				seen[binding.Endpoint] = struct{}{}
+				plan.DraftEndpoints = append(plan.DraftEndpoints, binding.Endpoint)
+			}
+		}
+		if len(plan.DraftEndpoints) == 0 {
 			return nil, fmt.Errorf("Target launch requires a prepared Draft Group binding")
 		}
-		plan.DraftEndpoint = binding.Endpoint
+		// Keep the singular field for older launchers while new Targets use the pool.
+		plan.DraftEndpoint = plan.DraftEndpoints[0]
 	}
 	return plan, nil
 }

@@ -91,22 +91,25 @@ class FeatureCapture:
         if self.holder is None:
             return capture_feature(output, 0)
 
-    def transfer(self, rows, destination, channel=None):
+    def transfer(self, rows, destination, channel=None, exchange=None):
         """Publish ready layers while the Target finishes computing and sampling."""
         if channel is not None:
             channel.send_features(self.destination, self.ready, rows)
             self.send_done = channel.input_ready
             return
+        exchange = exchange or self.exchange
+        if exchange is None:
+            raise RuntimeError("feature transfer has no tensor exchange")
         with torch.cuda.device(self.destination.device):
             for layer, ready in enumerate(self.ready):
                 ready.synchronize()
                 with torch.cuda.stream(self.copy_stream):
-                    self.exchange.buffers["features"][layer, :rows].copy_(
+                    exchange.buffers["features"][layer, :rows].copy_(
                         self.destination[layer, :rows], non_blocking=True
                     )
                     self.copied.record(self.copy_stream)
                 self.copied.synchronize()
-                self.exchange.write_plane("features", layer, rows, destination)
+                exchange.write_plane("features", layer, rows, destination)
 
     def prepare_forward(self):
         """Retire the preceding buffer read before another forward overwrites its features."""

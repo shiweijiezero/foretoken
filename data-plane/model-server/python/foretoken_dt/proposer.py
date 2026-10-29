@@ -128,7 +128,14 @@ class RemoteProposer(BaseSpeculator):
 
     supports_mm_inputs = False
 
-    def __init__(self, worker, settings: Settings):
+    def __init__(
+        self,
+        worker,
+        settings: Settings,
+        *,
+        feature_capture: FeatureCapture | None = None,
+        draft_logits: torch.Tensor | None = None,
+    ):
         self.runner = worker.model_runner
         self.config = worker.vllm_config
         self.spec = self.config.speculative_config
@@ -151,7 +158,10 @@ class RemoteProposer(BaseSpeculator):
             else None
         )
         self.exchange = TensorExchange(settings.protocol) if self.nccl is None else None
-        self.feature_capture: FeatureCapture | None = None
+        self.feature_capture = feature_capture
+        self.owns_feature_capture = (
+            feature_capture is None and not self.spec.uses_draft_model()
+        )
         self.prepare_queue: deque[tuple[int, Future[bool]]] = deque()
         self.prepare_queue_lock = Lock()
         self.next_sequence = 0
@@ -176,8 +186,11 @@ class RemoteProposer(BaseSpeculator):
         self.draft_tokens = torch.zeros(
             self.max_reqs, self.k, dtype=torch.int64, device=self.device
         )
-        self.draft_logits = None
-        if self.spec.draft_sample_method == "probabilistic":
+        self.draft_logits = draft_logits
+        if (
+            self.draft_logits is None
+            and self.spec.draft_sample_method == "probabilistic"
+        ):
             self.draft_logits = torch.zeros(
                 self.max_reqs,
                 self.k,
@@ -206,7 +219,7 @@ class RemoteProposer(BaseSpeculator):
 
     def bind_target_model(self, target_model):
         """Bind stable feature buffers and peer ownership before native graph capture."""
-        if not self.spec.uses_draft_model():
+        if self.feature_capture is None and not self.spec.uses_draft_model():
             self.feature_capture = FeatureCapture(
                 self.config,
                 target_model,
@@ -214,15 +227,16 @@ class RemoteProposer(BaseSpeculator):
                 self.device,
                 self.runner.use_aux_hidden_state_outputs,
             )
+            self.owns_feature_capture = True
         self._open()
 
-    def prepare_target_forward(self, input_batch):
+    def prepare_target_forward(self, input_batch, *, prepare_features=True):
         """Retire feature-buffer reads before the native forward reuses their storage."""
         if self.failed:
             raise RuntimeError("the Draft binding has failed")
         if getattr(self.runner, "warming_up", False):
             return
-        if self.feature_capture is not None:
+        if prepare_features and self.feature_capture is not None:
             self.feature_capture.prepare_forward()
         self.device_requests = []
         if (
@@ -324,6 +338,18 @@ class RemoteProposer(BaseSpeculator):
                 "logits",
                 [self.max_reqs, self.k, self.config.model_config.get_vocab_size()],
                 "float32",
+            )
+        if (
+            features is not None
+            and self.exchange is not None
+            and features.exchange is not self.exchange
+        ):
+            # A pooled Target shares the captured device buffer, while every
+            # child still owns a separate host-side transport allocation.
+            self.exchange.allocate(
+                "features",
+                list(features.destination.shape),
+                str(features.destination.dtype).removeprefix("torch."),
             )
         request = OpenPeer(
             protocol_version=PEER_PROTOCOL_VERSION,
@@ -665,7 +691,10 @@ class RemoteProposer(BaseSpeculator):
                 # metadata. The control binding owns the receiver throughout.
                 with record_function_or_nullcontext("DT Target transfer"):
                     self.feature_capture.transfer(
-                        staged.feature_rows, self.destination, self.nccl
+                        staged.feature_rows,
+                        self.destination,
+                        self.nccl,
+                        self.exchange,
                     )
                 if execute:
                     self.nccl.send_device_inputs(
@@ -864,8 +893,133 @@ class RemoteProposer(BaseSpeculator):
                         )
                 finally:
                     try:
-                        if self.feature_capture is not None:
+                        if self.feature_capture is not None and self.owns_feature_capture:
                             self.feature_capture.close()
                     finally:
                         if self.exchange is not None:
                             self.exchange.close()
+
+
+class RemoteProposerPool(BaseSpeculator):
+    """Assign Target requests to stable Draft peers while keeping each native batch homogeneous."""
+
+    supports_mm_inputs = False
+
+    def __init__(self, worker, settings: Settings):
+        endpoints = settings.endpoints
+        if len(endpoints) < 2:
+            raise ValueError("the Draft proposer pool requires at least two endpoints")
+        self.runner = worker.model_runner
+        self.config = worker.vllm_config
+        self.spec = self.config.speculative_config
+        self.device = worker.device
+        self.assignments: dict[str, RemoteProposer] = {}
+        self.children: list[RemoteProposer] = []
+        self.feature_capture: FeatureCapture | None = None
+        draft_logits = None
+        if self.spec.draft_sample_method == "probabilistic":
+            draft_logits = torch.zeros(
+                self.config.scheduler_config.max_num_seqs,
+                self.spec.num_speculative_tokens,
+                self.config.model_config.get_vocab_size(),
+                dtype=torch.float32,
+                device=self.device,
+            )
+        for endpoint in endpoints:
+            child_settings = Settings(role="target", protocol=settings.protocol)
+            child_settings._endpoint = endpoint
+            child_settings._endpoints = (endpoint,)
+            self.children.append(
+                RemoteProposer(worker, child_settings, draft_logits=draft_logits)
+            )
+        self.draft_logits = draft_logits
+
+    def init_cudagraph_manager(self, mode):
+        """Keep Target graph ownership native; pooled Draft peers remain outside capture."""
+
+    def capture(self):
+        """Remote pooled work is outside the Target's CUDA graph capture."""
+
+    def _select_request_peer(self, request_id: str) -> RemoteProposer:
+        """Choose a stable peer for one request until its native session is released."""
+        del request_id
+        return min(
+            self.children,
+            key=lambda child: (
+                sum(assigned is child for assigned in self.assignments.values()),
+                self.children.index(child),
+            ),
+        )
+
+    def add_request(self, request):
+        """Attach a request to one Draft peer and expose its scheduler affinity."""
+        child = self._select_request_peer(request.req_id)
+        extra = dict(request.sampling_params.extra_args or {})
+        extra["dt_peer_id"] = child.peer_id
+        request.sampling_params.extra_args = extra
+        request.dt_peer_id = child.peer_id
+        self.assignments[request.req_id] = child
+        child.add_request(request)
+
+    def remove_requests(self, request_ids: set[str]) -> None:
+        """Finish each peer's native sessions before dropping Target request affinity."""
+        grouped: dict[RemoteProposer, set[str]] = {}
+        for request_id in request_ids:
+            child = self.assignments.get(request_id)
+            if child is not None:
+                grouped.setdefault(child, set()).add(request_id)
+        for child, ids in grouped.items():
+            child.remove_requests(ids)
+        for request_id in request_ids:
+            self.assignments.pop(request_id, None)
+
+    def _peer_for_batch(self, request_ids: list[str]) -> RemoteProposer:
+        """Require native scheduling to present one Draft affinity per Target batch."""
+        peers = {self.assignments[request_id] for request_id in request_ids}
+        if len(peers) != 1:
+            raise RuntimeError("M:N Draft scheduling produced a mixed-peer Target batch")
+        return peers.pop()
+
+    def bind_target_model(self, target_model):
+        """Open every Draft peer while sharing one captured Target feature buffer."""
+        first, *rest = self.children
+        first.bind_target_model(target_model)
+        self.feature_capture = first.feature_capture
+        first.owns_feature_capture = False
+        for child in rest:
+            child.feature_capture = self.feature_capture
+            child.owns_feature_capture = False
+            child._open()
+
+    def prepare_target_forward(self, input_batch):
+        """Prepare the selected peer after retiring the shared feature buffer once."""
+        if getattr(self.runner, "warming_up", False) or not input_batch.num_reqs:
+            return
+        peer = self._peer_for_batch(list(input_batch.req_ids))
+        if self.feature_capture is not None:
+            self.feature_capture.prepare_forward()
+        peer.prepare_target_forward(input_batch, prepare_features=False)
+
+    def propose(self, input_batch, *args, **kwargs):
+        """Run one homogeneous Target batch on its request-affined Draft peer."""
+        if kwargs.get("dummy_run", False) or getattr(self.runner, "warming_up", False):
+            return self.children[0].propose(input_batch, *args, **kwargs)
+        peer = self._peer_for_batch(list(input_batch.req_ids))
+        return peer.propose(input_batch, *args, **kwargs)
+
+    def close(self) -> None:
+        """Close every peer before releasing the shared Target feature capture."""
+        failure = None
+        try:
+            for child in self.children:
+                try:
+                    child.close()
+                except BaseException as error:
+                    if failure is None:
+                        failure = error
+        finally:
+            if self.feature_capture is not None:
+                self.feature_capture.close()
+                self.feature_capture = None
+        if failure is not None:
+            raise failure

@@ -49,6 +49,8 @@ pub struct LaunchPlanV1 {
 pub struct DraftTargetPlan {
     pub role: SpeculationRole,
     pub draft_artifacts: Option<ModelArtifacts>,
+    #[serde(default)]
+    pub draft_endpoints: Vec<String>,
     pub draft_endpoint: Option<String>,
     pub protocol: DraftTargetProtocol,
 }
@@ -212,10 +214,15 @@ impl LaunchPlanV1 {
                     return Err("Draft and Target must use the same model source".into());
                 }
             }
-            if dt.role == SpeculationRole::Target
-                && dt.draft_endpoint.as_ref().is_none_or(String::is_empty)
-            {
-                return Err("Target launch requires a Draft endpoint".into());
+            if dt.role == SpeculationRole::Target {
+                if dt.draft_endpoints.iter().any(String::is_empty) {
+                    return Err("Target launch contains an empty Draft endpoint".into());
+                }
+                if dt.draft_endpoints.is_empty()
+                    && dt.draft_endpoint.as_ref().is_none_or(String::is_empty)
+                {
+                    return Err("Target launch requires a Draft endpoint pool".into());
+                }
             }
         }
         let p = &self.parallelism;
@@ -373,12 +380,19 @@ impl LaunchPlanV1 {
             && dt.role == SpeculationRole::Target
         {
             // Peer bindings change across deployments without changing the compiled graph.
-            command.env(
-                "FORETOKEN_DT_DRAFT_ENDPOINT",
-                dt.draft_endpoint
-                    .as_deref()
-                    .expect("validated Target endpoint"),
-            );
+            let endpoint = dt
+                .draft_endpoint
+                .as_deref()
+                .or_else(|| dt.draft_endpoints.first().map(String::as_str))
+                .expect("validated Target endpoint");
+            let endpoints = if dt.draft_endpoints.is_empty() {
+                serde_json::to_string(&vec![endpoint]).expect("Draft endpoint pool is serializable")
+            } else {
+                serde_json::to_string(&dt.draft_endpoints)
+                    .expect("Draft endpoint pool is serializable")
+            };
+            command.env("FORETOKEN_DT_DRAFT_ENDPOINT", endpoint);
+            command.env("FORETOKEN_DT_DRAFT_ENDPOINTS", endpoints);
         }
         match &self.kv {
             KvPlan::Pd {

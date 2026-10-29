@@ -215,20 +215,30 @@ pub async fn spawn_engine_attempt(
     {
         // Native model inference owns feature requirements. Apply them before
         // EngineCore constructs its CPU scheduler and prefix-cache manager.
-        let endpoint = dt
-            .draft_endpoint
-            .as_deref()
-            .expect("validated Target endpoint");
-        let status =
-            tokio::time::timeout_at(startup_deadline.into(), DraftClient::wait_peer(endpoint))
-                .await
-                .map_err(|_| {
-                    EngineStartupFailure::Other(io::Error::other(
-                        "Draft readiness exceeded the startup deadline",
-                    ))
-                })?
-                .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
-        if status.requires_target_features {
+        let endpoints: Vec<String> = if dt.draft_endpoints.is_empty() {
+            vec![
+                dt.draft_endpoint
+                    .as_deref()
+                    .expect("validated Target endpoint")
+                    .to_owned(),
+            ]
+        } else {
+            dt.draft_endpoints.clone()
+        };
+        let mut requires_target_features = false;
+        for endpoint in endpoints {
+            let status =
+                tokio::time::timeout_at(startup_deadline.into(), DraftClient::wait_peer(&endpoint))
+                    .await
+                    .map_err(|_| {
+                        EngineStartupFailure::Other(io::Error::other(
+                            "Draft readiness exceeded the startup deadline",
+                        ))
+                    })?
+                    .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+            requires_target_features |= status.requires_target_features;
+        }
+        if requires_target_features {
             match config
                 .launch
                 .engine_args

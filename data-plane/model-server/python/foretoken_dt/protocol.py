@@ -3,6 +3,7 @@
 
 """Control messages for native Draft/Target tensor transfers and retained turns."""
 
+import json
 import os
 from typing import Literal
 
@@ -24,11 +25,17 @@ class Settings(Message):
     role: Literal["draft", "target"]
     protocol: TransferProtocol
     _endpoint: str | None = PrivateAttr(default=None)
+    _endpoints: tuple[str, ...] = PrivateAttr(default=())
 
     @property
     def endpoint(self) -> str | None:
         """Read the launcher's peer binding without including it in graph settings."""
         return self._endpoint
+
+    @property
+    def endpoints(self) -> tuple[str, ...]:
+        """Read every launcher-provided Draft endpoint in the shared pool."""
+        return self._endpoints
 
     @classmethod
     def from_engine(cls, config):
@@ -38,11 +45,32 @@ class Settings(Message):
             raise ValueError("the DT worker requires additional_config.foretoken_dt")
         result = cls.model_validate(value)
         if result.role == "target":
-            result._endpoint = os.environ.get("FORETOKEN_DT_DRAFT_ENDPOINT")
-            if not result._endpoint:
+            raw = os.environ.get("FORETOKEN_DT_DRAFT_ENDPOINTS")
+            endpoints: list[str] = []
+            if raw:
+                try:
+                    decoded = json.loads(raw)
+                except json.JSONDecodeError as error:
+                    raise ValueError(
+                        "the DT Target endpoint pool is not valid JSON"
+                    ) from error
+                if not isinstance(decoded, list) or not all(
+                    isinstance(endpoint, str) and endpoint for endpoint in decoded
+                ):
+                    raise ValueError(
+                        "the DT Target endpoint pool must contain nonempty strings"
+                    )
+                endpoints = decoded
+            if not endpoints:
+                endpoint = os.environ.get("FORETOKEN_DT_DRAFT_ENDPOINT")
+                if endpoint:
+                    endpoints = [endpoint]
+            if not endpoints:
                 raise ValueError(
-                    "the DT Target requires its launcher-provided Draft endpoint"
+                    "the DT Target requires its launcher-provided Draft endpoint pool"
                 )
+            result._endpoints = tuple(dict.fromkeys(endpoints))
+            result._endpoint = result._endpoints[0]
         return result
 
 

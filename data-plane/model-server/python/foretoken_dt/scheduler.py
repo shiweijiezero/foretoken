@@ -133,6 +133,12 @@ class DraftTurns:
                 raise ValueError(
                     "Draft input arrived before the previous turn finished"
                 )
+            peer_id = getattr(previous, "dt_peer_id", None)
+            if peer_id is not None:
+                request.dt_peer_id = peer_id
+                extra = dict(request.sampling_params.extra_args or {})
+                extra["dt_peer_id"] = peer_id
+                request.sampling_params.extra_args = extra
             for queue in self.dt_waiting_queues:
                 queue.remove_requests((previous,))
             if previous.status != RequestStatus.WAITING_FOR_STREAMING_REQ:
@@ -461,6 +467,11 @@ class DraftTurns:
             prompt_length,
             update.sampling_params,
         )
+        peer_id = getattr(session, "dt_peer_id", None)
+        if peer_id is not None:
+            extra = dict(update.sampling_params.extra_args or {})
+            extra["dt_peer_id"] = peer_id
+            update.sampling_params.extra_args = extra
 
         # Native session resumption retains computed output tokens and appends
         # new input. Limit that frontier to the prefix confirmed by the Target.
@@ -639,6 +650,17 @@ class DraftTurns:
             )
         )
 
+    @staticmethod
+    def _draft_peer_id(request):
+        """Return the stable Draft affinity for a request, if a pooled Target assigned one."""
+        peer_id = getattr(request, "dt_peer_id", None)
+        if peer_id is not None:
+            return peer_id
+        turn = getattr(request, "dt_reserved_turn", None)
+        if turn is not None:
+            return turn.peer_id
+        return (request.sampling_params.extra_args or {}).get("dt_peer_id")
+
     def schedule(self, throttle_prefills=False):
         """Batch compatible ready rows under native arrival and priority policy."""
         ready = [request for request in self.requests.values() if self._ready(request)]
@@ -660,13 +682,20 @@ class DraftTurns:
                 ),
                 default=None,
             )
+        selected_peer_id = self._draft_peer_id(selected) if selected is not None else None
         self._device_batch_active = (
             selected is not None
             and getattr(selected, "dt_reserved_turn", None) is not None
         )
-        for request in self.running:
-            if not self._ready(request) or self._device_batch_active != (
-                getattr(request, "dt_reserved_turn", None) is not None
+        for request in self.requests.values():
+            if (
+                not self._ready(request)
+                or self._device_batch_active
+                != (getattr(request, "dt_reserved_turn", None) is not None)
+                or (
+                    selected_peer_id is not None
+                    and self._draft_peer_id(request) != selected_peer_id
+                )
             ):
                 request.next_decode_eligible_step = self.current_step + 2
             else:

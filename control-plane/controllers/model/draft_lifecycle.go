@@ -19,10 +19,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// draftBindingContains matches the Draft instance selected for this Target process.
+// draftBindingContains matches any Draft instance frozen into this Target's shared pool.
 func draftBindingContains(target, draft *api.ModelGroup) bool {
-	binding := target.Spec.SelectedDraftGroup()
-	return binding != nil && binding.PoolRef.UID == draft.Spec.ModelPoolRef.UID && binding.Revision == draft.Spec.Revision && binding.GroupRef.Name == draft.Name && binding.GroupRef.UID == string(draft.UID)
+	return slices.ContainsFunc(target.Spec.DraftGroups, func(binding api.DraftGroupBinding) bool {
+		return binding.PoolRef.UID == draft.Spec.ModelPoolRef.UID && binding.Revision == draft.Spec.Revision && binding.GroupRef.Name == draft.Name && binding.GroupRef.UID == string(draft.UID)
+	})
 }
 
 // retireDraftConsumers drains Target owners before the shared Draft closes its own admission.
