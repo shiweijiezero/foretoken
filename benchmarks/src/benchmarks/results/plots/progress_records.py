@@ -27,7 +27,7 @@ from benchmarks.results.recording.database import read_records
 class _Measurement(_ProgressRecord):
     """One owner's selected repetitions and judgment for a comparison scope."""
 
-    runs: list[str] = Field(min_length=1)
+    runs: list[str] = Field(default_factory=list)
     status: Literal["valid", "reference", "incorrect", "compile_failed", "runtime_failed"]
     retained: bool = False
     parent: str | None = None
@@ -35,6 +35,8 @@ class _Measurement(_ProgressRecord):
     @model_validator(mode="after")
     def retained_result(self) -> _Measurement:
         """Keep retention separate from failures and unresolved output questions."""
+        if not self.runs and self.status in {"valid", "reference"}:
+            raise ValueError("Measured and reference judgments need saved runs")
         if self.retained and self.status != "valid":
             raise ValueError("A retained measurement must have status: valid")
         return self

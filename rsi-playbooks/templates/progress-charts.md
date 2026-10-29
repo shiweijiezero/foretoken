@@ -47,12 +47,14 @@ Paths are relative to the record. A run can name a command directory or a specif
 | `label` | The full measured configuration or change from its named parent. |
 | `baseline` | Mark only the user's initial configuration, once per scope. Defaults to false. |
 | `measurements` | A mapping from comparison scope to selected runs and judgment. |
-| `runs` | Existing command/result directories for one approach and workload. |
+| `runs` | Existing command/result directories for one approach and workload; pre-evaluation failures may omit runs and link build/diagnostic logs from `iteration.md`. |
 | `status` | `valid`, `reference`, `incorrect`, `compile_failed` or `runtime_failed`. |
 | `retained` | Whether this measured version is adopted for this scope. Defaults to false; requires `valid`. |
 | `parent` | The actual measured parent command/result directory. Required for a retained candidate; not required for the original baseline. |
 
 A scope such as `random-concurrency-1` identifies the workload and comparison condition. Separate incompatible protocols, cache conditions or hardware comparisons rather than pooling them as repetitions. The command checks known workload fields across a scope and its measured parents, requiring separate scopes for conflicting workloads. Hardware differences remain in the original environment evidence and do not by themselves reject a historical reference. Original-baseline percentages describe the recorded change; the table also retains the explicitly measured local parent and its delta. If that scope has no original baseline, values remain absolute and charts show that the baseline is unmeasured.
+
+The search legend uses translucent purple for Correct eval, orange dots for Incorrect result, red crosses for Compile failure and gray squares for Runtime failure; bottom-strip failures have no performance value, and gray/blue references stay outside the best-so-far curve.
 
 Use `reference` when measured speed is available but an applicable output or quality question is unresolved. References appear in the search view without entering the best-so-far curve or retained milestones. Failed judgments remain visible even when they have no metrics. Retention is recorded by the responsible owner from the applicable evidence; the command does not adopt the fastest point.
 

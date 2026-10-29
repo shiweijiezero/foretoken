@@ -231,7 +231,7 @@ def _annotate(axis: Any, points: list[dict[str, Any]], data: dict[str, Any], col
             continue
         ratio = _gain(point["value"], data)
         label = VPacker(children=[
-            TextArea(_ratio_label(ratio), textprops={"color": color, "fontsize": 9,
+            TextArea(_ratio_label(ratio), textprops={"color": color, "fontsize": 9.5,
                                                   "fontfamily": "DejaVu Sans", "weight": "bold",
                                                   "url": point["source"]}),
             TextArea(_wrap(point["label"], 145, 8, renderer),
@@ -286,15 +286,15 @@ def _plot_search(
             peak_source = point["source"]
         best.append(peak)
     axis.step([0, *xs, last_x], [*best, best[-1]], where="post",
-              color=color, lw=1.6, label="Best so far", zorder=4)
+              color=color, lw=1.9, label="Best so far", zorder=4)
     labeled = valid
+    axis.scatter(xs, ratios, color=color, alpha=0.35, s=18, label="Correct eval", zorder=3)
     if valid:
-        axis.scatter(xs, ratios, color=color, alpha=0.30, s=12, zorder=3)
         named = [(point["x"], ratio) for point, ratio in zip(valid, ratios) if point.get("label")]
         if named:
-            axis.scatter(*zip(*named), s=29, facecolors="white", edgecolors=color, linewidths=1.1, zorder=5)
+            axis.scatter(*zip(*named), s=40, facecolors="white", edgecolors=color, linewidths=1.3, zorder=5)
         endpoint_label = valid[-1].get("label") if xs[-1] == last_x and ratios[-1] == peak else None
-        axis.annotate(f"Foretoken {_ratio_label(peak)}", (last_x, peak), xytext=(-2, 22 if endpoint_label else 7),
+        axis.annotate(f"Best so far {_ratio_label(peak)}", (last_x, peak), xytext=(-2, 22 if endpoint_label else 7),
                       textcoords="offset points", ha="right", va="bottom", color=color,
                       fontsize=9, fontfamily="DejaVu Sans", weight="bold", url=peak_source)
         if endpoint_label:
@@ -302,21 +302,21 @@ def _plot_search(
                           ha="right", va="bottom", color="#666c78", fontsize=8, url=valid[-1]["source"])
             labeled = valid[:-1]
     axis.annotate(f"{data['baseline']['label']} 1×", (last_x, 1), xytext=(-2, -5),
-                  textcoords="offset points", ha="right", va="top", color="#8c909b", fontsize=8,
+                  textcoords="offset points", ha="right", va="top", color="#626572", fontsize=8,
                   url=data["baseline"]["source"])
-    palette = ("#9c9da8", "#b0a8dd", "#8792c9", "#b9bbc3")
+    palette = ("#9b9da8", "#5168ff", "#7e8494", "#ada5df")
     for index, reference in enumerate(data.get("references", [])):
         reference_color = palette[index % len(palette)]
         if "points" in reference:
             rx = [point["x"] for point in reference["points"]]
             ry = [_gain(point["value"], data) for point in reference["points"]]
-            axis.plot(rx, ry, color=reference_color, lw=1.1,
+            axis.plot(rx, ry, color=reference_color, lw=1.25, label=reference["label"],
                       marker="o" if len(rx) == 1 else None, ms=3.5, url=reference["source"])
             end_x, end_y = rx[-1], ry[-1]
             ratios.extend(ry)
         else:
             end_x, end_y = last_x, _gain(reference["value"], data)
-            axis.axhline(end_y, color=reference_color, ls="--", lw=0.9, url=reference["source"])
+            axis.axhline(end_y, color=reference_color, ls="--", lw=1.1, label=reference["label"], url=reference["source"])
             ratios.append(end_y)
         axis.annotate(f"{reference['label']} {_ratio_label(end_y)}", (end_x, end_y), xytext=(-2, 4),
                       textcoords="offset points", ha="right", va="bottom", color=reference_color,
@@ -359,7 +359,19 @@ def render_progress(data: dict[str, Any], path: Path, writer: FigureWriter) -> N
             subtitle = _wrap(data.get("subtitle", ""), 12.1 * figure.dpi, 8, renderer)
             title_height = 0.24 * len(title.splitlines())
             header = 0.23 + title_height + 0.17 * len(subtitle.splitlines())
-            footer = 0.75 if search else 0.50
+            footer = 0.50
+            legend_columns = 1
+            if search:
+                # Reserve physical space for wrapped legend rows before placing
+                # the plot and its x label; references can add several rows.
+                legend_labels = ["Best so far", "Correct eval", *[failure[0] for failure in _FAILURES.values()],
+                                 baseline["label"], *[reference["label"] for reference in data.get("references", [])]]
+                wrapped = [_wrap(label, 2.8 * figure.dpi, 8.5, renderer) for label in legend_labels]
+                text_width = max(renderer.get_text_width_height_descent(line, FontProperties(size=8.5), False)[0]
+                                 for label in wrapped for line in label.splitlines()) / figure.dpi
+                legend_columns = max(1, min(5, math.floor(12.5 / (text_width + 0.65))))
+                rows = math.ceil(len(wrapped) / legend_columns)
+                footer = 0.65 + rows * (0.15 * max(len(label.splitlines()) for label in wrapped) + 0.12)
             height = header + 4.0 + footer
             figure.set_size_inches(14, height)
             axis = figure.add_axes((0.07, footer / height, 0.90, 4.0 / height))
@@ -395,7 +407,7 @@ def render_progress(data: dict[str, Any], path: Path, writer: FigureWriter) -> N
                 axis.text(0.5, 0.48, "Awaiting baseline measurement", transform=axis.transAxes,
                           ha="center", color="#7c879b", fontsize=15)
             else:
-                axis.axhline(1, color="#999ca6", ls="--", lw=0.85)
+                axis.axhline(1, color="#42444e", ls="--", lw=1.05, label=baseline["label"], zorder=4.5)
                 baseline_point = {"x": 0, "label": "" if search else baseline["label"], "source": baseline["source"],
                                   "value": baseline["value"]}
                 if search:
@@ -435,15 +447,28 @@ def render_progress(data: dict[str, Any], path: Path, writer: FigureWriter) -> N
                 failures.set_axis_off()
                 for status, (label, failure_color, marker) in _FAILURES.items():
                     xs = [point["x"] for point in data["points"] if point["status"] == status]
-                    if xs:
-                        failures.scatter(xs, [0] * len(xs), color=failure_color, marker=marker, s=16, label=label)
-                figure.text(0.52, 0.34 / height, data["x_label"], ha="center", color="#647086", fontsize=9)
+                    # Empty artists retain the category key when this history
+                    # has no attempt of that type; they add no measured points.
+                    failures.scatter(xs, [0] * len(xs), color=failure_color, marker=marker, s=22, label=label)
+                figure.text(0.52, (footer - 0.34) / height, data["x_label"], ha="center", color="#647086", fontsize=9)
                 handles, labels = axis.get_legend_handles_labels()
+                if "Correct eval" not in labels:
+                    handles.append(axis.scatter([], [], color=color, alpha=0.35, s=18))
+                    labels.append("Correct eval")
                 failure_handles, failure_labels = failures.get_legend_handles_labels()
-                handles, labels = [*handles, *failure_handles], [*labels, *failure_labels]
-                if handles:
-                    figure.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.52, 0.01 / height),
-                                  frameon=False, ncol=5, fontsize=8)
+                primary = [(handle, label) for handle, label in zip(handles, labels) if label in {"Best so far", "Correct eval"}]
+                remaining = [(handle, label) for handle, label in zip(handles, labels) if label not in {"Best so far", "Correct eval"}]
+                items = [*primary, *zip(failure_handles, failure_labels), *remaining]
+                # Matplotlib fills legend columns; reorder to keep the category
+                # key readable from left to right before baseline/references.
+                rows = math.ceil(len(items) / legend_columns)
+                items = [items[row * legend_columns + column] for column in range(legend_columns)
+                         for row in range(rows) if row * legend_columns + column < len(items)]
+                figure.legend([handle for handle, _ in items],
+                              [_wrap(label, 2.8 * figure.dpi, 8.5, renderer) for _, label in items],
+                              loc="lower center", bbox_to_anchor=(0.52, 0.06 / height),
+                              frameon=False, ncol=legend_columns, fontsize=8.5,
+                              handlelength=2, columnspacing=1.3, labelspacing=0.65)
 
             figure.text(0.07, 1 - 0.08 / height, title, fontsize=14, color="#303642", va="top")
             if subtitle:

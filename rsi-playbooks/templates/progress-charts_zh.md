@@ -47,12 +47,14 @@ measurements:
 | `label` | 完整实测配置，或相对具名父方案的改动。 |
 | `baseline` | 仅标记用户最初配置，每个 scope 一项；默认 false。 |
 | `measurements` | 从比较范围 scope 到所选运行和判断的映射。 |
-| `runs` | 一个方案、一个负载的既有命令／结果目录。 |
+| `runs` | 一个方案、一个负载的既有命令／结果目录；发生在评测前的失败可省略此项，由 `iteration.md` 链接构建／诊断日志。 |
 | `status` | `valid`、`reference`、`incorrect`、`compile_failed` 或 `runtime_failed`。 |
 | `retained` | 是否在此 scope 采用该实测版本；默认 false，采用项必须为 `valid`。 |
 | `parent` | 实测父方案的命令／结果目录。采用的候选必须填写，最初 baseline 不需要。 |
 
 `random-concurrency-1` 这样的 scope 说明负载和比较条件。不同协议、缓存条件或硬件条件分别记录，不混为重复测量。命令核对同一 scope 及其父方案已知的负载字段，存在冲突时要求分开记录；硬件变化保留在原始环境证据中，不因此拒绝历史参照。相对最初 baseline 的百分比描述已有观测，表中另保留明确测量过的局部父配置及其变化。该 scope 没有原始 baseline 时保留绝对值，图中显示基线未测量。
+
+搜索图用半透明紫点表示 Correct eval、橙点表示 Incorrect result、红叉表示 Compile failure、灰方表示 Runtime failure；下方失败标记没有性能数值，灰蓝参照不进入最佳曲线。
 
 速度已测得而适用的输出或质量问题未解决时使用 `reference`。它出现在搜索图中，但不进入最佳曲线或采用里程碑。失败判断在没有指标时仍显示。采用由责任人根据适用证据记录，命令不会自动选择最快点。
 
