@@ -11,6 +11,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 使用交互式 Agent Team。创建成员前确认 Teams 已启用；未启用时，按[启动说明](../../../rsi-playbooks/README_zh.md#claude-code)打开专用会话。SDK 或非交互会话中的命名子 Agent 不是 Team 成员。
 
+项目 `.claude/settings.json` 已启用 Claude Code 的 Ultracode 动态工作流。Ultracode 决定实质任务何时需要生成工作流，Agent Team 负责长期成员、直接通信和唤醒；任务中指定的模型与 effort 仍然有效。
+
 用户在初始会话设置一个 `/goal`，确定任务结果和预算，成员自行推进日常工作与交付，不另设目标。原生 Teams 提供成员身份、直接通信和唤醒，共享 RSI 工作池负责工作归属和依赖，不在原生 Task 工具再维护第二份归属或依赖记录。
 
 按共用的[接续流程](../../../.agents/skills/rsi/continuation_zh.md)使用 `--harness claude`。只为持续研究和执行的成员登记原生 ID 或 teammate name；项目 `TeammateIdle` hook 让成员继续所持工作或领取就绪工作，无需另建队友。

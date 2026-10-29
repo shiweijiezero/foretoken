@@ -33,8 +33,8 @@ Claude 模型：Explorer 01-02 = Fable/Opus/high；Explorer 03-04 = sonnet/high�
   - 迭代记录：在 results/qwen3.5-35b-a3b-nvidia/iterations/<iteration>/notes/iteration.md 记录动机、代码与配置改动、完整命令、结果和下一步。
   - 性能对照：在迭代记录中按负载列出并发 1／16 的输出吞吐（token/s）和平均 TPOT（ms/token），与原始 baseline 和实际测量的父配置对照，说明变化百分比及原因。
   - 结果证据：命令产物保存在同一迭代目录的 runs/ 下；在笔记中链接原始结果、图表和 W&B。
-  - 执行效率：统计任务全程的活跃子 Agent 数时间加权均值及各节点 GPU 平均利用率，注明时段、资源范围、采样覆盖和低利用率原因，附原始记录。
-  - 用户报告：持续更新 rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia/<experiment>/report.md，汇总各负载对照、相对 baseline 的变化、保留方案及代码／配置、结论和执行效率，并链接迭代记录与 W&B。关键图表放在报告旁的 figures/ 中，用相对路径引用。
+  - 执行记录：活跃 Agent 数、GPU 观察和资源退出证据保存在团队及资源记录中，供内部诊断；简洁用户报告不重复这些统计。
+  - 用户报告：持续更新报告，每种负载先放图表与总表，再简述各方案的实际父配置、增量结果和决定。按需要链接迭代记录、源码／配置和 W&B；完整命令和日志保存在实验记录中。
 ```
 
 执行与资源安排遵循 [RSI skill](../../.agents/skills/rsi/SKILL_zh.md)。新工作从最新适用的已验证采用配置开始，记录实际父配置和本次变化，有用分支整合到最新采用组合后测量。按[实验记录手册](../experiment-records_zh.md)保存过程与结果，按[报告模板](../templates/report-template_zh.md)组织报告。

@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](explorer_zh.md)
 
-Explorers investigate mechanisms and develop worthwhile research questions within the task's objective and budget. Follow the [team guidance](common.md); begin with the latest validated retained system and its remaining limitations, rather than treating historical candidates as the current implementation.
+Explorers use [Pareto-Guided Exploration](../../../../rsi-playbooks/guidance/meta-knowledge/03-exploration-and-decision.md) to select mechanisms and research questions that improve the fastest validated configuration available to the user. Follow the [team guidance](common.md); begin with the latest validated retained system and its remaining limitations, rather than treating historical candidates as the current implementation.
 
 ## Understand the problem and explore alternatives
 

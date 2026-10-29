@@ -60,6 +60,8 @@ python3 -I .agents/skills/rsi/scripts/continuation.py submit \
 
 完成时运行 `finish --agent "$RSI_AGENT" --work "$RSI_WORK" --result "$RSI_RESULT"`，并传入相同 harness/session。产物必须是已有文件或分析，其中写清实际结果。有用证据到达就发布后续工作，不等整套矩阵；已知的空闲使用者需要恢复时用原生 follow-up。共享工作领取与原生 Agent 派发是两项操作。
 
+`submit`、`finish`、`handoff` 和旧 `queue` 的响应会在存在熟悉且可用的成员或其他空闲合格成员时返回简短的 `notifications` 路由。产出者通过原生 follow-up 或成员间直接消息发送提醒；提醒只发给这些对象，不广播给全体。没有发送提醒时，成员仍可领取就绪工作。
+
 用 `handoff --agent "$RSI_AGENT" --work "$RSI_WORK" --reason "$RSI_REASON"` 加相同 harness/session，将同一工作交回供其他成员领取。原因注明原运行作业、产物和下一恢复动作，接手者先检查原件，不把交接当新实验。原生成员已停止时，同级成员可用 `handoff --from-agent EXPECTED_OWNER` 恢复工作，在原因中记录停止证据和原作业位置；只有旧负责人仍持有该项时才改变归属，随后按正常流程领取就绪工作。`status` 可查看工作、责任人与结果。旧 `queue` 接口在共享池中替换该成员尚未领取的下一步，运行中和已交接的恢复工作保持不变；待办不为指定成员保留。
 
 ## 周期巡查
@@ -68,7 +70,7 @@ python3 -I .agents/skills/rsi/scripts/continuation.py submit \
 
 空闲成员领取派发工作，只向全新 Evaluator 提供任务、角色和工作目录，接收其评估路径。实际评估保存后，再用它完成派发工作，不能用启动通知代替。Evaluator 将可执行发现直接交给相关负责人，不产生常设调度者或报告作者。
 
-工作池排期是唯一的评估时间表，由仍在运行的原生成员消费，不是后台 daemon，运行环境退出后不会自行派发。不通过提醒另建第二套评估排期。
+工作池排期是唯一的评估时间表，存活成员的 idle hook 或 claim 会生成到期派发项，再由可用成员消费；它不是后台 daemon，运行环境退出后不会自行派发。不通过提醒另建第二套评估排期。
 
 ## 等待、暂停与结束
 

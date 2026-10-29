@@ -18,7 +18,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-
 _pool_spec = importlib.util.spec_from_file_location("rsi_work_pool", Path(__file__).with_name("work_pool.py"))
 _pool_module = importlib.util.module_from_spec(_pool_spec)
 _pool_spec.loader.exec_module(_pool_module)
@@ -236,7 +235,11 @@ class Continuation:
                 "Inspect existing jobs before launching anything again."
             )
         else:
-            action = WorkPool(self.db, harness, session).idle_action(agent)
+            pool = WorkPool(self.db, harness, session)
+            # A live member is enough to materialize a due evaluator dispatch;
+            # no root turn or second reminder scheduler is required.
+            pool.due_evaluations(task)
+            action = pool.idle_action(agent)
             instruction = "Claim eligible ready work first. If none is ready: " + action["instruction"]
         return {"decision": "block", "reason": (
             f"Continue your RSI {member['role']} responsibility for {task['task']}. {instruction} "
@@ -356,6 +359,7 @@ def main() -> None:
                         pool.submit(args.work, args.kind, args.description, args.agent, topic=args.topic,
                                     environment=args.environment, after=args.after, exclude=args.exclude)
                         result = pool.item(args.work)
+                        result["notifications"] = pool.notifications([args.work], args.agent)
                     elif args.command == "claim":
                         result = pool.claim(args.agent)
                         if result is None:
@@ -365,15 +369,18 @@ def main() -> None:
                     elif args.command == "finish":
                         pool.finish(args.work, args.agent, args.result)
                         result = pool.item(args.work)
+                        result["notifications"] = pool.notifications(pool.dependants(args.work), args.agent)
                     elif args.command == "handoff":
                         pool.handoff(args.work, args.agent, args.reason, args.from_agent)
                         result = pool.item(args.work)
+                        result["notifications"] = pool.notifications([args.work], args.agent)
                     elif args.command == "schedule":
                         pool.schedule(args.interval, args.count)
                         result = dict(connection.execute("SELECT interval,count,next_due FROM evaluation_schedule WHERE harness=? AND session=?",
                                                          (args.harness, args.session)).fetchone())
                     elif args.command == "queue":
                         result = pool.item(state.queue(args))
+                        result["notifications"] = pool.notifications([result["id"]], args.agent)
                     else:
                         getattr(state, args.command)(args)
                         if args.command == "release" and args.agent:

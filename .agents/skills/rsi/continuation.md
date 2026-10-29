@@ -60,6 +60,8 @@ For review work, link implementation and execution items with `--after`. Their a
 
 Finish owned work with `finish --agent "$RSI_AGENT" --work "$RSI_WORK" --result "$RSI_RESULT"`, including the same harness/session arguments. The result must be an existing artifact or analysis; its contents state the outcome. Publish follow-on work as useful evidence arrives rather than waiting for a whole matrix. Use native follow-up when a known idle consumer needs to resume. Shared work admission and native agent dispatch are separate operations.
 
+The response to `submit`, `finish`, `handoff` and legacy `queue` includes compact `notifications` routes when a preferred familiar member or another idle qualified member can act. The producer sends that route through native follow-up or direct member messaging; it is targeted and never broadcast. Members can still claim the ready item when no route is delivered.
+
 Use `handoff --agent "$RSI_AGENT" --work "$RSI_WORK" --reason "$RSI_REASON"` with the same harness/session to return the same item for another member. The reason locates the original live jobs, artifacts and next recovery action. The successor inspects them instead of treating the handoff as a new experiment. If the previous native owner has stopped, a peer can use `handoff --from-agent EXPECTED_OWNER`, recording that evidence and the original jobs in the reason. It changes ownership only if that owner still holds the item; the peer then claims eligible work normally. `status` shows work, ownership and results. Legacy `queue` replaces that member’s unclaimed next step in the shared pool. Active work and handed-off recovery work remain unchanged; the pending step is not reserved for its named member.
 
 ## Periodic checks
@@ -68,7 +70,7 @@ Configure `schedule --interval 3600 --count 1` with the harness/session for an h
 
 An available member claims the dispatch, creates a fresh Evaluator with only the task, role and working directory, and receives its assessment path. Finish the dispatch item with that actual saved assessment, not a launch notice. The Evaluator sends actionable findings directly to their owners. No permanent scheduler or report writer is created.
 
-This pool schedule is the only evaluation timetable. Live native members consume it; it is not a daemon and cannot dispatch after the harness exits. Do not create a second evaluation schedule through reminders.
+This pool schedule is the only evaluation timetable. A live member's idle hook or claim materializes a due dispatch, and an available member consumes it; it is not a daemon and cannot dispatch after the harness exits. Do not create a second evaluation schedule through reminders.
 
 ## Wait, pause or finish
 

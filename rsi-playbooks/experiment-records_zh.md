@@ -146,7 +146,7 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 | `iterations/<name>/notes/iteration.md` | 指定 Experimenter 维护摘要与文档索引，追加运行结论、独立审查、决策和更正，注明时间、来源及证据链接。 |
 | `iterations/<name>/notes/` 下的其他文件 | 各作者维护完整方案、计划、分析或复核，由迭代笔记链接。 |
 | `iterations/<name>/notes/progress.yaml` | Experimenter 记录所选运行、实测父配置及各适用范围的判断，绘图命令据此生成共同对比。 |
-| `report.md` | 任务总览链接生成结果和各作者分析，不手工复制指标表。 |
+| `report.md` | 面向用户的简洁总览包含图表、总表和各方案简述，链接生成图及作者分析；完整命令和日志留在实验记录中。 |
 
 分析、审查和决定分别注明作者，每项决定写清行动和适用范围。更正结论或改变决定时，链接旧条目与新依据，保留认识变化的过程。
 
@@ -158,7 +158,7 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 
 ## 持续维护用户报告
 
-任务开始时，按[报告模板](templates/report-template_zh.md)创建 `report.md`，链接任务和结果目录，并向用户提供路径。恢复时沿用同一份总览。各 Experimenter 维护自己迭代的分析与进展记录，无需成员收集其他作者的指标再写一份表。
+任务开始时，按[报告模板](templates/report-template_zh.md)创建 `report.md`，链接任务和结果目录，并向用户提供路径。恢复时沿用同一份报告。各 Experimenter 维护自己迭代的分析与进展记录，证据变化时更新受影响的表格行和方案简述，并刷新生成图。Experimenter 直接协调共享报告的编辑，不设中央作者收集或转抄全队指标。
 
 每个实测阶段结束或判断变化后，更新 `iterations/<name>/notes/progress.yaml`，然后执行：
 
@@ -166,7 +166,7 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 foretoken plot --progress results/decode/parallelism
 ```
 
-命令读取所有迭代所选的既有运行和判断，生成 `figures/progress/progress-summary.md`、对应 CSV 表及原生里程碑图、搜索图。由 `report.md` 链接生成摘要。各 scope 顶部列出已测采用分支末端及实际运行／配置／源码记录，便于后续选择适用的父配置；祖先历史仍保留。指标、重复次数、波动和已记录的源码／配置证据均来自原件，不抄进 YAML 或总览。机制解释、输出差异与独立复核保留在作者的 `iteration.md` 及分析中。
+命令读取所有迭代所选的既有运行和判断，生成 `figures/progress/progress-summary.md`、对应 CSV 表及原生里程碑图、搜索图。使用这些生成数值更新 `report.md` 中的简洁总表，不把完整运行清单复制进去。各 scope 顶部列出已测采用分支末端及实际运行／配置／源码记录，便于后续选择适用的父配置；祖先历史仍保留。指标、重复次数、波动和已记录的源码／配置证据均来自原件。机制解释、输出差异与独立复核保留在作者的 `iteration.md` 及分析中。
 
 例如，候选的进展记录可以选择一次完成的命令及其实测父方案：
 

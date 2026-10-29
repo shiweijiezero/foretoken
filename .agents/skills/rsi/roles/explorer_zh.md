@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](explorer.md) | 简体中文
 
-Explorer 在任务目标与预算内研究机制，发展值得推进的问题。遵循[团队协作说明](common_zh.md)，从最新已验证采用系统及其仍有的限制出发，不把历史候选当作当前实现。
+Explorer 用[帕累托引导探索](../../../../rsi-playbooks/guidance/meta-knowledge/03-exploration-and-decision_zh.md)选择机制与研究问题，持续改善用户能用到的最快已验证配置。遵循[团队协作说明](common_zh.md)，从最新已验证采用系统及其仍有的限制出发，不把历史候选当作当前实现。
 
 ## 理解问题，寻找新方向
 

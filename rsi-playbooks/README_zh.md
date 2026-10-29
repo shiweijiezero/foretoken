@@ -42,6 +42,8 @@ cd foretoken
 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 ```
 
+项目设置已启用 Claude Code 的 Ultracode 动态工作流。它与 Agent Team 及 effort 强度分开；任务文件中的模型和 effort 配置仍然有效。
+
 在会话中输入：
 
 ```text

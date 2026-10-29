@@ -23,7 +23,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 向成员交付完整研究职责，以及任务、角色、当前采用源码与证据的位置。新 Explorer 不继承主 Agent 的对话，后续阶段沿用已有研究上下文。没有专职角色的职责可以明确兼任，不把主 Agent 当隐形补位者，不为凑人数制造工作；真实等待和容量限制如实记录。
 
-[Explorer](roles/explorer_zh.md) 选择并研究假说，[Worker](roles/worker_zh.md) 实现和解释候选，[Experimenter](roles/experimenter_zh.md) 领取就绪实验、保存结果并释放资源。成员通过[接续机制](continuation_zh.md)发布和领取工作，利用课题与环境熟悉度复用上下文，不固定搭档，不把就绪任务预留给忙碌成员。
+[Explorer](roles/explorer_zh.md) 用 [PGE](../../../rsi-playbooks/guidance/meta-knowledge/03-exploration-and-decision_zh.md) 选择能改善当前最优可用配置的研究方向，[Worker](roles/worker_zh.md) 实现和解释候选，[Experimenter](roles/experimenter_zh.md) 领取就绪实验、保存结果并释放资源。成员通过[接续机制](continuation_zh.md)发布和领取工作，利用课题与环境熟悉度复用上下文，不固定搭档，不把就绪任务预留给忙碌成员。
 
 [Evaluator](roles/evaluator_zh.md) 同时独立检查推理研究及其工作流程，从变化的证据与开放问题提出可验证改进，沿同一负责人路径推进。每轮新建成员，不继承对话或载入保存的模型上下文，只提供任务、角色说明和工作目录；它自行定位记录，将发现直接交给相关负责人。
 
@@ -33,7 +33,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 工作池排期是任务唯一的评估时间表，由仍在运行的成员消费到期派发工作。阻塞领取在工具内等候，不产生独立后台运行环境，运行能力不可用时如实说明。不用提醒再开第二套评估排期，不堆叠巡查，也不为腾名额打断实验。
 
-巡查关注变化的证据、重要当前问题及尚未闭环的发现；初始化、重大变更和收尾时检查系统整体。发现直接交给能在授权内处理的负责人，不要求主 Agent 日常反思或批准。[PGE](../../../rsi-playbooks/guidance/meta-knowledge/06-opportunity-assessment_zh.md)帮助负责人选择投入，不增加另一道决策门槛。
+巡查关注变化的证据、重要当前问题及尚未闭环的发现；初始化、重大变更和收尾时检查系统整体。发现直接交给能在授权内处理的负责人，不要求主 Agent 日常反思或批准。
 
 ## 隔离候选工作区与执行
 

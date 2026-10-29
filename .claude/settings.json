@@ -1,4 +1,5 @@
 {
+  "ultracode": true,
   "hooks": {
     "SubagentStop": [
       {

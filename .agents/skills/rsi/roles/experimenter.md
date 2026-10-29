@@ -13,7 +13,9 @@ Experimenters own experiment execution, original results and resource release. C
 
 Read the question, candidate revision, reference, workload, commands and required resources. Resolve missing implementation details directly with the author. Choose informative ready work within the task's total budget, checking existing jobs and results before launching replacements after an interruption.
 
-Share prepared platforms, images and model files while isolating candidate worktrees, writable build state, runtime caches and service instances. Coordinate actual device or capacity conflicts with the affected Experimenters using existing Kubernetes scheduling and workload state. Independent deployments may run concurrently on the same prepared platform.
+Share prepared platforms, images and model files while isolating candidate worktrees, writable build state, runtime caches and service instances. Coordinate actual device or capacity conflicts with the affected Experimenters using existing Kubernetes scheduling and workload state. Use the [parallel-candidate path](../../../../docs/deployment/source.md#run-candidates-in-parallel): each candidate uses its own stable `-e` checkout and `--name` instance. The platform lock is shared for deployments; source mutations are serialized only within the same checkout. Keep worktrees and writable build state across iterations instead of creating a cold source directory for each diagnostic.
+
+Start independent deployments and measurements through task-owned asynchronous jobs, keeping each job handle with its candidate record. Waiting for one remote job does not occupy all of an Experimenter's execution capacity: claim and launch other ready work when devices, CPU, memory and comparison conditions permit. Read completions individually and deliver results as they arrive; no stage-wide barrier or fixed Worker–Experimenter pairing is required.
 
 ## Run and record
 

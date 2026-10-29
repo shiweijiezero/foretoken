@@ -136,24 +136,13 @@ class WorkPool:
         capable = {row[0] for row in self.db.execute("SELECT kind FROM capabilities WHERE harness=? AND session=? AND agent=?", (*self.identity, agent))}
         if not capable:
             raise ValueError("Register this member before claiming work")
-        rows = self.db.execute("""SELECT w.* FROM work w WHERE w.harness=? AND w.session=? AND w.state='ready'
-            AND NOT EXISTS (SELECT 1 FROM dependencies d JOIN work p
-                ON p.harness=d.harness AND p.session=d.session AND p.id=d.dependency
-                WHERE d.harness=w.harness AND d.session=w.session AND d.work=w.id AND p.state!='done')
-            AND NOT EXISTS (SELECT 1 FROM exclusions e WHERE e.harness=w.harness AND e.session=w.session AND e.work=w.id AND e.agent=?)
-            ORDER BY created,id""", (*self.identity, agent)).fetchall()
+        rows = self.ready()
         history = self.db.execute("""SELECT w.topic,w.environment FROM work w JOIN work_participants p
             ON p.harness=w.harness AND p.session=w.session AND p.work=w.id
             WHERE w.harness=? AND w.session=? AND p.agent=? AND w.state IN ('active','done')""", (*self.identity, agent)).fetchall()
         topics = {r[0] for r in history if r[0]}
         environments = {r[1] for r in history if r[1]}
-        eligible = []
-        for row in rows:
-            if row["kind"] not in capable:
-                continue
-            if row["kind"] == "review" and agent in self.contributors(row["id"]):
-                continue
-            eligible.append(row)
+        eligible = [row for row in rows if self.eligible(row, agent, capable)]
         if not eligible:
             return None
         frontier = self.db.execute("""SELECT MAX(w.created) FROM work w JOIN work_participants p
@@ -172,6 +161,62 @@ class WorkPool:
             ON p.harness=d.harness AND p.session=d.session AND p.id=d.dependency
             WHERE d.harness=? AND d.session=? AND d.work=?""", (*self.identity, row["id"]))]
         return result
+
+    def ready(self) -> list[sqlite3.Row]:
+        """Read work whose dependencies are complete for both claims and targeted notices."""
+        return self.db.execute("""SELECT w.* FROM work w WHERE w.harness=? AND w.session=? AND w.state='ready'
+            AND NOT EXISTS (SELECT 1 FROM dependencies d JOIN work p
+                ON p.harness=d.harness AND p.session=d.session AND p.id=d.dependency
+                WHERE d.harness=w.harness AND d.session=w.session AND d.work=w.id AND p.state!='done')
+            ORDER BY created,id""", self.identity).fetchall()
+
+    def eligible(self, work: sqlite3.Row, agent: str, capabilities: set[str]) -> bool:
+        """Apply the same capability and independent-review rules to admission and notification."""
+        excluded = self.db.execute("SELECT 1 FROM exclusions WHERE harness=? AND session=? AND work=? AND agent=?",
+                                   (*self.identity, work["id"], agent)).fetchone()
+        return (work["kind"] in capabilities and not excluded
+                and (work["kind"] != "review" or agent not in self.contributors(work["id"])))
+
+    def notifications(self, work_ids: list[str], sender: str) -> list[dict[str, Any]]:
+        """Route ready-work notices to a familiar member and an available alternative, without reserving work.
+
+        The caller delivers these compact routes through native messaging/follow-up.
+        Recorded work ownership estimates availability; the harness owns actual activity.
+        """
+        members = self.db.execute("SELECT agent FROM members WHERE harness=? AND session=? AND state NOT IN ('done','waiting') AND agent!=?",
+                                  (*self.identity, sender)).fetchall()
+        candidates = []
+        for member in members:
+            agent = member["agent"]
+            capabilities = {r[0] for r in self.db.execute(
+                "SELECT kind FROM capabilities WHERE harness=? AND session=? AND agent=?", (*self.identity, agent))}
+            history = self.db.execute("""SELECT w.topic,w.environment FROM work w JOIN work_participants p
+                ON p.harness=w.harness AND p.session=w.session AND p.work=w.id
+                WHERE w.harness=? AND w.session=? AND p.agent=?""", (*self.identity, agent)).fetchall()
+            active = self.db.execute("SELECT COUNT(*) FROM work WHERE harness=? AND session=? AND owner=? AND state='active'",
+                                     (*self.identity, agent)).fetchone()[0]
+            candidates.append((agent, capabilities, {r[0] for r in history if r[0]},
+                               {r[1] for r in history if r[1]}, active))
+        routed: dict[str, list[str]] = {}
+        for work in self.ready():
+            if work["id"] not in work_ids:
+                continue
+            eligible = [member for member in candidates if self.eligible(work, member[0], member[1])]
+            if not eligible:
+                continue
+            ordered = sorted(eligible, key=lambda m: (work["topic"] not in m[2], work["environment"] not in m[3], m[4], m[0]))
+            recipients = [ordered[0]]
+            idle = next((member for member in ordered if member[4] == 0), None)
+            if idle is not None and idle[0] != recipients[0][0]:
+                recipients.append(idle)
+            for agent, *_ in recipients:
+                routed.setdefault(agent, []).append(work["id"])
+        return [{"agent": agent, "ready": work} for agent, work in routed.items()]
+
+    def dependants(self, work: str) -> list[str]:
+        """Locate consumers whose readiness may have changed when an input completes."""
+        return [r[0] for r in self.db.execute(
+            "SELECT work FROM dependencies WHERE harness=? AND session=? AND dependency=?", (*self.identity, work))]
 
     def contributors(self, work: str) -> set[str]:
         """Exclude actual implementation/execution participants, including previous owners after handoff."""

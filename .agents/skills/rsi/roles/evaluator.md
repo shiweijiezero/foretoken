@@ -23,7 +23,6 @@ Treat recurring execution costs as research questions about the workflow. Follow
 
 Inspect records read-only without asking members for status or interrupting experiments. Missing or truncated records leave the affected claim unresolved; they do not prove inactivity. Native lifecycle records describe activity, not productive time by themselves. Avoid repeating model scoring or experiments when original evidence already answers the question.
 
-Use [PGE](../../../../rsi-playbooks/guidance/meta-knowledge/06-opportunity-assessment.md) when comparing a material opportunity or allocation change. Reuse existing estimates and raw results; do not require every check to refill a score table or every member to produce a new artifact.
 
 ## Deliver findings to the responsible owners
 

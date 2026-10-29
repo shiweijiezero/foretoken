@@ -146,7 +146,7 @@ Keep execution evidence, the history of judgments, and the current summary disti
 | `iterations/<name>/notes/iteration.md` | The assigned Experimenter maintains the summary and document index, and appends run findings, independent reviews, decisions, and corrections with timestamps, sources, and evidence links. |
 | Other files under `iterations/<name>/notes/` | Each author maintains the full proposal, plan, analysis or review linked from the iteration notes. |
 | `iterations/<name>/notes/progress.yaml` | The Experimenter records selected runs, measured parent and judgments for each scope. The plot command derives the shared comparisons from these records. |
-| `report.md` | The task overview links the generated results and owner analyses. It contains no manually copied metric table. |
+| `report.md` | The concise user-facing overview contains the chart-and-table summary and short approach descriptions. It links the generated figures and owner analyses; full commands and logs stay in the experiment records. |
 
 Attribute analysis, reviews, and decisions to their authors. Each decision states the action and its scope. When correcting a conclusion or changing a decision, link the earlier entry and new evidence so readers can follow how the understanding changed.
 
@@ -158,7 +158,7 @@ Keep the report's current conclusions aligned with the iteration history and lin
 
 ## Maintain the user-facing report
 
-At task setup, create `report.md` using the [report template](templates/report-template.md), link the task and result directory, and share its path. Keep the same overview when resuming. Each Experimenter maintains its own iteration's analysis and progress record; no member collects other owners' measurements into a second table.
+At task setup, create `report.md` using the [report template](templates/report-template.md), link the task and result directory, and share its path. Keep the same report when resuming. Each Experimenter maintains its own iteration's analysis and progress record, updates the affected rows and approach summary when its evidence changes, and refreshes the generated figures. Experimenters coordinate edits to the shared report directly; no central writer collects or transcribes the team's measurements.
 
 After a measured stage or a changed judgment, update `iterations/<name>/notes/progress.yaml` and run:
 
@@ -166,7 +166,7 @@ After a measured stage or a changed judgment, update `iterations/<name>/notes/pr
 foretoken plot --progress results/decode/parallelism
 ```
 
-The command reads every iteration's selected saved runs and judgments, then generates `figures/progress/progress-summary.md`, matching CSV tables and the native milestone/search charts. Link that generated summary from `report.md`. Each scope starts with measured retained branch tips and actual run/configuration/source links for choosing an applicable next parent; adopted ancestors remain in the history. Metrics, repetition counts, variability and recorded code/configuration evidence come from the existing run records. Do not copy them into the YAML or the overview. Detailed mechanisms, output differences and independent reviews stay in the owner's `iteration.md` and linked analyses.
+The command reads every iteration's selected saved runs and judgments, then generates `figures/progress/progress-summary.md`, matching CSV tables and the native milestone/search charts. Use those generated values to refresh the concise table in `report.md`; do not duplicate full run inventories there. Each scope starts with measured retained branch tips and actual run/configuration/source links for choosing an applicable next parent; adopted ancestors remain in the history. Metrics, repetition counts, variability and recorded code/configuration evidence come from the existing run records. Detailed mechanisms, output differences and independent reviews stay in the owner's `iteration.md` and linked analyses.
 
 For example, a candidate's progress record can select one completed command and its measured parent:
 

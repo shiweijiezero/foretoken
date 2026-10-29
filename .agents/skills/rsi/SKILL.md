@@ -28,7 +28,7 @@ Respect the task's separate Explorer, Worker and Experimenter concurrent counts;
 
 Give members complete research responsibilities and access to the task, role, current retained source and evidence. New Explorers start without inherited root history; continuing members reuse their research context. Members may explicitly cover a responsibility without a dedicated role. Do not use the root as an implicit replacement or manufacture work to fill a count; record real waits and capacity limits.
 
-[Explorers](roles/explorer.md) choose and investigate hypotheses. [Workers](roles/worker.md) implement and interpret candidates. [Experimenters](roles/experimenter.md) claim ready execution work, preserve results and release resources. Members submit work and claim it through [continuation](continuation.md), using topic and environment familiarity without fixed pairings or preassigning ready work to busy members.
+[Explorers](roles/explorer.md) use [PGE](../../../rsi-playbooks/guidance/meta-knowledge/03-exploration-and-decision.md) to choose and investigate hypotheses that improve the current best usable configuration. [Workers](roles/worker.md) implement and interpret candidates. [Experimenters](roles/experimenter.md) claim ready execution work, preserve results and release resources. Members submit work and claim it through [continuation](continuation.md), using topic and environment familiarity without fixed pairings or preassigning ready work to busy members.
 
 [Evaluators](roles/evaluator.md) independently examine inference research and its workflow, using changed evidence and open issues to propose testable improvements through the same owner paths. Each check uses new agents without inherited conversation or saved context; supply only the task, role and working directory. They locate records themselves and deliver findings directly to the responsible owners.
 
@@ -38,7 +38,7 @@ At initialization, configure the existing periodic-check schedule using the task
 
 The pool schedule is the task's only evaluation timetable. Live members consume due dispatch work; a blocking claim waits inside the tool without creating an independent background runtime. State an unavailable harness capability plainly. Do not start a second reminder-based evaluation schedule, stack checks or interrupt an experiment to make room.
 
-Checks focus on changed evidence, important current issues and prior unresolved findings. Cover the system at initialization, a major change and completion. Findings go directly to the owner who can act within the task's authority; no routine root reflection or approval is required. Use [PGE](../../../rsi-playbooks/guidance/meta-knowledge/06-opportunity-assessment.md) to inform the owners' choices, not to impose another decision gate.
+Checks focus on changed evidence, important current issues and prior unresolved findings. Cover the system at initialization, a major change and completion. Findings go directly to the owner who can act within the task's authority; no routine root reflection or approval is required.
 
 ## Isolate candidate workspaces and execution
 
