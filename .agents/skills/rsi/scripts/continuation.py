@@ -84,6 +84,16 @@ class Continuation:
                 PRIMARY KEY (harness, session, agent),
                 FOREIGN KEY (harness, session) REFERENCES sessions(harness, session)
             );
+            CREATE TABLE IF NOT EXISTS scheduler_heartbeats (
+                harness TEXT NOT NULL,
+                session TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                state TEXT NOT NULL,
+                last_seen REAL NOT NULL,
+                last_error TEXT,
+                PRIMARY KEY (harness, session, owner),
+                FOREIGN KEY (harness, session) REFERENCES sessions(harness, session)
+            );
         """)
         if "started" not in {row[1] for row in self.db.execute("PRAGMA table_info(sessions)")}:
             try:
@@ -210,8 +220,8 @@ class Continuation:
                 return
             raise ValueError("A completed RSI session cannot be changed")
         if args.agent:
-            if args.state not in {"waiting", "done"}:
-                raise ValueError("A member can be released as waiting or done")
+            if args.state not in {"waiting", "done", "expired", "failed"}:
+                raise ValueError("A member can be released as waiting, done, expired or failed")
             active = self.db.execute(
                 "SELECT id FROM work WHERE harness=? AND session=? AND owner=? AND state='active'",
                 (args.harness, args.session, args.agent),
@@ -235,11 +245,25 @@ class Continuation:
                 (args.state, args.reason, args.harness, args.session),
             )
             self.db.execute(
-                """UPDATE members SET next_step=NULL,notice=NULL,dispatch_state='released',
+                """UPDATE members SET state=?,reason=?,next_step=NULL,notice=NULL,dispatch_state='released',
                           lease_owner=NULL,lease_until=NULL,dispatch_id=NULL,turn_id=NULL
                    WHERE harness=? AND session=?""",
-                (args.harness, args.session),
+                (args.state, args.reason, args.harness, args.session),
             )
+
+    def expire(self, harness: str, session: str, reason: str = "deadline") -> None:
+        """Close a task at its deadline while leaving owned jobs for their owners to stop and verify."""
+        self.db.execute(
+            "UPDATE sessions SET state='expired',reason=?,review_pending=0 WHERE harness=? AND session=?",
+            (reason, harness, session),
+        )
+        self.db.execute(
+            """UPDATE members SET state='expired',reason=?,next_step=NULL,notice=NULL,
+                      dispatch_state='released',lease_owner=NULL,lease_until=NULL,
+                      dispatch_id=NULL,turn_id=NULL
+                   WHERE harness=? AND session=?""",
+            (reason, harness, session),
+        )
 
     def status(self, harness: str, session: str) -> dict[str, Any]:
         """Return this task's recorded continuation decisions and queued steps."""
@@ -251,7 +275,22 @@ class Continuation:
             (harness, session),
         )]
         task["work"] = WorkPool(self.db, harness, session).status()
+        task["schedulers"] = [dict(row) for row in self.db.execute(
+            """SELECT owner,state,last_seen,last_error FROM scheduler_heartbeats
+               WHERE harness=? AND session=? ORDER BY owner""", (harness, session),
+        )]
         return task
+
+    def scheduler_heartbeat(self, harness: str, session: str, owner: str,
+                            state: str, error: str | None = None) -> None:
+        """Persist scheduler liveness so the lead can distinguish a fault from a wait."""
+        self.db.execute("""INSERT INTO scheduler_heartbeats(
+                harness,session,owner,state,last_seen,last_error)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(harness,session,owner) DO UPDATE SET
+                state=excluded.state,last_seen=excluded.last_seen,last_error=excluded.last_error""",
+            (harness, session, owner, state, time.time(), error[:2000] if error else None),
+        )
 
     def supervisor_candidates(self, harness: str, session: str | None = None) -> list[dict[str, Any]]:
         """Return working members with a recorded native thread for external recovery."""
@@ -343,7 +382,7 @@ class Continuation:
         identity = (harness, session)
         kind = event.get("hook_event_name")
         if task["deadline"] is not None and task["deadline"] <= time.time():
-            self.db.execute("UPDATE sessions SET state='expired',reason='deadline',review_pending=0 WHERE harness=? AND session=?", identity)
+            self.expire(harness, session, "deadline")
             return {}
         if kind == "Interrupt" and not event.get("agent_id"):
             self.db.execute("UPDATE sessions SET state='paused',reason='Interrupt',review_pending=0 WHERE harness=? AND session=?", identity)
@@ -481,7 +520,7 @@ def main() -> None:
             command.add_argument("--next-step", type=nonempty, required=True)
         elif name == "release":
             command.add_argument("--agent", type=nonempty)
-            command.add_argument("--state", choices=("waiting", "done", "paused", "complete"), required=True)
+            command.add_argument("--state", choices=("waiting", "done", "expired", "failed", "paused", "complete"), required=True)
             command.add_argument("--reason", type=nonempty, required=True)
     hook = commands.add_parser("hook", help="Read a native hook event from stdin")
     hook.add_argument("--harness", choices=("codex", "claude"), required=True)

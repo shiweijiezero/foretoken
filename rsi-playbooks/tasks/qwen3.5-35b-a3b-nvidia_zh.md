@@ -10,7 +10,8 @@
 部署形态：在最终单机 GPU 预算内自主选择并行方式和各阶段安排
 最终部署预算：单机最多 2 张 NVIDIA A100 80GB GPU；目标模型、辅助模型与 frontend 的工作负载合计不超过 32 核 CPU、250G 主机内存【不可修改】
 实验规模：服务候选遵守最终预算；算子、编译或正确性等局部实验按需使用更少资源，包括单卡
-可用资源：实验合计最多使用 6 张 NVIDIA A100 80GB GPU；按实际主机容量安排 CPU、内存和存储【不可修改】
+可用资源：面向可比目标实验合计最多使用 6 张 NVIDIA A100 80GB GPU；按实际主机容量安排 CPU、内存和存储【不可修改】
+实验拓扑：有价值时可使用其他空闲 GPU 或主机（包括非 NVIDIA 设备）进行实现、诊断或独立的跨主机 scope；有 RDMA 或 InfiniBand 时可以使用。记录准确的主机／设备身份、传输方式和观测。非 A100 与跨主机结果单独记录，不扩大六卡资源池，也不改变单机 A100 的采用预算、baseline 或性能比较。
 Explorer 数量：4【不可修改】
 Worker 数量：4【不可修改】
 Experimenter 数量：3【不可修改】
@@ -19,7 +20,7 @@ Evaluator 巡查间隔：1h【不可修改】
 Codex 模型：Explorer 01-02 = gpt-6.1-sol/high；Explorer 03-04 = gpt-6.1-terra/xhigh；Worker、Experimenter = gpt-6.1-terra/xhigh；Evaluator = gpt-6-astra/high【不可修改】
 Claude 模型：Explorer 01-02 = Fable/Opus/high；Explorer 03-04 = sonnet/high；Worker、Experimenter、Evaluator = sonnet/high【不可修改】
 最大并行实验数：最多 3 个双卡服务候选；更小规模的局部实验共享六卡预算
-并行安排：先为平台服务、构建和评测客户端预留资源，再按各组实际资源请求安排实验，并记录并行度
+并行安排：先为平台服务、构建和评测客户端预留资源，再按实际资源请求、跨主机位置和 RDMA 预留安排实验，并记录并行度与拓扑
 迭代负载：默认只测 random，并发 1 和 16；每个测量点完成后立即分析
 扩展验证：StudyChat 用于多轮相关假设和最终保留方案，复用已有同条件对照；质量评测按需安排
 精度评测：可能影响回答质量的改动需要补充质量证据时，执行 foretoken eval，优先评测准备保留的候选方案。

@@ -18,6 +18,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 部署形态：<如聚合部署、预填充/解码分离，或不限>
 最终部署预算：<保留方案的节点安排、GPU／CPU／内存总上限，说明涵盖的工作负载；也可由 Agent 选择>
 可用资源：<节点数与每节点可用的 GPU、CPU 核数、内存，如 2*8 卡 C500，每节点 64 核 CPU、512 GiB 内存>
+实验拓扑：<其他主机或 GPU 类型、跨主机传输和 RDMA/InfiniBand 是否可用于诊断或独立 scope；记录设备身份和比较边界>
 Explorer 数量：4
 Worker 数量：<该角色并行子 Agent 数，不含主 Agent；非负整数，留空在初始化时确定>
 Experimenter 数量：<该角色并行子 Agent 数，不含主 Agent；非负整数，留空在初始化时确定>
@@ -38,6 +39,8 @@ Claude 模型：Explorer 01-02 = Fable/Opus/high；Explorer 03-04 = sonnet/high�
 Evaluator 数量指每轮新建的巡查 Agent 数。省略或留空时默认 1，设为 0 则关闭巡查。启用时在这里填写间隔；初始化时补齐未填写的间隔。可用成员按 [RSI skill](../../.agents/skills/rsi/SKILL_zh.md#定期检查团队状态)领取到期巡查派发工作，每轮创建新 Evaluator，不依赖主 Agent 日常派发。
 
 最大并行实验数约束同时开展的独立实验；请求并发在评测负载中设置。区分最终部署预算与单次实验需求，小型诊断可以使用更少设备，将余下资源安排给其他有效工作，同时保持对照条件。
+
+任务允许时，其他空闲主机或 GPU 类型可以用于实现和诊断。记录设备及传输身份；非可比硬件或跨主机结果单独设定 scope，不改变目标部署预算或 baseline。
 
 评测负载可以引用已有配置或 [recipes](../../benchmarks/docs/recipes_zh.md)；多组负载的目标应说明按各组还是整体结果判断。
 

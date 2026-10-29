@@ -97,7 +97,7 @@ results/decode/parallelism/
 
 任务记录保存目标、分工和决定。成员实际活动从原生 harness 读取，hook 绑定从 continuation 查询，作业状态由执行负责人核实。报告需要快照时，注明观察时间和来源，避免在任务、成员和报告文件中各维护一份实时状态。结束跟进时，由负责人链接实际改动的结果，或说明停止行动的决定。
 
-需要自主接续时，由绑定单一 RSI root session 的 Agent Scheduler 负责原生唤醒；它不创建或替代 Evaluator 排期，使用 Codex app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 生命周期（见 [app-server 文档](https://learn.chatgpt.com/docs/app-server)）。`members.responsibility` 保存完整职责，`thread_id` 保存原生 app-server 身份，`dispatch_state` 及 lease、已接受的 turn ID 记录 `pending`、`dispatching`、`running` 状态。Hook 可以记录待派发，但不能把排队当作 thread 已唤醒。Lead 观察 Scheduler 健康、研究、资源和失败边界；只有 Scheduler 故障或明确依赖时才用原生 follow-up 恢复成员。显式暂停、完成、过期或截止时停止 Scheduler，并保留持久责任供恢复。
+需要自主接续时，由绑定单一 RSI root session 的 Agent Scheduler 负责原生唤醒；它不创建或替代 Evaluator 排期，使用 Codex app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 生命周期（见 [app-server 文档](https://learn.chatgpt.com/docs/app-server)）。`members.responsibility` 保存完整职责，`thread_id` 保存原生 app-server 身份，`dispatch_state` 及 lease、已接受的 turn ID 记录 `pending`、`dispatching`、`running` 状态。Scheduler 另外持久化 owner、状态、最后 heartbeat 和最后错误，使健康但暂时无工作与失效进程可区分。Hook 可以记录待派发，但不能把排队当作 thread 已唤醒。Lead 观察 Scheduler 健康、研究、资源和失败边界；只有 Scheduler 故障或明确依赖时才用原生 follow-up 恢复成员。显式暂停、完成、过期或截止时停止 Scheduler，并保留持久责任供恢复。
 
 每个可执行阶段只有一个主负责人。全新 Evaluator 的评估是读取负责人原件的独立工作项；其他成员应承担不同范围或问题，不应重复完整审计或测量。发现重复分工时，保留第一份完整证据，并在启动新运行前把另一名成员转向其他问题。
 
@@ -194,5 +194,7 @@ measurements:
 后续实现和探索从相应适用范围内已验证的配置出发，记录候选真正运行的父配置及已有改动。A、B 都从 P 独立测量时，它们是两个分支，采用其中一个不等于证明 A+B。组合配置需要自己的运行与判断。围绕改动边界执行最小必要验证，复用仍适用的证据，不例行重复完整矩阵或成对控制。
 
 每份进展记录由该迭代唯一的 Experimenter 维护，并按[原子发布示例](templates/progress-charts_zh.md#刷新共同视图)完整替换后刷新共同视图。一个进展文件只有一个写者并原子替换；绘图命令沿用图片目录锁，将发现、读取和发布串行完成。若多个进展文件在重绘期间变化，待负责人完成后再运行一次，使摘要对应同一稳定快照。生成表保留实测父方案与原始运行／源码引用；里程碑只连接已记录的实测父节点，独立分支保持分开。采用是明确且限定适用范围的判断，不由最高吞吐自动决定。
+
+报告中的采用行和里程碑图只展示这条实测父链的累计推进。独立分支只能以明确的参照、弃用或待验证状态及原件链接出现，不能把孤立分支收益写成累计改进。每个测量点或判断完成后，Experimenter 立即更新 `progress.yaml` 和生成导出，总览负责人在报告锁内刷新受影响的图、表格行和方案简述，不等整套矩阵结束。
 
 交付到文档平台时，发布或链接同一生成摘要，不再维护另一份数值报告。修改总览时，用报告锁包住读取当前文件、生成完整替换和写回的命令；不能把旧副本直接覆盖新报告。暂停、停止或完成时，在任务总览记录原因与剩余工作，链接各执行者真实的资源退出证据。已有人工图表 YAML 仍可用 `foretoken plot --progress CHART.yaml` 绘制。

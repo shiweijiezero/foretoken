@@ -86,7 +86,9 @@ python3 -I .agents/skills/rsi/scripts/agent_scheduler.py \
 
 每名成员登记稳定的 `--thread-id` 和完整的 `--responsibility`。Scheduler 读取 `thread/read` 状态，在 SQLite 中领取 `pending` responsibility，调用 `thread/resume`，只有 `turn/start` 返回 turn ID 后才标记为 `running`。thread 已 active 时绝不重复启动；完成或回到 idle 后重新进入 `pending`。Scheduler 崩溃由 lease 过期恢复。进程请求存在不确定失败时按至少一次投递处理，因此每次 prompt 带 dispatch ID，成员必须先检查已有工作再行动。
 
-绑定的 session 进入 paused、complete 或 expired 时 Scheduler 停止；到达任务截止也必须显式停止。`SessionEnd` 只保存持久状态，不暂停 RSI，也不生成新工作。成员只能以 `waiting`、`done`、`paused`、`expired` 或明确失败／资源冲突释放；`idle` 和 `needs_assignment` 是调度故障，不是正常研究状态。
+绑定的 session 进入 paused、complete 或 expired 时 Scheduler 停止；到达任务截止也必须显式停止。`SessionEnd` 只保存持久状态，不暂停 RSI，也不生成新工作。成员只能以 `waiting`、`done`、`expired` 或 `failed` 释放；任务才使用 `paused` 和 `complete`。`idle` 和 `needs_assignment` 是调度故障，不是正常研究状态。
+
+健康运行时由 Scheduler 负责唤醒，Lead 只做观察。持久 heartbeat 和最后错误用于区分 Scheduler 仍在运行还是已经失效。如果进程、app-server 连接或 lease 对账失败，Lead 记录事件、先核对原生活动，只修复或重建缺失成员，重新登记其完整职责，并通过原生 follow-up 恢复，直到 Scheduler 恢复健康；不接管成员的研究。
 
 ## 等待、暂停与结束
 

@@ -154,7 +154,8 @@ def run_once(connection: Any, state: Any, client: AppServerClient, harness: str,
 def main() -> None:
     """Run an independent, lease-backed scheduler until the task is explicitly stopped."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--harness", choices=("codex", "claude"), default="codex")
+    parser.add_argument("--harness", choices=("codex",), default="codex",
+                        help="The scheduler drives the Codex app-server; Claude uses its native team hooks.")
     parser.add_argument("--session", required=True, help="One activated RSI root session to keep alive")
     parser.add_argument("--socket", default=os.environ.get("CODEX_APP_SERVER_SOCKET"),
                         help="Existing app-server Unix socket; omit to start a stdio app-server")
@@ -174,9 +175,17 @@ def main() -> None:
         state.create()
         WorkPool.create(connection)
         connection.commit()
-        client = AppServerClient(args.socket)
+        state.scheduler_heartbeat(args.harness, args.session, args.owner, "starting")
+        connection.commit()
+        client = None
+        failure = None
         try:
+            client = AppServerClient(args.socket)
+            state.scheduler_heartbeat(args.harness, args.session, args.owner, "running")
+            connection.commit()
             while True:
+                state.scheduler_heartbeat(args.harness, args.session, args.owner, "running")
+                connection.commit()
                 active = connection.execute(
                     "SELECT state,deadline FROM sessions WHERE harness=? AND session=?",
                     (args.harness, args.session),
@@ -184,17 +193,26 @@ def main() -> None:
                 if active is None or active[0] != "active":
                     break
                 if active[1] is not None and active[1] <= time.time():
-                    connection.execute("""UPDATE sessions SET state='expired',reason='deadline',review_pending=0
-                                       WHERE harness=? AND session=? AND state='active'""",
-                                       (args.harness, args.session))
+                    state.expire(args.harness, args.session, "deadline")
                     connection.commit()
                     break
                 run_once(connection, state, client, args.harness, args.owner, args.cwd, args.lease, args.session)
+                state.scheduler_heartbeat(args.harness, args.session, args.owner, "running")
+                connection.commit()
                 if args.once:
                     break
                 time.sleep(args.interval)
+        except Exception as error:
+            failure = str(error)
+            state.scheduler_heartbeat(args.harness, args.session, args.owner, "failed", failure)
+            connection.commit()
+            raise
         finally:
-            client.close()
+            if client is not None:
+                client.close()
+            state.scheduler_heartbeat(args.harness, args.session, args.owner,
+                                      "failed" if failure else "stopped", failure)
+            connection.commit()
 
 
 if __name__ == "__main__":

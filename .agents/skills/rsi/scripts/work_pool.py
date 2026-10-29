@@ -217,7 +217,7 @@ class WorkPool:
         The caller delivers these compact routes through native messaging/follow-up.
         Recorded work ownership estimates availability; the harness owns actual activity.
         """
-        members = self.db.execute("SELECT agent,state FROM members WHERE harness=? AND session=? AND state!='done' AND agent!=?",
+        members = self.db.execute("SELECT agent,state FROM members WHERE harness=? AND session=? AND state IN ('working','waiting') AND agent!=?",
                                   (*self.identity, sender)).fetchall()
         candidates = []
         for member in members:

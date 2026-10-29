@@ -18,6 +18,7 @@ Precision: <for example, fixed BF16, a comparison of BF16 and FP8, or unrestrict
 Deployment layout: <for example, colocated serving, prefill/decode disaggregation, or unrestricted>
 Final deployment budget: <node placement and total GPU, CPU, and memory limits for the retained service; specify which workloads are included, or leave agent-selected>
 Available resources: <node count and available GPUs, CPU cores and memory per node; for example, 2*8 C500 GPUs with 64 CPU cores and 512 GiB memory per node>
+Experiment topology: <whether other hosts or GPU types, cross-host transport and RDMA/InfiniBand may support diagnostics or separate scopes; record identities and comparison boundaries>
 Explorer count: 4
 Worker count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank to choose at initialization>
 Experimenter count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank to choose at initialization>
@@ -40,6 +41,8 @@ For each workload scope, name one lineage owner who publishes the current measur
 Evaluator count is the number of new agents created for each check. It defaults to 1 when omitted or blank; set it to 0 to disable checks. When enabled, specify the interval here. Resolve a missing interval at initialization. Available members claim due check dispatches and create fresh Evaluators through the [RSI skill](../../.agents/skills/rsi/SKILL.md#arrange-periodic-team-checks), without routine root dispatch.
 
 The parallel-experiment limit counts independent experiments running at once; request concurrency belongs in the workload. Distinguish the final deployment budget from each experiment's needs. Smaller diagnostic experiments may use fewer devices; allocate the remaining resources to other useful work while preserving comparison conditions.
+
+Other idle hosts or GPU types may support implementation and diagnostics when the task allows them. Record their device and transport identity, and keep non-comparable hardware or cross-host results in separate scopes rather than changing the target deployment budget or baseline.
 
 Workloads can reference existing configurations or [recipes](../../benchmarks/docs/recipes.md). For multiple workload groups, specify whether objectives apply to each group or to an aggregate result.
 

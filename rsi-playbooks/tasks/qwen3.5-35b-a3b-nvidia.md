@@ -10,7 +10,8 @@ Precision: fixed BF16 [Fixed]
 Deployment layout: agent-selected within the final single-node GPU budget, including parallelism and any stage separation
 Final deployment budget: at most 2 NVIDIA A100 80GB GPUs on one node; at most 32 CPU cores and 250G host memory in total for all target model, auxiliary model and frontend workloads [Fixed]
 Experiment sizing: service candidates fit the final budget; focused kernel, compilation, or correctness experiments may use fewer resources, including one GPU
-Available resources: at most 6 NVIDIA A100 80GB GPUs in total for experiments; schedule CPU, memory, and storage within actual host capacity [Fixed]
+Available resources: at most 6 NVIDIA A100 80GB GPUs in total for target-comparable experiments; schedule CPU, memory, and storage within actual host capacity [Fixed]
+Experiment topology: use other idle GPUs or hosts, including non-NVIDIA devices, for implementation, diagnostics or separate cross-host scopes when useful; use RDMA or InfiniBand when available. Record exact host/device identity, transport and observations. Keep non-A100 and cross-host results separate; they do not enlarge the six-A100 pool or change the single-node A100 adoption budget, baseline or performance comparison.
 Explorer count: 4 [Fixed]
 Worker count: 4 [Fixed]
 Experimenter count: 3 [Fixed]
@@ -19,7 +20,7 @@ Evaluator check interval: 1h [Fixed]
 Codex models: Explorer 01-02 = gpt-6.1-sol/high; Explorer 03-04 = gpt-6.1-terra/xhigh; Worker and Experimenter = gpt-6.1-terra/xhigh; Evaluator = gpt-6-astra/high [Fixed]
 Claude models: Explorer 01-02 = Fable/Opus/high; Explorer 03-04 = sonnet/high; Worker, Experimenter and Evaluator = sonnet/high [Fixed]
 Maximum parallel experiments: at most 3 two-GPU service candidates; smaller focused experiments share the six-GPU budget
-Parallel scheduling: reserve capacity for platform services, builds, and benchmark clients, then schedule experiments by their actual resource requests and record the achieved parallelism
+Parallel scheduling: reserve capacity for platform services, builds, and benchmark clients, then schedule experiments by their actual resource requests, cross-host placement and RDMA reservations; record the achieved parallelism and topology
 Iteration workloads: random only by default, at concurrency 1 and 16; analyze each point as it completes
 Extended validation: StudyChat for multi-turn hypotheses and the final retained approach, reusing existing matched controls; quality evaluation as needed
 Accuracy evaluation: run foretoken eval when an output-affecting change needs new quality evidence, prioritizing candidates considered for retention.

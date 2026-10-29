@@ -89,9 +89,9 @@ Without `CODEX_APP_SERVER_SOCKET`, the scheduler starts a dedicated stdio app-se
 
 Each registered member supplies a stable `--thread-id` and a complete `--responsibility`. The scheduler reads `thread/read` status, leases a `pending` responsibility in SQLite, calls `thread/resume`, and marks it `running` only after `turn/start` returns a turn ID. A completed or idle thread returns to `pending`; an active thread is never started twice. Lease expiry permits another scheduler instance to recover a crashed scheduler. Delivery is at-least-once across an ambiguous process failure, so every prompt contains a dispatch ID and the member must inspect existing work before acting.
 
-The scheduler stops when the bound session is paused, complete or expired. It must also be stopped explicitly at the task deadline; `SessionEnd` records durable state but does not pause the RSI or create new work. Member release states are `waiting`, `done`, `paused`, `expired` or an explicit failure/resource conflict; `idle` and `needs_assignment` are scheduler faults, not normal research states.
+The scheduler stops when the bound session is paused, complete or expired. It must also be stopped explicitly at the task deadline; `SessionEnd` records durable state but does not pause the RSI or create new work. Member release states are `waiting`, `done`, `expired` or `failed`; task release states are `paused` and `complete`. `idle` and `needs_assignment` are scheduler faults, not normal research states.
 
-While it is healthy, the scheduler owns wake-up and the Lead remains an observer. If its process, app-server connection or lease reconciliation fails, the Lead records the incident and uses native follow-up to recover affected members until the scheduler is healthy again.
+While it is healthy, the scheduler owns wake-up and the Lead remains an observer. Its persisted heartbeat and last error distinguish a live scheduler from a stale one. If its process, app-server connection or lease reconciliation fails, the Lead records the incident, checks native activity, repairs or recreates only missing affected members, re-registers their full responsibility and uses native follow-up until the scheduler is healthy again; it does not take over their research.
 
 ## Wait, pause or finish
 
