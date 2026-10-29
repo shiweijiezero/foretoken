@@ -38,7 +38,7 @@ python3 -I .agents/skills/rsi/scripts/continuation.py claim \
   --agent "$RSI_AGENT" --wait 30
 ```
 
-Roles are `explorer`, `worker` and `experimenter`. Each can also claim independent review and periodic-check dispatch. Use repeated `--accept` arguments for explicitly combined responsibilities when dedicated staffing is absent. Fresh Evaluators do not register as continuing members.
+Roles are `explorer`, `worker` and `experimenter`. Continuing members claim research, implementation and execution work; fresh Evaluators perform independent adoption review and periodic checks. Use repeated `--accept` arguments only for an explicitly unstaffed execution responsibility. Fresh Evaluators do not register as continuing members.
 
 Claim when there is available capacity. A claim atomically selects eligible ready work, reusing topic and environment context while giving older work its turn before newer arrivals. Unfinished dependencies and reviewer exclusions prevent a claim; work is not reserved for a busy member. `--wait` waits inside the tool, releasing SQLite between short checks.
 
@@ -56,9 +56,9 @@ python3 -I .agents/skills/rsi/scripts/continuation.py submit \
   --topic "$RSI_TOPIC" --environment "$RSI_ENVIRONMENT"
 ```
 
-Kinds are `explorer`, `worker`, `experimenter`, `review` and `evaluation`. Topic and environment describe useful context affinity, not an exclusive executor. Repeated `--after WORK` arguments refer to existing work that must finish first. The consumer receives those result paths and reads their actual findings, including failed experiments.
+Kinds are `explorer`, `worker`, `experimenter`, `review` and `evaluation`. `review` is retained for old records; new independent adoption checks are fresh `evaluation` dispatches. Topic and environment describe useful context affinity, not an exclusive executor. Repeated `--after WORK` arguments refer to existing work that must finish first. The consumer receives those result paths and reads their actual findings, including failed experiments.
 
-For review work, link implementation and execution items with `--after`. Their actual Worker and Experimenter participants, including previous owners after a handoff, cannot claim that review. An Explorer may review an exploration ancestor, but if it implemented or ran the candidate, add that identity with `--exclude ID`. Independence still depends on the member's real participation and the task's review requirements.
+Do not assign new review work to continuing members. Link implementation and execution items in the Evaluator's fresh assessment; the Evaluator reads the original evidence and records the supported scope and remaining issue. Keep `--after`/`--exclude` only for compatibility with existing review records.
 
 Finish owned work with `finish --agent "$RSI_AGENT" --work "$RSI_WORK" --result "$RSI_RESULT"`, including the same harness/session arguments. The result must be an existing artifact or analysis; its contents state the outcome. Publish follow-on work as useful evidence arrives rather than waiting for a whole matrix. Use native follow-up when a known idle consumer needs to resume. Shared work admission and native agent dispatch are separate operations.
 

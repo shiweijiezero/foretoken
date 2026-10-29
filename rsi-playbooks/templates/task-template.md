@@ -23,7 +23,7 @@ Worker count: <concurrent subagents in this role, excluding the lead; a nonnegat
 Experimenter count: <concurrent subagents in this role, excluding the lead; a nonnegative integer, or leave blank to choose at initialization>
 Evaluator count: 1
 Evaluator check interval: <time between team checks, for example 1h>
-Codex models: Explorer 01-02 = gpt-6-astra/high; Explorer 03-04 = gpt-6.1-sol/high; Worker and Experimenter = gpt-6.1-terra/xhigh; Evaluator = gpt-6-astra/high
+Codex models: Explorer 01-02 = gpt-6.1-sol/high; Explorer 03-04 = gpt-6.1-terra/xhigh; Worker and Experimenter = gpt-6.1-terra/xhigh; Evaluator = gpt-6-astra/high
 Claude models: Explorer 01-02 = Fable/Opus/high; Explorer 03-04 = sonnet/high; Worker, Experimenter and Evaluator = sonnet/high
 Maximum parallel experiments: <simultaneous independent experiments, for example 4; or have the agent determine and record the limit from the resource budget>
 Evaluation workloads: <low-cost workloads for routine iterations, and when broader or final validation is needed; specify datasets, lengths and concurrency groups or leave agent-selected>

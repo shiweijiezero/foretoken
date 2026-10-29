@@ -23,6 +23,6 @@ When results return, inspect the originals and explain the outcome. Select the s
 
 ## Review, retain and continue
 
-Request independent review before adopting a change. The reviewer must not have implemented or executed it. Address concrete findings directly, then decide whether to retain, revise or stop within the task requirements; routine adoption and combination do not need root approval.
+Request a fresh Evaluator assessment before adopting a change. Address concrete findings directly, then decide whether to retain, revise or stop within the task requirements; routine adoption and combination do not need root approval.
 
 Save the reasoning and links in the existing notes. Deliver useful changes directly to affected owners and resume a known idle consumer with native follow-up. Publish work that another qualified member can take, and claim the next ready question when this one is answered. Preserve jobs and results through an explicit handoff if ownership changes.

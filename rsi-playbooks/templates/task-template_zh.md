@@ -23,7 +23,7 @@ Worker 数量：<该角色并行子 Agent 数，不含主 Agent；非负整数�
 Experimenter 数量：<该角色并行子 Agent 数，不含主 Agent；非负整数，留空在初始化时确定>
 Evaluator 数量：1
 Evaluator 巡查间隔：<两轮团队巡查之间的时间，例如 1h>
-Codex 模型：Explorer 01-02 = gpt-6-astra/high；Explorer 03-04 = gpt-6.1-sol/high；Worker、Experimenter = gpt-6.1-terra/xhigh；Evaluator = gpt-6-astra/high
+Codex 模型：Explorer 01-02 = gpt-6.1-sol/high；Explorer 03-04 = gpt-6.1-terra/xhigh；Worker、Experimenter = gpt-6.1-terra/xhigh；Evaluator = gpt-6-astra/high
 Claude 模型：Explorer 01-02 = Fable/Opus/high；Explorer 03-04 = sonnet/high；Worker、Experimenter、Evaluator = sonnet/high
 最大并行实验数：<同时运行的独立实验上限，如 4；或由 Agent 根据资源预算确定并记录>
 评测负载：<日常迭代的低成本负载，以及何时扩大或进行最终验证；指定数据集、长度、并发等，或由 Agent 选择>

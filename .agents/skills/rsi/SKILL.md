@@ -56,7 +56,7 @@ A branch with useful results returns to the latest retained combination for meas
 
 Submit complete questions or informative stages, with code, evidence and comparison conditions in existing notes. Available qualified members claim work without fixed Worker–Experimenter pairings. Finish with original artifacts and deliver them directly; use native follow-up when a known idle consumer becomes ready. Continue independent work rather than waiting for a new root assignment.
 
-Before adoption, obtain independent review by a member who neither implemented nor ran the candidate. Reuse applicable prior validation and choose new checks by important changed behavior. Do not automatically repeat controls or full matrices for each candidate, and obey task-specific measurement restrictions. A research owner adopts or revises the candidate using that review and the task's requirements; the combined deployment still needs evidence for the claimed scope.
+Before adoption, obtain a fresh Evaluator assessment of the candidate's code, effective configuration and original evidence. Reuse applicable prior validation and choose new checks by important changed behavior. Do not automatically repeat controls or full matrices for each candidate, and obey task-specific measurement restrictions. A research owner adopts or revises the candidate using that assessment and the task's requirements; the combined deployment still needs evidence for the claimed scope.
 
 Experimenters coordinate actual resource conflicts within the total budget. An owner resolves recurring execution defects in its path and verifies the affected workflow. Only changes beyond the authorized objective, resource budget or fixed requirements need new user authorization through the root entry point.
 

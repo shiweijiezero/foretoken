@@ -38,7 +38,7 @@ python3 -I .agents/skills/rsi/scripts/continuation.py claim \
   --agent "$RSI_AGENT" --wait 30
 ```
 
-角色为 `explorer`、`worker` 或 `experimenter`，都可兼领独立审查和周期巡查派发。缺少专职成员时，用可重复的 `--accept` 参数明确兼任其他职责。每轮新建的 Evaluator 不登记为持续成员。
+角色为 `explorer`、`worker` 或 `experimenter`。持续成员领取研究、实现和执行工作；独立采用审查与周期巡查由每轮全新的 Evaluator 完成。缺少专职执行角色时，才用可重复的 `--accept` 参数明确兼任。每轮新建的 Evaluator 不登记为持续成员。
 
 有可用容量时再领取。领取以原子操作选择满足条件的就绪工作，复用课题与环境上下文，同时让旧工作先于后续新工作获得机会。未完成依赖和审查排除条件会阻止领取，不把工作预留给忙碌成员。`--wait` 在工具内等待，短暂检查之间释放 SQLite。
 
@@ -56,9 +56,9 @@ python3 -I .agents/skills/rsi/scripts/continuation.py submit \
   --topic "$RSI_TOPIC" --environment "$RSI_ENVIRONMENT"
 ```
 
-工作类型为 `explorer`、`worker`、`experimenter`、`review` 或 `evaluation`。课题与环境只表达可复用的上下文，不指定独占执行者。可重复的 `--after WORK` 引用已存在、需要先完成的工作；领取者会拿到这些产物路径，读取其中的实际发现，包括失败实验。
+工作类型为 `explorer`、`worker`、`experimenter`、`review` 或 `evaluation`。`review` 仅为兼容旧记录保留；新的独立采用审查使用 fresh `evaluation` 派发。课题与环境只表达可复用的上下文，不指定独占执行者。可重复的 `--after WORK` 引用已存在、需要先完成的工作；领取者会拿到这些产物路径，读取其中的实际发现，包括失败实验。
 
-发布审查时，用 `--after` 连接实现与执行工作。依赖链中实际参与的 Worker、Experimenter，包括交接前的负责人，不能领取该审查。Explorer 可以审查探索祖先；如果它实际实现或运行了候选，则用 `--exclude ID` 排除。独立性仍应按实际参与情况与任务审查要求判断。
+不要把新的 review 工作分配给持续成员。在 Evaluator 的 fresh assessment 中链接实现与执行原件；Evaluator 读取原始证据并记录适用范围和未解问题。`--after`／`--exclude` 仅为兼容已有 review 记录保留。
 
 完成时运行 `finish --agent "$RSI_AGENT" --work "$RSI_WORK" --result "$RSI_RESULT"`，并传入相同 harness/session。产物必须是已有文件或分析，其中写清实际结果。有用证据到达就发布后续工作，不等整套矩阵；已知的空闲使用者需要恢复时用原生 follow-up。共享工作领取与原生 Agent 派发是两项操作。
 

@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](common_zh.md)
 
-The root agent establishes the objective, fixed requirements, original baseline, total budget and initial team. Members then own research, implementation, experiments and review within that authority. The root observes existing records, reminds owners about concrete gaps and briefs the user. Routine decisions and deliveries go directly to their consumers, without waiting for that observation or communication.
+The root agent establishes the objective, fixed requirements, original baseline, total budget and initial team. Members then own research, implementation and experiments within that authority; fresh Evaluators own independent review. The root observes existing records, reminds owners about concrete gaps and briefs the user. Routine decisions and deliveries go directly to their consumers, without waiting for that observation or communication.
 
 ## Learn the framework first
 
@@ -21,15 +21,15 @@ Keep the question, known findings, code, comparison conditions and expected evid
 
 All new research and implementation start from the latest validated retained version applicable to the task and workload. Record the actual parent and delta in the iteration notes. If that parent changes during preparation, carry over the relevant changes and validate their affected behavior; preserve the originals of a run already in progress. Use an older base only for a stated reproduction or attribution question. When a branch helps, integrate it with the latest retained configuration and measure the combination; two isolated gains do not establish their combined effect. The original baseline remains the comparison reference.
 
-Role counts do not require a fixed role ratio or pairing. If no member can execute required work, record that capacity gap while independent work continues. If no qualified independent reviewer is available, arrange a one-time fresh review within the existing task budget and native slots; without that review, adoption remains pending. The root does not silently fill missing roles.
+Role counts do not require a fixed role ratio or pairing. If no member can execute required work, record that capacity gap while independent work continues. Every adoption review belongs to a fresh Evaluator check; without that check, adoption remains pending. The root does not silently fill missing roles.
 
 ## Share findings and keep working
 
-An Explorer gives useful research directly to the implementing Worker; the Worker supplies a runnable candidate for an available Experimenter; the executor returns results directly to the owner and independent reviewer. Review findings go to the person who can act on them. Use existing notes for shared background and send only the conclusion, changed information and precise paths. Routine updates need no acknowledgement.
+An Explorer gives useful research directly to the implementing Worker; the Worker supplies a runnable candidate for an available Experimenter; the executor returns results directly to the owner and records the original paths for the next Evaluator. Review findings go to the person who can act on them. Use existing notes for shared background and send only the conclusion, changed information and precise paths. Routine updates need no acknowledgement.
 
 When a delivery makes an idle consumer ready, use native follow-up to resume that consumer. A message alone does not wake an idle member. Publish work that any qualified member can take through continuation instead of preassigning it to someone busy. Continue independent work while a real dependency is pending.
 
-Give each executable stage one primary owner. A second member should receive a separate independent-review item or a different question over the same evidence, rather than repeating the owner's full audit. If two members were assigned the same scope by mistake, stop the duplicate and redirect it before launching another run.
+Give each executable stage one primary owner. Other members use the saved evidence for distinct questions, while the next Evaluator checks the complete claim before retention.
 
 Evaluator findings go directly to the responsible owners. They act on the evidence within their authority and record the outcome in the affected notes. Only a change beyond the user's authorized objective, resource budget or fixed conditions needs new authorization through the user entry point.
 
@@ -55,9 +55,9 @@ The research owner interprets the evidence and chooses the next informative work
 
 ## Review claims independently
 
-Before retaining an approach, a member who neither implemented nor executed it checks the changed code, effective configuration and original evidence. Reuse reviewed background and validation whose conditions still apply. Investigate an important affected behavior with the smallest meaningful comparison; quality scoring is needed only when output impact and existing evidence warrant it.
+Before retaining an approach, a fresh Evaluator checks the changed code, effective configuration and original evidence. Reuse reviewed background and validation whose conditions still apply. Investigate an important affected behavior with the smallest meaningful comparison; quality scoring is needed only when output impact and existing evidence warrant it.
 
-The reviewer records the supported scope and any concrete remaining issue. The research owner fixes or stops the candidate, or retains it when the task's requirements and independent review are satisfied. Integration follows the latest retained configuration and validates the resulting combination. These decisions require no routine root approval.
+The Evaluator records the supported scope and any concrete remaining issue. The research owner fixes or stops the candidate, or retains it when the task's requirements and assessment are satisfied. Integration follows the latest retained configuration and validates the resulting combination. These decisions require no routine root approval.
 
 ## Hand off and resume
 

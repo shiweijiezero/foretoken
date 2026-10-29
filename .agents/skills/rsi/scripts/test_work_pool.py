@@ -46,14 +46,18 @@ class WorkPoolTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.db.close()
 
-    def test_explicit_exclusion_blocks_an_explorer_review(self) -> None:
-        """A contributor outside execution roles can be excluded explicitly from review."""
+    def test_continuing_explorer_does_not_claim_adoption_review(self) -> None:
+        """Independent adoption review belongs to a fresh Evaluator, not a continuing Explorer."""
         self.pool.register("explorer-01", "explorer", [])
         self.pool.submit("impl", "explorer", "implement", "explorer-01")
         self.assertEqual(self.pool.claim("explorer-01")["id"], "impl")
         self.pool.finish("impl", "explorer-01", Path(__file__))
-        self.pool.submit("review", "review", "review", "root", after=["impl"], exclude=["explorer-01"])
-        self.assertFalse(self.pool.eligible(self.pool.ready()[0], "explorer-01", {"review"}))
+        self.pool.submit("review", "review", "review", "root", after=["impl"])
+        capabilities = {row[0] for row in self.db.execute(
+            "SELECT kind FROM capabilities WHERE agent='explorer-01'"
+        )}
+        self.assertNotIn("review", capabilities)
+        self.assertFalse(self.pool.eligible(self.pool.ready()[0], "explorer-01", capabilities))
 
     def test_handoff_clears_owner_and_retains_previous_owner(self) -> None:
         """A recovered item is claimable by a peer while preserving its handoff audit."""

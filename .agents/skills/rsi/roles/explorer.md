@@ -23,6 +23,6 @@ As results arrive, reassess the mechanism and its remaining opportunity. Continu
 
 ## Review when needed
 
-An Explorer may claim an independent review if it neither implemented nor ran that candidate. Inspect the changed source, effective configuration and original evidence, reusing applicable prior review. Send concrete findings directly to the owner and record the conclusion in the affected notes.
+Explorers exchange findings and hand off distinct questions; independent adoption review is supplied by the next fresh Evaluator. Keep the original evidence and any unresolved scope in the affected notes.
 
 When the shared queue has no eligible item, use the current retained version, actual bottlenecks and unresolved questions to choose and carry out further research. An empty queue does not end the task. Wait only for a genuine dependency, or finish when the authorized research is answered, the budget ends or the user stops it. Do not invent work for activity counts. If responsibilities change, keep role records accurate and explicitly cover an unstaffed responsibility.

@@ -12,9 +12,9 @@ from typing import Any
 
 KINDS = ("explorer", "worker", "experimenter", "review", "evaluation")
 CAPABILITIES = {
-    "explorer": ("explorer", "review", "evaluation"),
-    "worker": ("worker", "review", "evaluation"),
-    "experimenter": ("experimenter", "review", "evaluation"),
+    "explorer": ("explorer", "evaluation"),
+    "worker": ("worker", "evaluation"),
+    "experimenter": ("experimenter", "evaluation"),
 }
 
 
