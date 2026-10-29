@@ -25,7 +25,7 @@ Extended validation: StudyChat for multi-turn hypotheses and the final retained 
 Accuracy evaluation: run foretoken eval when an output-affecting change needs new quality evidence, prioritizing candidates considered for retention.
 Allowed changes: implementation and configuration at any layer within fixed requirements, including algorithms, auxiliary models and their weights, composition and execution; develop new mechanisms or use community work
 Measurement budget per iteration: allow 10 minutes by default and use enough samples to answer the question; analyze once they finish. Adjust the budget and request count to the workload, recording the reason and time spent
-Work duration: a total budget of 24 hours from the start of task execution [Fixed]
+Work duration: a total budget of 168 hours from the original start of task execution; resuming or changing chats does not reset it [Fixed]
 Expected outcome / completion criteria: keep increasing throughput and reducing TPOT without fixed metric thresholds.
   Continue research, implementation and measurement, covering both parameter tuning and source changes. Finish when the research questions are answered and further work offers little value, when time runs out, or when the user asks to stop.
   Explain the evidence for stopping. Distinguish approaches tested without benefit, implementations that could not run, and ideas not yet implemented or tested.
