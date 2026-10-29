@@ -56,7 +56,7 @@ python3 -I .agents/skills/rsi/scripts/continuation.py submit \
   --topic "$RSI_TOPIC" --environment "$RSI_ENVIRONMENT"
 ```
 
-工作类型为 `explorer`、`worker`、`experimenter`、`review` 或 `evaluation`。`review` 仅为兼容旧记录保留；新的独立采用审查使用 fresh `evaluation` 派发。课题与环境只表达可复用的上下文，不指定独占执行者。可重复的 `--after WORK` 引用已存在、需要先完成的工作；领取者会拿到这些产物路径，读取其中的实际发现，包括失败实验。
+工作类型为 `explorer`、`worker`、`experimenter`、`review` 或 `evaluation`。`review` 仅为兼容旧记录保留；新的独立采用审查使用 fresh `evaluation` 派发。课题与环境只表达可复用的上下文，不指定独占执行者。可重复的 `--after WORK` 引用已存在、需要先完成的工作；领取者会拿到这些产物路径，读取其中的实际发现，包括失败实验。提交新阶段前先读取该 scope 当前采用末端，在已有说明中写入实际父版本；方案被采用后由 scope 负责人先更新末端，再领取下一累计阶段。
 
 不要把新的 review 工作分配给持续成员。在 Evaluator 的 fresh assessment 中链接实现与执行原件；Evaluator 读取原始证据并记录适用范围和未解问题。`--after`／`--exclude` 仅为兼容已有 review 记录保留。
 

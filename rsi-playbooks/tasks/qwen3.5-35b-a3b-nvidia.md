@@ -39,6 +39,8 @@ Deliverables (<iteration> is the approach name passed to --iteration):
 
 Follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and resource scheduling. New work starts from the latest applicable validated retained configuration. Record the actual parent and delta, and measure useful branches after integration with the latest retained combination. Keep evidence using the [experiment records guide](../experiment-records.md), and organize the report with the [report template](../templates/report-template.md).
 
+For each workload scope, the designated Experimenter publishes the current measured retained tip before the next stage starts. Workers and Explorers may branch from that tip; only a measured combination followed by the fresh Evaluator assessment advances the cumulative mainline. Older parents remain explicit reproduction or attribution references.
+
 ## Starting deployment
 
 Use an existing NVIDIA source installation, or prepare one through the [source deployment guide](../../docs/deployment/source.md#install-from-source). Reuse compatible images and [shared model files](../../docs/features/model-storage.md). Deploy the [two-GPU example](../../examples/rsi/qwen3.5-35b-a3b/) from the candidate checkout:

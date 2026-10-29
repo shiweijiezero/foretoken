@@ -39,6 +39,8 @@ Claude 模型：Explorer 01-02 = Fable/Opus/high；Explorer 03-04 = sonnet/high�
 
 执行与资源安排遵循 [RSI skill](../../.agents/skills/rsi/SKILL_zh.md)。新工作从最新适用的已验证采用配置开始，记录实际父配置和本次变化，有用分支整合到最新采用组合后测量。按[实验记录手册](../experiment-records_zh.md)保存过程与结果，按[报告模板](../templates/report-template_zh.md)组织报告。
 
+每个负载 scope 由指定 Experimenter 在下一阶段开始前发布当前实测采用末端。Worker 和 Explorer 可以从该末端分支；只有组合实测并完成 fresh Evaluator 评估后才能推进累计主线。旧父版本保留为明确的复现或归因参照。
+
 ## 起始部署
 
 使用已有的 NVIDIA 源码平台，缺少时按[源码部署指南](../../docs/deployment/source_zh.md#从源码安装)准备。优先复用兼容镜像和[共享模型文件](../../docs/features/model-storage_zh.md)。从候选源码目录部署[双卡示例](../../examples/rsi/qwen3.5-35b-a3b/)：

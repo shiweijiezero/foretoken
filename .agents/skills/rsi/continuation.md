@@ -56,7 +56,7 @@ python3 -I .agents/skills/rsi/scripts/continuation.py submit \
   --topic "$RSI_TOPIC" --environment "$RSI_ENVIRONMENT"
 ```
 
-Kinds are `explorer`, `worker`, `experimenter`, `review` and `evaluation`. `review` is retained for old records; new independent adoption checks are fresh `evaluation` dispatches. Topic and environment describe useful context affinity, not an exclusive executor. Repeated `--after WORK` arguments refer to existing work that must finish first. The consumer receives those result paths and reads their actual findings, including failed experiments.
+Kinds are `explorer`, `worker`, `experimenter`, `review` and `evaluation`. `review` is retained for old records; new independent adoption checks are fresh `evaluation` dispatches. Topic and environment describe useful context affinity, not an exclusive executor. Repeated `--after WORK` arguments refer to existing work that must finish first. The consumer receives those result paths and reads their actual findings, including failed experiments. Before submitting a new stage, read the current retained tip for its scope and put the actual parent in the existing brief; after adoption, the scope owner updates that tip before another cumulative stage is claimed.
 
 Do not assign new review work to continuing members. Link implementation and execution items in the Evaluator's fresh assessment; the Evaluator reads the original evidence and records the supported scope and remaining issue. Keep `--after`/`--exclude` only for compatibility with existing review records.
 
