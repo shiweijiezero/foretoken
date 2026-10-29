@@ -30,7 +30,9 @@ Each continuing member sets `RSI_AGENT` to its own native ID and registers its r
 ```bash
 python3 -I .agents/skills/rsi/scripts/continuation.py register \
   --harness "$RSI_HARNESS" --session "$RSI_SESSION" \
-  --agent "$RSI_AGENT" --role worker
+  --agent "$RSI_AGENT" --role worker \
+  --thread-id "$NATIVE_THREAD_ID" \
+  --responsibility "$RSI_RESPONSIBILITY"
 python3 -I .agents/skills/rsi/scripts/continuation.py claim \
   --harness "$RSI_HARNESS" --session "$RSI_SESSION" \
   --agent "$RSI_AGENT" --wait 30
@@ -68,9 +70,26 @@ Use `handoff --agent "$RSI_AGENT" --work "$RSI_WORK" --reason "$RSI_REASON"` wit
 
 Configure `schedule --interval 3600 --count 1` with the harness/session for an hourly fresh check, using the task's actual interval and count. Count 0 cancels unclaimed checks; an already running assessment stays with its owner until finished. Rescheduling preserves the original anchor. A claim makes a due `evaluation` dispatch item available; missed rounds do not accumulate while a batch remains unfinished.
 
-An available member claims the dispatch, creates a fresh Evaluator with only the task, role and working directory, and receives its assessment path. Finish the dispatch item with that actual saved assessment, not a launch notice. The Evaluator sends actionable findings directly to their owners. No permanent scheduler or report writer is created.
+An available member claims the dispatch, creates a fresh Evaluator with only the task, role and working directory, and receives its assessment path. Finish the dispatch item with that actual saved assessment, not a launch notice. The Evaluator sends actionable findings directly to their owners. The pool creates no permanent Evaluator scheduler or report writer; the separate Agent Scheduler below only wakes continuing member threads.
 
-This pool schedule is the only evaluation timetable. A live member's idle hook or claim materializes a due dispatch, and an available member consumes it; it is not a daemon and cannot dispatch after the harness exits. Do not create a second evaluation schedule through reminders.
+This pool schedule is the only evaluation timetable. A live member's idle hook or claim materializes a due dispatch, and an available member consumes it; it is not a daemon and cannot dispatch after the harness exits. The Agent Scheduler below is a native-thread wake-up mechanism, not a second evaluation schedule. Do not create another evaluation timetable through reminders.
+
+## Run the independent Agent Scheduler
+
+The scheduler uses the stable Codex app-server `thread/read`, `thread/resume` and `turn/start` lifecycle ([app-server reference](https://learn.chatgpt.com/docs/app-server)).
+
+Hooks and `queue` only persist work; they do not wake an idle native thread. For a task that must continue after the lead turn ends, run one independent Agent Scheduler against the Codex app-server:
+
+```bash
+python3 -I .agents/skills/rsi/scripts/agent_scheduler.py \
+  --harness codex --session "$RSI_SESSION" --cwd "$PWD" --interval 2
+```
+
+Without `CODEX_APP_SERVER_SOCKET`, the scheduler starts a dedicated stdio app-server. Set that variable only when an existing app-server control socket is intentionally managed by the host.
+
+Each registered member supplies a stable `--thread-id` and a complete `--responsibility`. The scheduler reads `thread/read` status, leases a `pending` responsibility in SQLite, calls `thread/resume`, and marks it `running` only after `turn/start` returns a turn ID. A completed or idle thread returns to `pending`; an active thread is never started twice. Lease expiry permits another scheduler instance to recover a crashed scheduler. Delivery is at-least-once across an ambiguous process failure, so every prompt contains a dispatch ID and the member must inspect existing work before acting.
+
+The scheduler stops when the bound session is paused, complete or expired. It must also be stopped explicitly at the task deadline; `SessionEnd` records durable state but does not pause the RSI or create new work. Member release states are `waiting`, `done`, `paused`, `expired` or an explicit failure/resource conflict; `idle` and `needs_assignment` are scheduler faults, not normal research states.
 
 ## Wait, pause or finish
 

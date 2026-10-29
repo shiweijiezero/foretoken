@@ -97,6 +97,10 @@ results/decode/parallelism/
 
 任务记录保存目标、分工和决定。成员实际活动从原生 harness 读取，hook 绑定从 continuation 查询，作业状态由执行负责人核实。报告需要快照时，注明观察时间和来源，避免在任务、成员和报告文件中各维护一份实时状态。结束跟进时，由负责人链接实际改动的结果，或说明停止行动的决定。
 
+需要自主接续时，由绑定单一 RSI root session 的 Agent Scheduler 负责原生唤醒；它不创建或替代 Evaluator 排期，使用 Codex app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 生命周期（见 [app-server 文档](https://learn.chatgpt.com/docs/app-server)）。`members.responsibility` 保存完整职责，`thread_id` 保存原生 app-server 身份，`dispatch_state` 及 lease、已接受的 turn ID 记录 `pending`、`dispatching`、`running` 状态。Hook 可以记录待派发，但不能把排队当作 thread 已唤醒。显式暂停、完成、过期或截止时停止 Scheduler，并保留持久责任供恢复。
+
+省略 `CODEX_APP_SERVER_SOCKET` 时，Scheduler 启动专用 stdio app-server；只有宿主明确管理已有 control socket 时才设置该变量。
+
 ### 读取会话证据
 
 从任务文件和实验目录查找主 Agent 与成员会话，结合工作目录、时间、session ID 和父子关系确认记录范围。Evaluator 自行定位并只读检查，无需成员重新汇报进度。
@@ -146,6 +150,7 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 | `iterations/<name>/notes/iteration.md` | 指定 Experimenter 维护摘要与文档索引，追加运行结论、独立审查、决策和更正，注明时间、来源及证据链接。 |
 | `iterations/<name>/notes/` 下的其他文件 | 各作者维护完整方案、计划、分析或复核，由迭代笔记链接。 |
 | `iterations/<name>/notes/progress.yaml` | Experimenter 记录所选运行、实测父配置及各适用范围的判断，绘图命令据此生成共同对比。 |
+| `members.responsibility` / `members.thread_id` | Agent Scheduler 使用的完整持续职责与原生 app-server 身份；不能被某一个排队阶段替代。 |
 | `report.md` | 面向用户的简洁总览负责任务元数据、状态和链接。由一名指定总览负责人在 `.foretoken-report.lock` 下更新文字；数值比较来自生成的进展摘要。 |
 
 分析、审查和决定分别注明作者，每项决定写清行动和适用范围。更正结论或改变决定时，链接旧条目与新依据，保留认识变化的过程。

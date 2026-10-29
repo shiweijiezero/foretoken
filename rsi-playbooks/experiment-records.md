@@ -97,6 +97,10 @@ The check schedule belongs in `<output-dir>/team/README.md`; the Evaluator store
 
 Task records describe intent, ownership and decisions. Read actual agent activity from the native harness, hook bindings from continuation status, and jobs from their execution owner. When a report needs a snapshot, include its observation time and source. Avoid maintaining another live-state copy in each task, member and report file. Close an action with its owner's link to the resulting change or explanation of the decision to stop.
 
+For autonomous continuation, the Agent Scheduler is the owner of native wake-up. It is bound to one RSI root session and does not create or replace the Evaluator timetable. `members.responsibility` is the durable full role brief, `thread_id` is the native app-server identity, and `dispatch_state` records `pending`, `dispatching` or `running` with a lease and accepted turn ID. Hooks may record a pending transition, but they never claim that a queued item woke a thread. The scheduler stops on explicit pause, completion, expiry or deadline and leaves the durable assignment for recovery.
+
+If `CODEX_APP_SERVER_SOCKET` is omitted, the scheduler starts a dedicated stdio app-server. Use an existing control socket only when the host explicitly owns that daemon.
+
 ### Read session evidence
 
 Start from the task and experiment directory to find the lead and member sessions. Use working directories, times, session IDs and parent/child relationships to identify the relevant records. The Evaluator finds these itself and reads them without asking members to report progress.
@@ -146,6 +150,7 @@ Keep execution evidence, the history of judgments, and the current summary disti
 | `iterations/<name>/notes/iteration.md` | The assigned Experimenter maintains the summary and document index, and appends run findings, independent reviews, decisions, and corrections with timestamps, sources, and evidence links. |
 | Other files under `iterations/<name>/notes/` | Each author maintains the full proposal, plan, analysis or review linked from the iteration notes. |
 | `iterations/<name>/notes/progress.yaml` | The Experimenter records selected runs, measured parent and judgments for each scope. The plot command derives the shared comparisons from these records. |
+| `members.responsibility` / `members.thread_id` | The complete continuing role brief and native app-server identity used by the Agent Scheduler; these are not replaced by one queued stage. |
 | `report.md` | The concise user-facing overview owns task metadata, status and links. One designated overview owner updates its prose under `.foretoken-report.lock`; numerical comparisons come from the generated progress summary. |
 
 Attribute analysis, reviews, and decisions to their authors. Each decision states the action and its scope. When correcting a conclusion or changing a decision, link the earlier entry and new evidence so readers can follow how the understanding changed.

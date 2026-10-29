@@ -87,13 +87,24 @@ class WorkPool:
             raise ValueError("The task deadline has passed")
         return task
 
-    def register(self, agent: str, role: str, accepts: list[str]) -> None:
-        """Advertise this member's permitted work kinds without reserving pending work."""
+    def register(self, agent: str, role: str, accepts: list[str], *, responsibility: str = "",
+                 thread_id: str = "") -> None:
+        """Register a member's full responsibility and native thread for supervisor recovery."""
         self.active()
-        self.db.execute("""INSERT INTO members(harness,session,agent,role,state,next_step,notice)
-            VALUES (?,?,?,?,'working',NULL,NULL) ON CONFLICT(harness,session,agent)
-            DO UPDATE SET role=excluded.role,state='working',next_step=NULL,reason=NULL,notice=NULL""",
-                        (*self.identity, agent, role))
+        default_responsibility = (
+            responsibility or f"Continue the complete {role} responsibility for the active RSI task, "
+            "using the latest retained configuration and recording every result and dependency."
+        )
+        self.db.execute("""INSERT INTO members(
+                harness,session,agent,role,state,next_step,notice,responsibility,thread_id,dispatch_state)
+            VALUES (?,?,?,?,'working',NULL,NULL,?,?, 'pending')
+            ON CONFLICT(harness,session,agent) DO UPDATE SET
+                role=excluded.role,state='working',next_step=NULL,reason=NULL,notice=NULL,
+                responsibility=CASE WHEN excluded.responsibility!='' THEN excluded.responsibility ELSE members.responsibility END,
+                thread_id=CASE WHEN excluded.thread_id!='' THEN excluded.thread_id ELSE members.thread_id END,
+                dispatch_state=CASE WHEN members.dispatch_state='running' THEN 'running' ELSE 'pending' END,
+                lease_owner=NULL,lease_until=NULL,dispatch_id=NULL,turn_id=NULL,last_error=NULL""",
+                        (*self.identity, agent, role, default_responsibility, thread_id))
         self.db.execute("DELETE FROM capabilities WHERE harness=? AND session=? AND agent=?", (*self.identity, agent))
         self.db.executemany("INSERT INTO capabilities VALUES (?,?,?,?)", [
             (*self.identity, agent, kind) for kind in dict.fromkeys((*CAPABILITIES[role], *accepts))

@@ -13,6 +13,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import uuid
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
@@ -72,6 +73,14 @@ class Continuation:
                 next_step TEXT,
                 reason TEXT,
                 notice TEXT,
+                responsibility TEXT,
+                thread_id TEXT,
+                dispatch_state TEXT NOT NULL DEFAULT 'pending',
+                lease_owner TEXT,
+                lease_until REAL,
+                dispatch_id TEXT,
+                turn_id TEXT,
+                last_error TEXT,
                 PRIMARY KEY (harness, session, agent),
                 FOREIGN KEY (harness, session) REFERENCES sessions(harness, session)
             );
@@ -85,6 +94,24 @@ class Continuation:
         if "notice" not in {row[1] for row in self.db.execute("PRAGMA table_info(members)")}:
             try:
                 self.db.execute("ALTER TABLE members ADD COLUMN notice TEXT")
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+        member_columns = {row[1] for row in self.db.execute("PRAGMA table_info(members)")}
+        for name, definition in (
+            ("responsibility", "TEXT"),
+            ("thread_id", "TEXT"),
+            ("dispatch_state", "TEXT NOT NULL DEFAULT 'pending'"),
+            ("lease_owner", "TEXT"),
+            ("lease_until", "REAL"),
+            ("dispatch_id", "TEXT"),
+            ("turn_id", "TEXT"),
+            ("last_error", "TEXT"),
+        ):
+            if name in member_columns:
+                continue
+            try:
+                self.db.execute(f"ALTER TABLE members ADD COLUMN {name} {definition}")
             except sqlite3.OperationalError as error:
                 if "duplicate column name" not in str(error):
                     raise
@@ -192,7 +219,9 @@ class Continuation:
             if active:
                 raise ValueError("Finish or hand off owned work before releasing the member: " + ", ".join(row[0] for row in active))
             result = self.db.execute(
-                """UPDATE members SET state=?,next_step=NULL,reason=?,notice=NULL
+                """UPDATE members SET state=?,next_step=NULL,reason=?,notice=NULL,
+                          dispatch_state='released',lease_owner=NULL,lease_until=NULL,
+                          dispatch_id=NULL,turn_id=NULL
                    WHERE harness=? AND session=? AND agent=?""",
                 (args.state, args.reason, args.harness, args.session, args.agent),
             )
@@ -206,7 +235,9 @@ class Continuation:
                 (args.state, args.reason, args.harness, args.session),
             )
             self.db.execute(
-                "UPDATE members SET next_step=NULL,notice=NULL WHERE harness=? AND session=?",
+                """UPDATE members SET next_step=NULL,notice=NULL,dispatch_state='released',
+                          lease_owner=NULL,lease_until=NULL,dispatch_id=NULL,turn_id=NULL
+                   WHERE harness=? AND session=?""",
                 (args.harness, args.session),
             )
 
@@ -214,11 +245,88 @@ class Continuation:
         """Return this task's recorded continuation decisions and queued steps."""
         task = dict(self.session(harness, session))
         task["members"] = [dict(row) for row in self.db.execute(
-            "SELECT agent,role,state,next_step,reason,notice FROM members WHERE harness=? AND session=? ORDER BY role,agent",
+            """SELECT agent,role,state,next_step,reason,notice,responsibility,thread_id,
+                      dispatch_state,lease_owner,lease_until,dispatch_id,turn_id,last_error
+                 FROM members WHERE harness=? AND session=? ORDER BY role,agent""",
             (harness, session),
         )]
         task["work"] = WorkPool(self.db, harness, session).status()
         return task
+
+    def supervisor_candidates(self, harness: str, session: str | None = None) -> list[dict[str, Any]]:
+        """Return working members with a recorded native thread for external recovery."""
+        query = """SELECT m.*,s.task,s.deadline FROM members m JOIN sessions s
+                   ON s.harness=m.harness AND s.session=m.session
+                   WHERE m.harness=? AND s.state='active' AND m.state='working'
+                     AND m.thread_id IS NOT NULL AND m.thread_id!=''"""
+        params: list[Any] = [harness]
+        if session is not None:
+            query += " AND m.session=?"
+            params.append(session)
+        return [dict(row) for row in self.db.execute(query, params)]
+
+    def supervisor_prepare(self, harness: str, session: str, agent: str, supervisor: str,
+                           thread_status: str, lease_seconds: float) -> dict[str, Any] | None:
+        """Lease one idle native thread for a turn, without starting it in the database transaction."""
+        now = time.time()
+        row = self.db.execute("""SELECT m.*,s.task,s.deadline FROM members m JOIN sessions s
+            ON s.harness=m.harness AND s.session=m.session
+            WHERE m.harness=? AND m.session=? AND m.agent=? AND m.state='working'
+              AND s.state='active'""", (harness, session, agent)).fetchone()
+        if row is None or not row["thread_id"]:
+            return None
+        if row["deadline"] is not None and row["deadline"] <= now:
+            self.db.execute("""UPDATE sessions SET state='expired',reason='deadline',review_pending=0
+                           WHERE harness=? AND session=? AND state='active'""", (harness, session))
+            return None
+        status = thread_status or "unknown"
+        if status == "active":
+            self.db.execute("""UPDATE members SET dispatch_state='running',lease_owner=NULL,
+                          lease_until=NULL,last_error=NULL
+                       WHERE harness=? AND session=? AND agent=? AND state='working'""",
+                            (harness, session, agent))
+            return None
+        if status not in {"idle", "notLoaded"}:
+            self.db.execute("""UPDATE members SET last_error=? WHERE harness=? AND session=? AND agent=?""",
+                            (f"app-server thread status: {status}", harness, session, agent))
+            return None
+        if row["dispatch_state"] == "dispatching" and row["lease_until"] and row["lease_until"] > now:
+            return None
+        dispatch_id = uuid.uuid4().hex
+        prompt = (
+            f"Continue the complete RSI responsibility for {row['task']} as {row['role']}.\n"
+            f"Persistent responsibility: {row['responsibility'] or 'continue the latest retained research responsibility and record evidence.'}\n"
+            f"Dispatch id: {dispatch_id}. Inspect existing work, jobs and evidence before acting. "
+            "Do not release as idle or needs_assignment; release only for a concrete dependency, done, pause, expiry or explicit failure."
+        )
+        cursor = self.db.execute("""UPDATE members SET dispatch_state='dispatching',lease_owner=?,
+                      lease_until=?,dispatch_id=?,turn_id=NULL,last_error=NULL
+                   WHERE harness=? AND session=? AND agent=? AND state='working'
+                     AND (dispatch_state!='dispatching' OR lease_until IS NULL OR lease_until<=?)""",
+                        (supervisor, now + lease_seconds, dispatch_id, harness, session, agent, now))
+        if not cursor.rowcount:
+            return None
+        return {"agent": agent, "thread_id": row["thread_id"], "dispatch_id": dispatch_id, "prompt": prompt}
+
+    def supervisor_started(self, harness: str, session: str, agent: str, supervisor: str,
+                           dispatch_id: str, turn_id: str) -> bool:
+        """Commit running state only after app-server accepts `turn/start`."""
+        cursor = self.db.execute("""UPDATE members SET dispatch_state='running',lease_owner=NULL,
+                          lease_until=NULL,turn_id=?,last_error=NULL
+                       WHERE harness=? AND session=? AND agent=? AND state='working'
+                         AND dispatch_state='dispatching' AND lease_owner=? AND dispatch_id=?""",
+                        (turn_id, harness, session, agent, supervisor, dispatch_id))
+        return bool(cursor.rowcount)
+
+    def supervisor_failed(self, harness: str, session: str, agent: str, supervisor: str,
+                          dispatch_id: str, error: str) -> bool:
+        """Return an unstarted lease to pending so another supervisor can retry after a failure."""
+        cursor = self.db.execute("""UPDATE members SET dispatch_state='pending',lease_owner=NULL,
+                          lease_until=NULL,last_error=?
+                       WHERE harness=? AND session=? AND agent=? AND state='working'
+                         AND dispatch_state='dispatching' AND lease_owner=? AND dispatch_id=?""",
+                        (error[:2000], harness, session, agent, supervisor, dispatch_id))
+        return bool(cursor.rowcount)
 
     def hook(self, harness: str, event: dict[str, Any]) -> dict[str, Any]:
         """Materialize due checks on every live hook and continue only the affected member."""
@@ -252,6 +360,10 @@ class Continuation:
             pool.due_evaluations(task)
         if event.get("stop_hook_active"):
             if agent and kind in {"SubagentStop", "TeammateIdle", "Stop"}:
+                self.db.execute("""UPDATE members SET dispatch_state='pending',lease_owner=NULL,
+                              lease_until=NULL,dispatch_id=NULL,turn_id=NULL
+                           WHERE harness=? AND session=? AND agent=? AND state='working'""",
+                                (*identity, agent))
                 member = self.db.execute(
                     "SELECT * FROM members WHERE harness=? AND session=? AND agent=?", (*identity, agent)
                 ).fetchone()
@@ -295,6 +407,9 @@ class Continuation:
         member = self.db.execute("SELECT * FROM members WHERE harness=? AND session=? AND agent=?", (*identity, agent)).fetchone()
         if member is None or member["state"] in {"waiting", "done"}:
             return {}
+        self.db.execute("""UPDATE members SET dispatch_state='pending',lease_owner=NULL,
+                      lease_until=NULL,dispatch_id=NULL,turn_id=NULL,last_error=NULL
+                   WHERE harness=? AND session=? AND agent=?""", (*identity, agent))
         owned = self.db.execute("SELECT id FROM work WHERE harness=? AND session=? AND owner=? AND state='active'", (*identity, agent)).fetchall()
         if owned:
             instruction = (
@@ -337,6 +452,8 @@ def main() -> None:
             command.add_argument("--role", choices=("explorer", "worker", "experimenter"), required=True)
         if name == "register":
             command.add_argument("--accept", action="append", choices=KINDS, default=[], help="Additional authorized responsibility when dedicated staffing is absent")
+            command.add_argument("--responsibility", default="", help="Complete continuing responsibility, not a one-step task")
+            command.add_argument("--thread-id", default="", help="Native app-server thread ID used by the independent supervisor")
         elif name == "submit":
             command.add_argument("--work", type=nonempty, required=True)
             command.add_argument("--kind", choices=KINDS, required=True)
@@ -421,7 +538,8 @@ def main() -> None:
                     elif args.command == "status":
                         result = state.status(args.harness, args.session)
                     elif args.command == "register":
-                        pool.register(args.agent, args.role, args.accept)
+                        pool.register(args.agent, args.role, args.accept,
+                                      responsibility=args.responsibility, thread_id=args.thread_id)
                         result = {"agent": args.agent, "role": args.role, "accepts": [row[0] for row in connection.execute(
                             "SELECT kind FROM capabilities WHERE harness=? AND session=? AND agent=? ORDER BY kind",
                             (args.harness, args.session, args.agent))]}
@@ -454,11 +572,12 @@ def main() -> None:
                     else:
                         getattr(state, args.command)(args)
                         if args.command == "release" and args.agent:
-                            result = dict(connection.execute("SELECT agent,role,state,reason FROM members WHERE harness=? AND session=? AND agent=?",
+                            result = dict(connection.execute("""SELECT agent,role,state,reason,dispatch_state,
+                                                              responsibility,thread_id,last_error
+                                                         FROM members WHERE harness=? AND session=? AND agent=?""",
                                                              (args.harness, args.session, args.agent)).fetchone())
                         else:
                             result = dict(state.session(args.harness, args.session))
-                            result.pop("review_pending", None)
                 if args.command != "claim" or result is not None or time.monotonic() >= wait_until:
                     break
                 time.sleep(min(0.25, max(0, wait_until - time.monotonic())))

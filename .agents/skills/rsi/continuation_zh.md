@@ -30,7 +30,9 @@ python3 -I .agents/skills/rsi/scripts/continuation.py activate \
 ```bash
 python3 -I .agents/skills/rsi/scripts/continuation.py register \
   --harness "$RSI_HARNESS" --session "$RSI_SESSION" \
-  --agent "$RSI_AGENT" --role worker
+  --agent "$RSI_AGENT" --role worker \
+  --thread-id "$NATIVE_THREAD_ID" \
+  --responsibility "$RSI_RESPONSIBILITY"
 python3 -I .agents/skills/rsi/scripts/continuation.py claim \
   --harness "$RSI_HARNESS" --session "$RSI_SESSION" \
   --agent "$RSI_AGENT" --wait 30
@@ -68,9 +70,23 @@ python3 -I .agents/skills/rsi/scripts/continuation.py submit \
 
 传入 harness/session，用 `schedule --interval 3600 --count 1` 配置每小时一次新巡查；具体间隔和人数采用任务要求，人数为 0 时取消尚未领取的巡查，已经运行的评估由原负责人收尾。重新设置保持原计时起点。领取操作会使到期的 `evaluation` 派发工作可用，一批尚未完成时不堆积错过的轮次。
 
-空闲成员领取派发工作，只向全新 Evaluator 提供任务、角色和工作目录，接收其评估路径。实际评估保存后，再用它完成派发工作，不能用启动通知代替。Evaluator 将可执行发现直接交给相关负责人，不产生常设调度者或报告作者。
+空闲成员领取派发工作，只向全新 Evaluator 提供任务、角色和工作目录，接收其评估路径。实际评估保存后，再用它完成派发工作，不能用启动通知代替。Evaluator 将可执行发现直接交给相关负责人；工作池不产生常设 Evaluator 调度者或报告作者，下面的 Agent Scheduler 只负责唤醒持续成员 thread。
 
 工作池排期是唯一的评估时间表，存活成员的 idle hook 或 claim 会生成到期派发项，再由可用成员消费；它不是后台 daemon，运行环境退出后不会自行派发。不通过提醒另建第二套评估排期。
+
+## 运行独立 Agent Scheduler
+
+Hook 和 `queue` 只持久化工作，不会唤醒 idle 的原生 thread。任务需要在 Lead 回合结束后继续时，运行一个连接 Codex app-server 的独立 Agent Scheduler：
+
+```bash
+CODEX_APP_SERVER_SOCKET=/path/to/app-server-control.sock \
+python3 -I .agents/skills/rsi/scripts/agent_scheduler.py \
+  --harness codex --session "$RSI_SESSION" --cwd "$PWD" --interval 2
+```
+
+每名成员登记稳定的 `--thread-id` 和完整的 `--responsibility`。Scheduler 读取 `thread/read` 状态，在 SQLite 中领取 `pending` responsibility，调用 `thread/resume`，只有 `turn/start` 返回 turn ID 后才标记为 `running`。thread 已 active 时绝不重复启动；完成或回到 idle 后重新进入 `pending`。Scheduler 崩溃由 lease 过期恢复。进程请求存在不确定失败时按至少一次投递处理，因此每次 prompt 带 dispatch ID，成员必须先检查已有工作再行动。
+
+绑定的 session 进入 paused、complete 或 expired 时 Scheduler 停止；到达任务截止也必须显式停止。`SessionEnd` 只保存持久状态，不暂停 RSI，也不生成新工作。成员只能以 `waiting`、`done`、`paused`、`expired` 或明确失败／资源冲突释放；`idle` 和 `needs_assignment` 是调度故障，不是正常研究状态。
 
 ## 等待、暂停与结束
 

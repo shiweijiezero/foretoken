@@ -158,6 +158,25 @@ class WorkPoolTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Register or resume"):
             self.pool.claim("worker-01")
 
+    def test_scheduler_leases_then_requeues_idle_thread(self) -> None:
+        """A scheduler owns the dispatch lease and starts the next turn only after acceptance."""
+        self.pool.register("worker-01", "worker", [], responsibility="full worker duty", thread_id="thread-1")
+        first = self.state.supervisor_prepare("codex", "root", "worker-01", "scheduler-a", "idle", 60)
+        self.assertIsNotNone(first)
+        self.assertEqual(self.state.status("codex", "root")["members"][0]["dispatch_state"], "dispatching")
+        self.assertIsNone(self.state.supervisor_prepare("codex", "root", "worker-01", "scheduler-b", "idle", 60))
+        self.assertTrue(self.state.supervisor_started("codex", "root", "worker-01", "scheduler-a", first["dispatch_id"], "turn-1"))
+        second = self.state.supervisor_prepare("codex", "root", "worker-01", "scheduler-a", "idle", 60)
+        self.assertIsNotNone(second)
+        self.assertNotEqual(second["dispatch_id"], first["dispatch_id"])
+
+    def test_scheduler_does_not_duplicate_active_thread(self) -> None:
+        """An active native turn is authoritative even when the database says it is pending."""
+        self.pool.register("worker-01", "worker", [], thread_id="thread-1")
+        self.assertIsNone(self.state.supervisor_prepare("codex", "root", "worker-01", "scheduler-a", "active", 60))
+        row = self.state.status("codex", "root")["members"][0]
+        self.assertEqual(row["dispatch_state"], "running")
+
 
 if __name__ == "__main__":
     unittest.main()
