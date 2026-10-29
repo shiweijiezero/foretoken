@@ -18,6 +18,7 @@ from vllm.v1.worker.gpu.spec_decode.autoregressive.speculator import (
 )
 from vllm.v1.worker.gpu.spec_decode.speculator import BaseSpeculator
 
+from .bulk_inputs import DeviceInputAssembler
 from .context import DraftContext
 from .device_input import DeviceInputBatch, DeviceInputRow, DeviceTurnFeedback
 from .exchange import TensorExchange
@@ -138,6 +139,13 @@ class DraftWorker(gpu_worker.Worker):
         self.dt_history_stream = torch.cuda.Stream(self.device)
         self.dt_peers: dict[str, DraftPeer] = {}
         self.dt_input_observer = ExternalInputObserver(self.device)
+        self.dt_feedback_staging = None
+        if settings.protocol == "nccl" and self.model_runner.neural:
+            self.model_runner.device_input_assembler = DeviceInputAssembler(
+                self.vllm_config.scheduler_config.max_num_seqs,
+                self.vllm_config.scheduler_config.max_num_batched_tokens,
+                self.device,
+            )
 
     def register_external_input_wakeup(self, callback):
         """Connect the native Core wake owner to device-input completion observation."""
@@ -250,6 +258,19 @@ class DraftWorker(gpu_worker.Worker):
                         device="cpu",
                         pin_memory=True,
                     )
+                    # Feedback copies use one serialized stream. Its staging
+                    # can be shared; active batches retain old views on growth.
+                    if (
+                        self.dt_feedback_staging is None
+                        or self.dt_feedback_staging.shape[0] < peer.max_tokens
+                    ):
+                        self.dt_feedback_staging = torch.empty(
+                            peer.max_tokens,
+                            peer.num_features,
+                            peer.hidden_size,
+                            dtype=features.dtype,
+                            device=self.device,
+                        )
                     state.features = torch.empty(
                         peer.num_features,
                         peer.max_tokens,
@@ -352,6 +373,7 @@ class DraftWorker(gpu_worker.Worker):
             ready,
             feedback_packed=state.feedback_packed[: packed.numel()],
             feedback_features=state.feedback_features[:num_tokens],
+            feedback_staging=self.dt_feedback_staging[:num_tokens],
         )
         rows = []
         contexts = {}

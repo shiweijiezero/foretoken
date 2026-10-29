@@ -23,6 +23,7 @@ class DeviceInputBatch:
         *,
         feedback_packed,
         feedback_features,
+        feedback_staging,
     ):
         self.sequence = sequence
         self.packed = packed
@@ -30,6 +31,8 @@ class DeviceInputBatch:
         self.ready = ready
         self.feedback_packed = feedback_packed
         self.feedback_features = feedback_features
+        self.feedback_staging = feedback_staging
+        self.feedback_snapshot_started = False
         self.input_ids, self.positions, metadata = packed.split(
             (num_tokens, num_tokens, 5 * num_requests)
         )
@@ -41,6 +44,22 @@ class DeviceInputBatch:
             self.last_sampled,
             self.total_len,
         ) = self.metadata.unbind(dim=0)
+
+    def copy_feedback_once(self, copy_stream):
+        """Snapshot one complete peer input on the existing feedback stream."""
+        if self.feedback_snapshot_started:
+            return
+        copy_stream.wait_event(self.ready)
+        # The Worker's copy stream owns staging reuse through FIFO ordering.
+        # This turn retains its view through the native copy fence, including growth.
+        # One transpose kernel replaces each selected row's strided transfer.
+        self.feedback_staging.copy_(
+            self.features[:, : self.input_ids.numel()].movedim(0, 1),
+            non_blocking=True,
+        )
+        self.feedback_packed.copy_(self.packed, non_blocking=True)
+        self.feedback_features.copy_(self.feedback_staging, non_blocking=True)
+        self.feedback_snapshot_started = True
 
 
 @dataclass
@@ -65,26 +84,14 @@ class DeviceTurnFeedback:
             runner.output_copy_stream.wait_stream(runner.main_stream)
             for request_id, binding in rows:
                 batch = binding.batch
-                runner.output_copy_stream.wait_event(batch.ready)
+                batch.copy_feedback_once(runner.output_copy_stream)
                 num_tokens = batch.input_ids.numel()
                 input_ids, positions, metadata = batch.feedback_packed.split(
                     (num_tokens, num_tokens, 5 * batch.metadata.shape[1])
                 )
                 metadata = metadata.view_as(batch.metadata)
                 left, right = binding.offset, binding.offset + binding.count
-                input_ids[left:right].copy_(
-                    batch.input_ids[left:right], non_blocking=True
-                )
-                positions[left:right].copy_(
-                    batch.positions[left:right], non_blocking=True
-                )
-                metadata[:, binding.row].copy_(
-                    batch.metadata[:, binding.row], non_blocking=True
-                )
                 features = batch.feedback_features[left:right]
-                features.copy_(
-                    batch.features[:, left:right].movedim(0, 1), non_blocking=True
-                )
                 self.values.append(
                     (
                         request_id,

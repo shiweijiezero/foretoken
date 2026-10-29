@@ -247,7 +247,6 @@ class DraftModelRunner(model_runner.GPUModelRunner):
             )
         rows = []
         upper_bounds = []
-        anchors = []
         for row, request_id in enumerate(batch.req_ids):
             binding = self.device_inputs[request_id]
             reservation = reservations[request_id]
@@ -257,22 +256,13 @@ class DraftModelRunner(model_runner.GPUModelRunner):
                 or reservation.initial != binding.initial
             ):
                 raise RuntimeError("Native reservation differs from its device input")
-            self.main_stream.wait_event(binding.batch.ready)
-            left, right = batch.query_start_loc_np[row : row + 2]
-            source = slice(binding.offset, binding.offset + binding.count)
-            batch.input_ids[left:right].copy_(binding.batch.input_ids[source])
-            batch.positions[left:right].copy_(binding.batch.positions[source])
-            batch.seq_lens[row].copy_(binding.batch.seq_lens[binding.row])
-            self.context_features[left:right].copy_(
-                binding.batch.features[:, source].movedim(0, 1)
-            )
-            anchors.append(binding.batch.last_sampled[binding.row])
+            if int(batch.num_scheduled_tokens[row]) != binding.count:
+                raise RuntimeError("Native scheduling truncated a complete device row")
             upper_bounds.append(binding.seq_len_upper_bound)
             rows.append((request_id, binding))
-        self.req_states.last_sampled_tokens[batch.idx_mapping] = torch.stack(anchors)[
-            :, None
-        ]
-        self.context_features[batch.num_tokens : batch.num_tokens_after_padding].zero_()
+        for source in dict.fromkeys(binding.batch for _, binding in rows):
+            self.main_stream.wait_event(source.ready)
+        self.device_input_assembler.assemble(self, batch, rows)
         self.device_feedback = DeviceTurnFeedback(self, rows)
         return replace(
             batch,
@@ -379,12 +369,8 @@ class DraftModelRunner(model_runner.GPUModelRunner):
         state, self.execute_model_state = self.execute_model_state, None
         feedback, self.device_feedback = self.device_feedback, None
         batch = state.input_batch
-        sampled = torch.stack(
-            [binding.batch.num_sampled[binding.row] for _, binding in feedback.rows]
-        ).to(torch.int32)
-        rejected = torch.stack(
-            [binding.batch.num_rejected[binding.row] for _, binding in feedback.rows]
-        ).to(torch.int32)
+        sampled = self.device_input_assembler.sampled[: batch.num_reqs]
+        rejected = self.device_input_assembler.rejected[: batch.num_reqs]
         features = self.context_features[: batch.num_tokens_after_padding]
         aux = (
             list(features.unbind(dim=1)) if self.use_aux_hidden_state_outputs else None
