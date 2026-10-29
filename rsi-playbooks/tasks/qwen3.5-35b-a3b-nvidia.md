@@ -11,7 +11,7 @@ Deployment layout: agent-selected within the final single-node GPU budget, inclu
 Final deployment budget: at most 2 NVIDIA A100 80GB GPUs on one node; at most 32 CPU cores and 250G host memory in total for all target model, auxiliary model and frontend workloads [Fixed]
 Experiment sizing: service candidates fit the final budget; focused kernel, compilation, or correctness experiments may use fewer resources, including one GPU
 Available resources: at most 6 NVIDIA A100 80GB GPUs in total for target-comparable experiments; schedule CPU, memory, and storage within actual host capacity [Fixed]
-Experiment topology: use other idle GPUs or hosts, including non-NVIDIA devices, for implementation, diagnostics or separate cross-host scopes when useful; use RDMA or InfiniBand when available. Record exact host/device identity, transport and observations. Keep non-A100 and cross-host results separate; they do not enlarge the six-A100 pool or change the single-node A100 adoption budget, baseline or performance comparison.
+Experiment topology: use other idle GPUs or hosts, including non-NVIDIA devices, for implementation, diagnostics or cross-host experiments when useful; use RDMA or InfiniBand when available. Record the host, GPU and connection used. Compare non-A100 and cross-host results separately; they do not enlarge the six-A100 pool or change the single-node A100 adoption budget, baseline or performance comparison.
 Explorer count: 4 [Fixed]
 Worker count: 4 [Fixed]
 Experimenter count: 3 [Fixed]

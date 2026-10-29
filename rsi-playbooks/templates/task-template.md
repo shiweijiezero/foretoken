@@ -42,7 +42,7 @@ Evaluator count is the number of new agents created for each check. It defaults 
 
 The parallel-experiment limit counts independent experiments running at once; request concurrency belongs in the workload. Distinguish the final deployment budget from each experiment's needs. Smaller diagnostic experiments may use fewer devices; allocate the remaining resources to other useful work while preserving comparison conditions.
 
-Other idle hosts or GPU types may support implementation and diagnostics when the task allows them. Record their device and transport identity, and keep non-comparable hardware or cross-host results in separate scopes rather than changing the target deployment budget or baseline.
+When allowed, other idle hosts or GPU types may support implementation and diagnostics. Record where the run executed and how hosts were connected; compare those results separately without changing the target deployment budget or baseline.
 
 Workloads can reference existing configurations or [recipes](../../benchmarks/docs/recipes.md). For multiple workload groups, specify whether objectives apply to each group or to an aggregate result.
 
