@@ -24,7 +24,7 @@ Activate the task's [continuation binding](continuation.md#enable-the-task) and 
 
 When the task must continue after the lead turn ends, start the task-bound [Agent Scheduler](continuation.md#run-the-independent-agent-scheduler). Hooks and queue operations persist responsibility but do not wake an idle native thread. Stop the scheduler at explicit pause, completion, expiry or deadline.
 
-The lead keeps an observation checkpoint and communicates state changes, concrete corrections and decisions. A verified wait with no changed evidence needs no repeated status message; use the next scheduled check or scheduler event.
+The lead keeps an observation checkpoint and communicates state changes, concrete corrections and decisions. A verified wait with no changed evidence needs no repeated status message; do not send a user-facing update solely to restate waiting, unchanged prerequisites or the same boundary. Continue the selected coordination task internally and use the next scheduled check or scheduler event for the next update.
 
 Each Experimenter writes its own iteration results and dispositions and refreshes the generated progress view. A designated overview owner maintains only report metadata, status, links and short context under the task-local report lock; the [report workflow](../../../rsi-playbooks/experiment-records.md#maintain-the-user-facing-report) keeps numerical aggregation in the plot command.
 
@@ -58,7 +58,7 @@ All research, exploration and implementation default to the latest validated ret
 
 A branch with useful results returns to the latest retained combination for measurement; isolated sibling gains do not establish a combined gain. Preserve the original baseline as the comparison reference. Research owners choose the next hypothesis, implementation and informative experiment, and decide local continuation, stopping and retention within the task's authority and total budget. Soft stage estimates may change; the hard deadline remains fixed.
 
-Submit complete questions or informative stages, with code, evidence and comparison conditions in existing notes. Available qualified members claim work without fixed Worker–Experimenter pairings. Finish with original artifacts and deliver them directly; use native follow-up when a known idle consumer becomes ready. Continue independent work rather than waiting for a new root assignment.
+Submit complete questions or informative stages, with code, evidence and comparison conditions in existing notes. Available qualified members claim work without fixed Worker–Experimenter pairings. Finish with original artifacts and deliver them directly; use native follow-up when a known waiting consumer becomes ready, or when repairing a scheduler-reported idle thread. Continue independent work rather than waiting for a new root assignment.
 
 Before adoption, obtain a fresh Evaluator assessment of the candidate's code, effective configuration and original evidence. Reuse applicable prior validation and choose new checks by important changed behavior. Do not automatically repeat controls or full matrices for each candidate, and obey task-specific measurement restrictions. A research owner adopts or revises the candidate using that assessment and the task's requirements; the combined deployment still needs evidence for the claimed scope.
 

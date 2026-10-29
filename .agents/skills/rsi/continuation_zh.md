@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](continuation.md) | 简体中文
 
-原生成员通过 `scripts/continuation.py` 共享任务内工作，领取就绪问题或有信息价值的阶段，直接交付证据，不需要派工 Agent。完整说明与原始产物保留在现有实验笔记。
+原生成员通过 `scripts/continuation.py` 共享任务内工作，领取就绪问题或有信息价值的阶段，直接交付证据。Agent Scheduler 只唤醒已登记的原生 thread，不选择研究阶段，也不替成员作决定。完整说明与原始产物保留在现有实验笔记。
 
 ## 启用本次任务
 
@@ -60,7 +60,7 @@ python3 -I .agents/skills/rsi/scripts/continuation.py submit \
 
 不要把新的 review 工作分配给持续成员。在 Evaluator 的 fresh assessment 中链接实现与执行原件；Evaluator 读取原始证据并记录适用范围和未解问题。`--after`／`--exclude` 仅为兼容已有 review 记录保留。
 
-完成时运行 `finish --agent "$RSI_AGENT" --work "$RSI_WORK" --result "$RSI_RESULT"`，并传入相同 harness/session。产物必须是已有文件或分析，其中写清实际结果。有用证据到达就发布后续工作，不等整套矩阵；已知的空闲使用者需要恢复时用原生 follow-up。共享工作领取与原生 Agent 派发是两项操作。
+完成时运行 `finish --agent "$RSI_AGENT" --work "$RSI_WORK" --result "$RSI_RESULT"`，并传入相同 harness/session。产物必须是已有文件或分析，其中写清实际结果。有用证据到达就发布后续工作，不等整套矩阵；已知的等待成员需要恢复时用原生 follow-up，Scheduler 报告 thread 为空闲时仅在修复调度时恢复。共享工作领取与原生 Agent 派发是两项操作。
 
 `submit`、`finish`、`handoff` 和旧 `queue` 的响应会在存在熟悉且可用的成员或其他空闲合格成员时返回简短的 `notifications` 路由。产出者通过原生 follow-up 或成员间直接消息发送提醒；提醒只发给这些对象，不广播给全体。没有发送提醒时，成员仍可领取就绪工作。
 

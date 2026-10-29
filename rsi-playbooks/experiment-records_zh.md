@@ -99,7 +99,7 @@ results/decode/parallelism/
 
 需要自主接续时，由绑定单一 RSI root session 的 Agent Scheduler 负责原生唤醒；它不创建或替代 Evaluator 排期，使用 Codex app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 生命周期（见 [app-server 文档](https://learn.chatgpt.com/docs/app-server)）。`members.responsibility` 保存完整职责，`thread_id` 保存原生 app-server 身份，`dispatch_state` 及 lease、已接受的 turn ID 记录 `pending`、`dispatching`、`running` 状态。Hook 可以记录待派发，但不能把排队当作 thread 已唤醒。Lead 观察 Scheduler 健康、研究、资源和失败边界；只有 Scheduler 故障或明确依赖时才用原生 follow-up 恢复成员。显式暂停、完成、过期或截止时停止 Scheduler，并保留持久责任供恢复。
 
-每个可执行阶段只有一个主负责人。独立审查应成为读取负责人原件的独立工作项；其他成员应承担不同范围或问题，不应重复完整审计或测量。发现重复分工时，保留第一份完整证据，并在启动新运行前把另一名成员转向其他问题。
+每个可执行阶段只有一个主负责人。全新 Evaluator 的评估是读取负责人原件的独立工作项；其他成员应承担不同范围或问题，不应重复完整审计或测量。发现重复分工时，保留第一份完整证据，并在启动新运行前把另一名成员转向其他问题。
 
 Lead 的协调记录还应写明下一未解决定、负责人、所需证据和会改变判断的检查。没有测量窗口时，优先对齐主线和报告、核验资源或 Hook 假设、清理过期分工，不重复发送状态摘要。
 
@@ -151,7 +151,7 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 | 记录 | 更新方式 |
 | --- | --- |
 | 已完成的运行产物 | 保留原始命令、指标、响应和日志，后续分析引用它们。运行中的文件仍由执行程序维护。 |
-| `iterations/<name>/notes/iteration.md` | 指定 Experimenter 维护摘要与文档索引，追加运行结论、独立审查、决策和更正，注明时间、来源及证据链接。 |
+| `iterations/<name>/notes/iteration.md` | 指定 Experimenter 维护摘要与文档索引，追加运行结论、决策和更正，注明时间、来源及证据链接，并链接全新 Evaluator 的评估。 |
 | `iterations/<name>/notes/` 下的其他文件 | 各作者维护完整方案、计划、分析或复核，由迭代笔记链接。 |
 | `iterations/<name>/notes/progress.yaml` | Experimenter 记录所选运行、实测父配置及各适用范围的判断，绘图命令据此生成共同对比。 |
 | `members.responsibility` / `members.thread_id` | Agent Scheduler 使用的完整持续职责与原生 app-server 身份；不能被某一个排队阶段替代。 |
@@ -159,7 +159,7 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 
 分析、审查和决定分别注明作者，每项决定写清行动和适用范围。更正结论或改变决定时，链接旧条目与新依据，保留认识变化的过程。
 
-每次运行后，Experimenter 在[迭代笔记](templates/iteration-template_zh.md)中补入原件位置与结果，再按[团队交付流程](../.agents/skills/rsi/roles/common_zh.md#随实验返回结果)直接恢复 Worker 和已安排的审查者。例如，诊断命令退出码为 0，但保存的输出比较可能不一致；应同时记录两个事实并链接比较结果。分别说明实测速度、适用的验证证据与是否保留。
+每次运行后，Experimenter 在[迭代笔记](templates/iteration-template_zh.md)中补入原件位置与结果，再按[团队交付流程](../.agents/skills/rsi/roles/common_zh.md#随实验返回结果)直接交给 Worker 或研究负责人。全新 Evaluator 在下一次巡查读取这些记录。例如，诊断命令退出码为 0，但保存的输出比较可能不一致；应同时记录两个事实并链接比较结果。分别说明实测速度、适用的验证证据与是否保留。
 
 正式测量、诊断控制和工具验证均注明用途与样本数，没有 `metrics.json` 的辅助产物也要保留入口。远端运行由 Experimenter 将结果保存到约定位置，包括从临时存储转移原件；接收者直接读取原件，或使用交付的副本。恢复时先检查已登记的远端作业与结果位置。
 
@@ -175,7 +175,7 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 foretoken plot --progress results/decode/parallelism
 ```
 
-命令读取所有迭代所选的既有运行和判断，生成 `figures/progress/progress-summary.md`、对应 CSV 表及原生里程碑图、搜索图。使用这些生成数值更新 `report.md` 中的简洁总表，不把完整运行清单复制进去。各 scope 顶部列出已测采用分支末端及实际运行／配置／源码记录，便于后续选择适用的父配置；祖先历史仍保留。指标、重复次数、波动和已记录的源码／配置证据均来自原件。机制解释、输出差异与 Evaluator 结论保留在作者的 `iteration.md` 及分析中。
+命令读取所有迭代所选的既有运行和判断，生成 `figures/progress/progress-summary.md`、对应 CSV 表及原生里程碑图、搜索图。使用这些生成数值更新 `report.md` 中的简洁总表，不把完整运行清单复制进去。各 scope 顶部列出已测采用分支末端及实际运行／配置／源码记录，便于后续选择适用的父配置；祖先历史仍保留。指标、重复次数、波动和已记录的源码／配置证据均来自原件。机制解释与输出差异保留在作者的 `iteration.md` 及分析中；Evaluator 结论保存在 `team/evaluations/`，由迭代笔记链接。
 
 例如，候选的进展记录可以选择一次完成的命令及其实测父方案：
 

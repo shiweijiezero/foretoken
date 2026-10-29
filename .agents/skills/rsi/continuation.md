@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](continuation_zh.md)
 
-Task-scoped work is shared by native members through `scripts/continuation.py`. Members claim ready questions or informative stages and deliver evidence directly, without a dispatching agent. Existing experiment notes hold the detailed brief and original artifacts.
+Task-scoped work is shared by native members through `scripts/continuation.py`. Members claim ready questions or informative stages and deliver evidence directly. The Agent Scheduler only wakes registered native threads; it does not choose research stages or replace member decisions. Existing experiment notes hold the detailed brief and original artifacts.
 
 ## Enable the task
 
@@ -60,7 +60,7 @@ Kinds are `explorer`, `worker`, `experimenter`, `review` and `evaluation`. `revi
 
 Do not assign new review work to continuing members. Link implementation and execution items in the Evaluator's fresh assessment; the Evaluator reads the original evidence and records the supported scope and remaining issue. Keep `--after`/`--exclude` only for compatibility with existing review records.
 
-Finish owned work with `finish --agent "$RSI_AGENT" --work "$RSI_WORK" --result "$RSI_RESULT"`, including the same harness/session arguments. The result must be an existing artifact or analysis; its contents state the outcome. Publish follow-on work as useful evidence arrives rather than waiting for a whole matrix. Use native follow-up when a known idle consumer needs to resume. Shared work admission and native agent dispatch are separate operations.
+Finish owned work with `finish --agent "$RSI_AGENT" --work "$RSI_WORK" --result "$RSI_RESULT"`, including the same harness/session arguments. The result must be an existing artifact or analysis; its contents state the outcome. Publish follow-on work as useful evidence arrives rather than waiting for a whole matrix. Use native follow-up when a known waiting consumer needs to resume, or when repairing a scheduler-reported idle thread. Shared work admission and native agent dispatch are separate operations.
 
 The response to `submit`, `finish`, `handoff` and legacy `queue` includes compact `notifications` routes when a preferred familiar member or another idle qualified member can act. The producer sends that route through native follow-up or direct member messaging; it is targeted and never broadcast. Members can still claim the ready item when no route is delivered.
 

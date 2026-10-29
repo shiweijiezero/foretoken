@@ -7,11 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](common_zh.md)
 
-The root agent establishes the objective, fixed requirements, original baseline, total budget and initial team. Members then own research, implementation and experiments within that authority; fresh Evaluators own independent review. Once the Agent Scheduler is running, the root observes records, checks progress and resource/research boundaries, reminds owners about concrete gaps and briefs the user; it does not dispatch every stage or relay routine messages. If the scheduler is unavailable or a lease remains stuck, the root uses native follow-up only to repair that scheduling failure. Routine decisions and deliveries go directly to their consumers.
-
-Keep one observation checkpoint for the task. Report only when the checkpoint, evidence, owner action, resource state or decision changes; when a verified wait produces no change, wait for the next check instead of repeating the same status.
-
-During an unchanged interval, the root chooses one highest-value coordination task from the open evidence: verify resources or hooks, reconcile the report and lineage, inspect Scheduler health, or prepare the next experiment's preflight. It may do read-only analysis and documentation corrections, or publish a distinct work item, but it does not repeat a member's experiment or review. Each observation cycle also checks for unowned responsibilities, duplicate scopes, stale assignments and a missing next cumulative parent.
+The root agent establishes the objective, fixed requirements, original baseline, total budget and initial team. Members then own research, implementation and experiments within that authority; fresh Evaluators own independent review. Once the Agent Scheduler is running, the root observes records, checks progress and resource/research boundaries, reminds owners about concrete gaps and briefs the user; it does not dispatch every stage or relay routine messages. The observation and user-update rule is defined once in the [RSI skill](../SKILL.md); members do not wait for root messages. If the scheduler is unavailable or a lease remains stuck, the root uses native follow-up only to repair that scheduling failure. Routine decisions and deliveries go directly to their consumers.
 
 ## Learn the framework first
 
@@ -31,7 +27,7 @@ Role counts do not require a fixed role ratio or pairing. If no member can execu
 
 An Explorer gives useful research directly to the implementing Worker; the Worker supplies a runnable candidate for an available Experimenter; the executor returns results directly to the owner and records the original paths for the next Evaluator. Review findings go to the person who can act on them. Use existing notes for shared background and send only the conclusion, changed information and precise paths. Routine updates need no acknowledgement.
 
-When a delivery makes an idle consumer ready, use native follow-up to resume that consumer. A message alone does not wake an idle member. Publish work that any qualified member can take through continuation instead of preassigning it to someone busy. Continue independent work while a real dependency is pending.
+When a delivery makes a waiting consumer ready, use native follow-up to resume that consumer. A scheduler-reported idle thread is a recovery case, not a normal member state. A message alone does not wake an idle member. Publish work that any qualified member can take through continuation instead of preassigning it to someone busy. Continue independent work while a real dependency is pending.
 
 Give each executable stage one primary owner. Other members use the saved evidence for distinct questions, while the next Evaluator checks the complete claim before retention.
 
@@ -65,7 +61,7 @@ The Evaluator records the supported scope and any concrete remaining issue. The 
 
 ## Hand off and resume
 
-Finish a stage with its result and publish the next useful work or genuine dependency through [continuation](../continuation.md). A finding or review completes an item, not the continuing research responsibility; research owners choose the next question even when no producer has queued one. An available member claims ready work directly. The producer resumes a known idle consumer when its required result arrives. Neither stage completion nor a soft time estimate ends an open research responsibility; the task's hard deadline is unchanged.
+Finish a stage with its result and publish the next useful work or genuine dependency through [continuation](../continuation.md). A finding or review completes an item, not the continuing research responsibility; research owners choose the next question even when no producer has queued one. An available member claims ready work directly. The producer resumes a known waiting consumer, or a scheduler-reported idle thread while repairing scheduling. Neither stage completion nor a soft time estimate ends an open research responsibility; the task's hard deadline is unchanged.
 
 On pause, stop or deadline, each owner stops or hands over its jobs and collectors, confirms exit and preserves results. A collector deadline governs only that process; serving and build jobs need their own stop action. On resumption, inspect existing jobs and results before launching replacements.
 

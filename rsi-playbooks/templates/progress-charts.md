@@ -40,7 +40,7 @@ measurements:
     retained: true
 ```
 
-Paths are relative to the record. A run can name a command directory or a specific saved result directory. List additional comparable repetitions in `runs`; the existing result reader calculates their means, counts and standard deviations. Do not enter numeric measurements in this file. Link the explanation and independent review from `iteration.md`.
+Paths are relative to the record. A run can name a command directory or a specific saved result directory. List additional comparable repetitions in `runs`; the existing result reader calculates their means, counts and standard deviations. Do not enter numeric measurements in this file. Link the explanation from `iteration.md` and the fresh Evaluator assessment from `team/evaluations/`.
 
 | Field | Meaning |
 | --- | --- |

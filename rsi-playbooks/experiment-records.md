@@ -99,7 +99,7 @@ Task records describe intent, ownership and decisions. Read actual agent activit
 
 For autonomous continuation, the Agent Scheduler is the owner of native wake-up. It is bound to one RSI root session and does not create or replace the Evaluator timetable. `members.responsibility` is the durable full role brief, `thread_id` is the native app-server identity, and `dispatch_state` records `pending`, `dispatching` or `running` with a lease and accepted turn ID. Hooks may record a pending transition, but they never claim that a queued item woke a thread. The root observes scheduler health and handles research, resource, failure and direction decisions; it only uses native follow-up to recover a scheduler fault or explicit dependency. The scheduler stops on explicit pause, completion, expiry or deadline and leaves the durable assignment for recovery.
 
-Each executable stage has one primary owner. Independent review is a separate work item over the owner's saved evidence; assign another member a distinct scope or question instead of duplicating the complete audit or measurement. If duplicate work is discovered, retain the first complete evidence set and redirect the other member before starting another run.
+Each executable stage has one primary owner. A fresh Evaluator assessment is a separate work item over the owner's saved evidence; assign other members distinct scopes or questions instead of duplicating the complete audit or measurement. If duplicate work is discovered, retain the first complete evidence set and redirect the other member before starting another run.
 
 The root's coordination record should also show the next unresolved decision, its owner, the evidence needed, and the check that will change it. When no measurement can run, use that interval to reconcile lineage/report state, verify resource or hook assumptions, or remove stale assignments rather than repeating a status summary.
 
@@ -151,7 +151,7 @@ Keep execution evidence, the history of judgments, and the current summary disti
 | Record | How it changes |
 | --- | --- |
 | Completed run artifacts | Preserve the original commands, metrics, responses, and logs. Later analysis links to them. In-progress files remain owned by their runner. |
-| `iterations/<name>/notes/iteration.md` | The assigned Experimenter maintains the summary and document index, and appends run findings, independent reviews, decisions, and corrections with timestamps, sources, and evidence links. |
+| `iterations/<name>/notes/iteration.md` | The assigned Experimenter maintains the summary and document index, and appends run findings, decisions and corrections with timestamps, sources and evidence links; it links fresh Evaluator assessments. |
 | Other files under `iterations/<name>/notes/` | Each author maintains the full proposal, plan, analysis or review linked from the iteration notes. |
 | `iterations/<name>/notes/progress.yaml` | The Experimenter records selected runs, measured parent and judgments for each scope. The plot command derives the shared comparisons from these records. |
 | `members.responsibility` / `members.thread_id` | The complete continuing role brief and native app-server identity used by the Agent Scheduler; these are not replaced by one queued stage. |
@@ -159,7 +159,7 @@ Keep execution evidence, the history of judgments, and the current summary disti
 
 Attribute analysis, reviews, and decisions to their authors. Each decision states the action and its scope. When correcting a conclusion or changing a decision, link the earlier entry and new evidence so readers can follow how the understanding changed.
 
-After each run, the Experimenter adds its original location and finding to the [iteration notes](templates/iteration-template.md), then directly resumes the Worker and any assigned reviewer using the [team workflow](../.agents/skills/rsi/roles/common.md#return-results-as-work-finishes). For example, a diagnostic command can finish with exit 0 while its saved output comparison fails. Record both facts and link the comparison; distinguish measured speed, applicable validation evidence and the retention decision.
+After each run, the Experimenter adds its original location and finding to the [iteration notes](templates/iteration-template.md), then directly delivers it to the Worker or research owner using the [team workflow](../.agents/skills/rsi/roles/common.md#return-results-as-work-finishes). The fresh Evaluator reads these records on its next check. For example, a diagnostic command can finish with exit 0 while its saved output comparison fails. Record both facts and link the comparison; distinguish measured speed, applicable validation evidence and the retention decision.
 
 Include formal measurements, diagnostic controls and tool-validation runs with their purposes and sample counts. Link auxiliary artifacts even when they have no `metrics.json`. On remote runs, the Experimenter preserves the agreed result location, including any transfer from scratch storage. Recipients read the originals there or use the delivered copy. On recovery, check the recorded remote job and result location.
 
@@ -175,7 +175,7 @@ After a measured stage or a changed judgment, update `iterations/<name>/notes/pr
 foretoken plot --progress results/decode/parallelism
 ```
 
-The command reads every iteration's selected saved runs and judgments, then generates `figures/progress/progress-summary.md`, matching CSV tables and the native milestone/search charts. Use those generated values to refresh the concise table in `report.md`; do not duplicate full run inventories there. Each scope starts with measured retained branch tips and actual run/configuration/source links for choosing an applicable next parent; adopted ancestors remain in the history. Metrics, repetition counts, variability and recorded code/configuration evidence come from the existing run records. Detailed mechanisms, output differences and Evaluator findings stay in the owner's `iteration.md` and linked analyses.
+The command reads every iteration's selected saved runs and judgments, then generates `figures/progress/progress-summary.md`, matching CSV tables and the native milestone/search charts. Use those generated values to refresh the concise table in `report.md`; do not duplicate full run inventories there. Each scope starts with measured retained branch tips and actual run/configuration/source links for choosing an applicable next parent; adopted ancestors remain in the history. Metrics, repetition counts, variability and recorded code/configuration evidence come from the existing run records. Detailed mechanisms and output differences stay in the owner's `iteration.md`; Evaluator findings stay in `team/evaluations/` and are linked from the iteration note.
 
 For example, a candidate's progress record can select one completed command and its measured parent:
 

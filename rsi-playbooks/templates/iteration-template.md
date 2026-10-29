@@ -2,9 +2,9 @@
 
 English | [简体中文](iteration-template_zh.md)
 
-Use `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` for the approach's question, evidence and decisions. Name the research owner, executor and independent reviewer. Follow the [recording guide](../experiment-records.md#complete-the-experiment-notes) and link existing task records for ownership and scheduling.
+Use `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` for the approach's question, evidence and decisions. Name the research owner and executor; link the fresh Evaluator assessment when available. Follow the [recording guide](../experiment-records.md#complete-the-experiment-notes) and link existing task records for ownership and scheduling.
 
-Use the sections below as needed. Keep a short experiment in this note. Split out long proposals, analyses or separately authored reviews when needed, and link them here.
+Use the sections below as needed. Keep a short experiment in this note. Split out long proposals or analyses when needed, and link them here.
 
 ## Question and analysis
 
@@ -28,8 +28,8 @@ Record investigation, build, measurement and analysis time as relevant, separati
 
 ## Behavior and attribution review
 
-When a review is assigned, record its author, findings and evidence. Retained approaches need an independent review under the [team guidance](../../.agents/skills/rsi/roles/common.md#review-claims-independently).
+When the fresh Evaluator assessment is available, link its author, findings and evidence. Retained approaches require that assessment under the [team guidance](../../.agents/skills/rsi/roles/common.md#review-claims-independently).
 
 ## Decision and completion
 
-Append the decision, author, evidence and next action, distinguishing a measured candidate result from the owner's reviewed adoption and its workload scope. Link later corrections to the earlier judgment. Record resources still owned or handed off.
+Append the decision, author, evidence and next action, distinguishing a measured candidate result from the owner's adoption decision after the fresh Evaluator assessment and its workload scope. Link later corrections to the earlier judgment. Record resources still owned or handed off.
