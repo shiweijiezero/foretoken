@@ -23,6 +23,27 @@ Treat recurring execution costs as research questions about the workflow. Follow
 
 Inspect records read-only without asking members for status or interrupting experiments. Missing or truncated records leave the affected claim unresolved; they do not prove inactivity. Native lifecycle records describe activity, not productive time by themselves. Avoid repeating model scoring or experiments when original evidence already answers the question.
 
+## Checklist
+
+Record one row for every item below with `passed`, `issue found`, `unresolved` or `not applicable`, the evidence path and the owner/action. A routine check rereads changed and open rows and links unchanged evidence; initialization, a major change and completion cover every row.
+
+| ID | Check | Evidence to inspect |
+| --- | --- | --- |
+| 01 | Objective and limits | Task objective, fixed requirements, original baseline, total resources and hard deadline |
+| 02 | Cumulative parent | Latest applicable retained configuration, actual parent, new delta and measured combination |
+| 03 | Research value | Current bottleneck, hypothesis, PGE trade-off and next question |
+| 04 | Implementation | Intended revision, worktree and deployment are the ones that actually ran |
+| 05 | Workload and quality | Matching workload, output checks, quality scope, failures and unknowns |
+| 06 | Performance evidence | Throughput/latency, repetitions, variation, parent change and baseline change |
+| 07 | Adoption decision | Independent review, decision scope and remaining validation |
+| 08 | Parallel experiments | Ready candidates run concurrently when their resource requests do not conflict; no unnecessary stage barrier or fixed pairing |
+| 09 | Resource utilization | Available GPUs, CPU, memory, storage and network are used as far as the task budget and comparison conditions allow; idle capacity has a recorded dependency or preparation reason |
+| 10 | Environment reuse | Worktrees, server-side builds, images, model files, compiler caches and deployment instances are reused without contaminating candidates |
+| 11 | Work-pool liveness | Claims, dependencies, affinity, fairness, targeted notifications, waits, handoffs and recovery leave no ready work stranded |
+| 12 | Delivery and report | Original results, progress record, concise table, figures and approach summary are current |
+| 13 | Follow-through | Previous findings have an owner, correction and observable outcome; repeated failures are not reopened without a new question |
+| 14 | Workflow improvement | A workflow hypothesis was tested when raised, and waiting, rework, communication or cumulative progress changed as expected |
+
 
 ## Deliver findings to the responsible owners
 

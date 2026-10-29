@@ -183,7 +183,7 @@ class WorkPool:
         The caller delivers these compact routes through native messaging/follow-up.
         Recorded work ownership estimates availability; the harness owns actual activity.
         """
-        members = self.db.execute("SELECT agent FROM members WHERE harness=? AND session=? AND state NOT IN ('done','waiting') AND agent!=?",
+        members = self.db.execute("SELECT agent,state FROM members WHERE harness=? AND session=? AND state!='done' AND agent!=?",
                                   (*self.identity, sender)).fetchall()
         candidates = []
         for member in members:
@@ -195,18 +195,23 @@ class WorkPool:
                 WHERE w.harness=? AND w.session=? AND p.agent=?""", (*self.identity, agent)).fetchall()
             active = self.db.execute("SELECT COUNT(*) FROM work WHERE harness=? AND session=? AND owner=? AND state='active'",
                                      (*self.identity, agent)).fetchone()[0]
-            candidates.append((agent, capabilities, {r[0] for r in history if r[0]},
+            candidates.append((agent, member["state"], capabilities, {r[0] for r in history if r[0]},
                                {r[1] for r in history if r[1]}, active))
         routed: dict[str, list[str]] = {}
         for work in self.ready():
             if work["id"] not in work_ids:
                 continue
-            eligible = [member for member in candidates if self.eligible(work, member[0], member[1])]
+            eligible = [member for member in candidates
+                        if self.eligible(work, member[0], member[2])
+                        and (member[1] != "waiting" or work["creator"] == member[0])]
             if not eligible:
                 continue
-            ordered = sorted(eligible, key=lambda m: (work["topic"] not in m[2], work["environment"] not in m[3], m[4], m[0]))
+            ordered = sorted(eligible, key=lambda m: (
+                work["creator"] != m[0], m[1] != "waiting", work["topic"] not in m[3],
+                work["environment"] not in m[4], m[5], m[0],
+            ))
             recipients = [ordered[0]]
-            idle = next((member for member in ordered if member[4] == 0), None)
+            idle = next((member for member in ordered if member[1] == "working" and member[5] == 0), None)
             if idle is not None and idle[0] != recipients[0][0]:
                 recipients.append(idle)
             for agent, *_ in recipients:
