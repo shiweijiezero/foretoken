@@ -101,6 +101,8 @@ For autonomous continuation, the Agent Scheduler is the owner of native wake-up.
 
 Each executable stage has one primary owner. Independent review is a separate work item over the owner's saved evidence; assign another member a distinct scope or question instead of duplicating the complete audit or measurement. If duplicate work is discovered, retain the first complete evidence set and redirect the other member before starting another run.
 
+The root's coordination record should also show the next unresolved decision, its owner, the evidence needed, and the check that will change it. When no measurement can run, use that interval to reconcile lineage/report state, verify resource or hook assumptions, or remove stale assignments rather than repeating a status summary.
+
 If `CODEX_APP_SERVER_SOCKET` is omitted, the scheduler starts a dedicated stdio app-server. Use an existing control socket only when the host explicitly owns that daemon.
 
 ### Read session evidence

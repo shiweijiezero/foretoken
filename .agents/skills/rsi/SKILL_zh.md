@@ -13,6 +13,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 主 Agent 建立目标、原始 baseline、资源总量、硬截止时间和初始职责，在初始化时补齐缺少的任务设置。恢复时保持原截止时间，先检查已有作业和结果。随后主 Agent 查看已有进展，将具体纠错直接交给负责人，并向用户简要汇报有效收益、采用配置、阻碍和下一步。简报使用已有报告、结果与 Evaluator 结论，不再向全员收集一轮状态。成员持续工作，不等待主 Agent 阅读、回复或批准；实验记录和导出仍由产物负责人维护。
 
+观察没有新证据时，主 Agent 选择一个未解的协调任务：核验资源或 Hook、对齐报告与主线谱系、检查 Scheduler，或准备下一阶段 preflight；可以做只读分析和文档修正，但不重复成员的实验或审查。同时检查过期责任、重复范围和缺失的累计父版本。
+
 启用任务的[接续绑定](continuation_zh.md#启用本次任务)，按配置启用定期巡查。同一研究课题使用一个 W&B project，名称以 `foretoken-` 开头并包含模型、硬件和目标，恢复时沿用命名。研究、实现和环境准备同时开始。任务需要在主 Agent 回合结束后继续时，启动绑定该任务的 [Agent Scheduler](continuation_zh.md#运行独立-agent-scheduler)；Hook 和 queue 只持久化职责，不会唤醒 idle 原生 thread。显式暂停、完成、过期或截止时停止 Scheduler。
 
 Lead 保留一个观察 checkpoint，只汇报状态变化、具体纠正和决定。已确认且没有新证据的等待无需重复汇报，等下一次排期检查或 Scheduler 事件。

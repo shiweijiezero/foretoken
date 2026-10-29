@@ -11,6 +11,8 @@ The root agent establishes the objective, fixed requirements, original baseline,
 
 Keep one observation checkpoint for the task. Report only when the checkpoint, evidence, owner action, resource state or decision changes; when a verified wait produces no change, wait for the next check instead of repeating the same status.
 
+During an unchanged interval, the root chooses one highest-value coordination task from the open evidence: verify resources or hooks, reconcile the report and lineage, inspect Scheduler health, or prepare the next experiment's preflight. It may do read-only analysis and documentation corrections, or publish a distinct work item, but it does not repeat a member's experiment or review. Each observation cycle also checks for unowned responsibilities, duplicate scopes, stale assignments and a missing next cumulative parent.
+
 ## Learn the framework first
 
 Read the [project README](../../../../README.md), architecture guidance and documentation for the affected path, then the task, current retained configuration and relevant experiment records. Trace producers and consumers before changing behavior. Reuse established context and applicable evidence; refresh what the current question or changed version requires.
