@@ -74,6 +74,8 @@ pub(super) async fn run(
         },
         model_dtype: None,
         effective_max_model_len: 0,
+        kv_block_size: None,
+        prefix_cache_enabled: None,
         max_logprobs: None,
         ec_transfer: None,
         prepared_tokenizer,

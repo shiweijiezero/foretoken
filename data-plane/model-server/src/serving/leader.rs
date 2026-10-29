@@ -465,6 +465,8 @@ fn runtime_metadata(
         },
         model_dtype: client.reported_model_dtype(),
         effective_max_model_len: client.max_model_len(),
+        kv_block_size: None,
+        prefix_cache_enabled: None,
         max_logprobs: client
             .ready_responses()
             .first()
