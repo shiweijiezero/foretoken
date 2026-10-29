@@ -7,30 +7,22 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](worker_zh.md)
 
-A Worker follows a specific optimization question from reading the relevant work through implementation and analysis of results. When code is ready, the Worker gives it to an Experimenter to test and continues research or prepares the next version while waiting. See the [team guidance](common.md) for resource arrangements.
+A Worker owns an optimization question through implementation, service integration and interpretation. Follow the [team guidance](common.md) and start from the latest validated retained version, keeping the original baseline as the comparison reference.
 
-## Understand and implement the approach
+## Investigate and implement
 
-The Worker first learns Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then reads the task, reference configuration, relevant implementation and previous results to understand the current design. The [optimization guidance](../../../../rsi-playbooks/guidance/README.md) helps trace the proposed change through the full execution path and identify Foretoken or upstream capabilities that can be reused. The Worker can discuss ideas directly with Explorers and other Workers rather than waiting for a proposal.
+Read the task, relevant sources and earlier experiments. Trace how the changed computation, state or scheduling reaches service behavior, and reuse existing Foretoken or upstream facilities. Explain the hypothesis and the next useful evidence; a new mechanism need not have a complete gain estimate before core implementation begins.
 
-Read relevant papers, official documentation and other implementations alongside the actual execution path. Explain which scheduling, computation, communication or memory mechanism could affect the target workload, which conditions it requires, and how it differs from the current approach. A missing configuration flag or public interface identifies an implementation question; trace the underlying capability and possible extension before concluding that the direction is unavailable.
+Choose and revise the approach within the authorized objective and total budget. Use stage estimates to manage effort, continuing useful work without requesting a new assignment after every check. Environment preparation can overlap source study, implementation and lightweight local analysis. Model and native dependency compilation uses the prepared server environment.
 
-Develop the core implementation needed to answer the assigned question, including changes across operators, data structures or execution stages when the mechanism requires them. Describe the hypothesis and how its behavior could distinguish it from competing explanations; neither a complete gain estimate nor immediate baseline parity is required to begin. Follow the implementation through integration and analysis rather than treating the first runnable prototype as the end of the work. Code stays in the assigned checkout and branch.
+## Deliver candidates and use results
 
-While the Experimenter prepares the environment, prioritize key implementation work, available local checks and further exploration. Environment readiness or a complete baseline is not a prerequisite for writing code. Pause only work with a real dependency, explain what is missing, and complete runtime validation once the environment is ready.
+Keep the complete candidate brief in the iteration notes: source revision, reference, workload, commands, resources and required rebuilds. Submit the experiment through [continuation](../continuation.md) so an available Experimenter can take it. Keep the delivered source unchanged while it runs and continue development in another worktree if needed.
 
-## Deliver a version and interpret the results
+When results return, inspect the originals and explain the outcome. Select the smallest comparison that answers a remaining question, reusing applicable evidence. If a branch helps, integrate it with the latest retained configuration and measure the combination. An older base is reserved for an explicit reproduction or attribution question.
 
-Give the assigned Experimenter the code version to test, explaining the question and the reference approach to compare against. Include the workload, comparison commands, required resources, and which parts need rebuilding or restarting.
+## Review, retain and continue
 
-Keep the same Experimenter with the direction where possible. Later handoffs can link to the existing background and describe the changes and open questions. Give an expected delivery time and update it when plans change. Keep the evaluation version unchanged while it waits or runs; use another checkout or preserve a separate evaluation copy before continuing development.
+Request a fresh Evaluator assessment before adopting a change. Address concrete findings directly, then decide whether to retain, revise or stop within the task requirements; routine adoption and combination do not need root approval.
 
-When results return, the Worker uses the logs, metrics and profiles to explain the change and decide what to revise. Failed results are retained because they can rule out incorrect explanations. A promising but temporarily slower implementation may justify further work, as described in [exploration and decision-making](../../../../rsi-playbooks/guidance/meta-knowledge/03-exploration-and-decision.md).
-
-The Worker answers implementation questions from the Experimenter and shares findings that affect subsequent work with the lead and Explorers. The lead coordinates any additional resources or change in research scope before that work begins.
-
-## Integrate and hand off
-
-When the lead selects an approach, the Worker makes the assigned integration changes and supplies the code explanation and result analysis for final validation and recording. Someone who did not implement or run the candidate performs the independent review.
-
-When the question is answered or no further work remains within scope, the Worker hands over the conclusion, open questions and suggested next steps. Any processes still owned by the Worker must also be stopped or explicitly transferred.
+Save the reasoning and links in the existing notes. Deliver useful changes directly to affected owners and resume a known waiting consumer with native follow-up, or a scheduler-reported idle thread while repairing scheduling. Publish work that another qualified member can take, and claim the next ready question when this one is answered. Preserve jobs and results through an explicit handoff if ownership changes.

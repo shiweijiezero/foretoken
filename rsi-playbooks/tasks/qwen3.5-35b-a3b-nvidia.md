@@ -10,34 +10,37 @@ Precision: fixed BF16 [Fixed]
 Deployment layout: agent-selected within the final single-node GPU budget, including parallelism and any stage separation
 Final deployment budget: at most 2 NVIDIA A100 80GB GPUs on one node; at most 32 CPU cores and 250G host memory in total for all target model, auxiliary model and frontend workloads [Fixed]
 Experiment sizing: service candidates fit the final budget; focused kernel, compilation, or correctness experiments may use fewer resources, including one GPU
-Available resources: at most 6 NVIDIA A100 80GB GPUs in total for experiments; schedule CPU, memory, and storage within actual host capacity [Fixed]
+Available resources: at most 6 NVIDIA A100 80GB GPUs in total for target-comparable experiments; schedule CPU, memory, and storage within actual host capacity [Fixed]
+Experiment topology: use other idle GPUs or hosts, including non-NVIDIA devices, for implementation, diagnostics or cross-host experiments when useful; use RDMA or InfiniBand when available. Record the host, GPU and connection used. Compare non-A100 and cross-host results separately; they do not enlarge the six-A100 pool or change the single-node A100 adoption budget, baseline or performance comparison.
 Explorer count: 4 [Fixed]
 Worker count: 4 [Fixed]
 Experimenter count: 3 [Fixed]
 Evaluator count: 1 [Fixed]
 Evaluator check interval: 1h [Fixed]
-Codex models: Explorer 01-02 = gpt-6-astra/high; Explorer 03-04 = gpt-6.1-sol/high; Worker and Experimenter = gpt-6.1-terra/xhigh; Evaluator = gpt-6-astra/high [Fixed]
+Codex models: Explorer 01-02 = gpt-6.1-sol/high; Explorer 03-04 = gpt-6.1-terra/xhigh; Worker and Experimenter = gpt-6.1-terra/xhigh; Evaluator = gpt-6-astra/high [Fixed]
 Claude models: Explorer 01-02 = Fable/Opus/high; Explorer 03-04 = sonnet/high; Worker, Experimenter and Evaluator = sonnet/high [Fixed]
 Maximum parallel experiments: at most 3 two-GPU service candidates; smaller focused experiments share the six-GPU budget
-Parallel scheduling: reserve capacity for platform services, builds, and benchmark clients, then schedule experiments by their actual resource requests and record the achieved parallelism
+Parallel scheduling: reserve capacity for platform services, builds, and benchmark clients, then schedule experiments by their actual resource requests, cross-host placement and RDMA reservations; record the achieved parallelism and topology
 Iteration workloads: random only by default, at concurrency 1 and 16; analyze each point as it completes
 Extended validation: StudyChat for multi-turn hypotheses and the final retained approach, reusing existing matched controls; quality evaluation as needed
 Accuracy evaluation: run foretoken eval when an output-affecting change needs new quality evidence, prioritizing candidates considered for retention.
 Allowed changes: implementation and configuration at any layer within fixed requirements, including algorithms, auxiliary models and their weights, composition and execution; develop new mechanisms or use community work
 Measurement budget per iteration: allow 10 minutes by default and use enough samples to answer the question; analyze once they finish. Adjust the budget and request count to the workload, recording the reason and time spent
-Work duration: a total budget of 24 hours from the start of task execution [Fixed]
+Work duration: a total budget of 168 hours from the original start of task execution; resuming or changing chats does not reset it [Fixed]
 Expected outcome / completion criteria: keep increasing throughput and reducing TPOT without fixed metric thresholds.
   Continue research, implementation and measurement, covering both parameter tuning and source changes. Finish when the research questions are answered and further work offers little value, when time runs out, or when the user asks to stop.
   Explain the evidence for stopping. Distinguish approaches tested without benefit, implementations that could not run, and ideas not yet implemented or tested.
 Deliverables (<iteration> is the approach name passed to --iteration):
   - Iteration notes: record motivation, code and configuration changes, complete commands, results and next steps in results/qwen3.5-35b-a3b-nvidia/iterations/<iteration>/notes/iteration.md.
-  - Performance comparisons: in the notes, list output throughput (tokens/s) and mean TPOT (ms/token) at concurrency 1 and 16 for each workload. Compare results with the initial approach and previous iteration, explaining percentage changes and their causes.
+  - Performance comparisons: in the notes, list output throughput (tokens/s) and mean TPOT (ms/token) at concurrency 1 and 16 for each workload. Compare results with the original baseline and actual measured parent, explaining percentage changes and their causes.
   - Evidence: command artifacts are saved under runs/ in the same iteration directory; link raw results, plots and W&B from the notes.
-  - Execution efficiency: report the time-weighted mean number of active subagents and each node's mean GPU utilization over the full task. State the interval, resource scope, sampling coverage and reasons for low utilization, with raw records.
-  - User-facing report: continuously update rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia/<experiment>/report.md with per-workload comparisons, changes from baseline, the retained approach and its code/configuration, conclusions and execution efficiency. Link iteration notes and W&B; place key plots in figures/ beside the report and use relative links.
+  - Execution records: keep active-agent counts, GPU observations and cleanup evidence in team and resource records for internal diagnosis. The concise user report does not repeat this accounting.
+  - User-facing report: continuously update the report with one chart-and-table summary per workload, followed by short descriptions of each approach, its actual parent, incremental result and decision. Link iteration notes, source/configuration and W&B where useful; keep full commands and logs in the experiment records.
 ```
 
-Follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and resource scheduling. Keep evidence using the [experiment records guide](../experiment-records.md), and organize the report with the [report template](../templates/report-template.md).
+Follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and resource scheduling. New work starts from the latest applicable validated retained configuration. Record the actual parent and delta, and measure useful branches after integration with the latest retained combination. Keep evidence using the [experiment records guide](../experiment-records.md), and organize the report with the [report template](../templates/report-template.md).
+
+For each workload scope, the designated Experimenter publishes the current measured retained tip before the next stage starts. Workers and Explorers may branch from that tip; only a measured combination followed by the fresh Evaluator assessment advances the cumulative mainline. Older parents remain explicit reproduction or attribution references.
 
 ## Starting deployment
 

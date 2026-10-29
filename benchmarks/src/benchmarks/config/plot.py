@@ -117,10 +117,10 @@ def parse_plot_arguments(argv: Sequence[str] | None = None) -> PlotOptions:
     )
     parser.add_argument("sources", type=Path, nargs="*", metavar="RESULT_DIR",
                         help="Result directories or folders containing saved results")
-    parser.add_argument("--progress", type=Path, nargs="+", action="extend", default=[], metavar="YAML",
-                        help="Render report milestone and search-history figures from progress data instead")
+    parser.add_argument("--progress", type=Path, nargs="+", action="extend", default=[], metavar="ROOT_OR_YAML",
+                        help="Aggregate iteration-owned progress records, or render legacy progress YAML files")
     parser.add_argument("--output-dir", type=Path,
-                        help="Figure directory (default: RESULT_DIR/plots; beside progress files; ./plots for comparisons)")
+                        help="Figure directory (default: RESULT_DIR/plots; EXPERIMENT_DIR/figures/progress; beside progress YAML; ./plots for comparisons)")
     parser.add_argument("--columns", type=int, choices=(1, 2),
                         help="Saved-result paper column width (default: 1)")
     parser.add_argument("--metric", action="extend", nargs="+", default=[],
@@ -162,12 +162,13 @@ def parse_plot_arguments(argv: Sequence[str] | None = None) -> PlotOptions:
     selected = any((args.x_metric is not None, args.x_stat is not None,
                     args.y_metric is not None, args.y_stat is not None,
                     args.sweep_axis, args.label_by, args.label_values, args.compare_axis, args.frontier))
+    iteration_progress = len(args.progress) == 1 and args.progress[0].is_dir()
     if args.progress and (
-        selected or args.columns is not None or args.metric or args.stat or args.method or args.base
+        selected or args.columns is not None or ((args.metric or args.stat) and not iteration_progress) or args.method or args.base
         or args.pricing or args.min_interactivity is not None or args.interactivity_metric is not None
         or args.interactivity_stat is not None or args.gpu_count is not None or args.sync_wandb
     ):
-        parser.error("--progress accepts --output-dir; metric, baseline and comparison settings come from the YAML files")
+        parser.error("--progress accepts --output-dir and, for an experiment directory, --metric/--stat; other settings come from its records")
     x = MetricSelection(axes.x.metric if args.x_metric is None else args.x_metric, args.x_stat)
     y = MetricSelection(axes.y.metric if args.y_metric is None else args.y_metric, args.y_stat)
     interactivity = MetricSelection(

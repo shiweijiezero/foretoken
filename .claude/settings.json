@@ -1,4 +1,5 @@
 {
+  "ultracode": true,
   "hooks": {
     "SubagentStop": [
       {
@@ -11,36 +12,6 @@
       }
     ],
     "TeammateIdle": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python -I \"$CLAUDE_PROJECT_DIR/.agents/skills/rsi/scripts/continuation.py\" hook --harness claude"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python -I \"$CLAUDE_PROJECT_DIR/.agents/skills/rsi/scripts/continuation.py\" hook --harness claude"
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python -I \"$CLAUDE_PROJECT_DIR/.agents/skills/rsi/scripts/continuation.py\" hook --harness claude"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
       {
         "hooks": [
           {

@@ -16,7 +16,7 @@ Worker count: 4 [Fixed]
 Experimenter count: 3 [Fixed]
 Evaluator count: 1 [Fixed]
 Evaluator check interval: 1h [Fixed]
-Codex models: Explorer 01-02 = gpt-6-astra/high; Explorer 03-04 = gpt-6.1-sol/high; Worker and Experimenter = gpt-6.1-terra/xhigh; Evaluator = gpt-6-astra/high [Fixed]
+Codex models: Explorer 01-02 = gpt-6.1-sol/high; Explorer 03-04 = gpt-6.1-terra/xhigh; Worker and Experimenter = gpt-6.1-terra/xhigh; Evaluator = gpt-6-astra/high [Fixed]
 Claude models: Explorer 01-02 = Fable/Opus/high; Explorer 03-04 = sonnet/high; Worker, Experimenter and Evaluator = sonnet/high [Fixed]
 Maximum parallel experiments: at most 3 two-GPU service candidates; smaller focused experiments share the six-GPU budget
 Parallel scheduling: reserve capacity for platform services, builds, and benchmark clients, then schedule experiments by their actual resource requests and record the achieved parallelism
@@ -31,13 +31,13 @@ Expected outcome / completion criteria: keep increasing throughput and reducing 
   Explain the evidence for stopping. Distinguish approaches tested without benefit, implementations that could not run, and ideas not yet implemented or tested.
 Deliverables (<iteration> is the approach name passed to --iteration):
   - Iteration notes: record motivation, code and configuration changes, complete commands, results and next steps in results/qwen3.5-35b-a3b-muxi/iterations/<iteration>/notes/iteration.md.
-  - Performance comparisons: in the notes, list output throughput (tokens/s) and mean TPOT (ms/token) at concurrency 1 and 16 for each workload. Compare results with the initial approach and previous iteration, explaining percentage changes and their causes.
+  - Performance comparisons: in the notes, list output throughput (tokens/s) and mean TPOT (ms/token) at concurrency 1 and 16 for each workload. Compare results with the original baseline and actual measured parent, explaining percentage changes and their causes.
   - Evidence: command artifacts are saved under runs/ in the same iteration directory; link raw results, plots and W&B from the notes.
-  - Execution efficiency: report the time-weighted mean number of active subagents and each node's mean GPU utilization over the full task. State the interval, resource scope, sampling coverage and reasons for low utilization, with raw records.
-  - User-facing report: continuously update rsi-playbooks/tasks/qwen3.5-35b-a3b-muxi/<experiment>/report.md with per-workload comparisons, changes from baseline, the retained approach and its code/configuration, conclusions and execution efficiency. Link iteration notes and W&B; place key plots in figures/ beside the report and use relative links.
+  - Execution records: keep active-agent counts, GPU observations and cleanup evidence in team and resource records for internal diagnosis. The concise user report does not repeat this accounting.
+  - User-facing report: continuously update the report with one chart-and-table summary per workload, followed by short descriptions of each approach, its actual parent, incremental result and decision. Link iteration notes, source/configuration and W&B where useful; keep full commands and logs in the experiment records.
 ```
 
-Follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and resource scheduling. Keep evidence using the [experiment records guide](../experiment-records.md), and organize the report with the [report template](../templates/report-template.md).
+Follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and resource scheduling. New work starts from the latest applicable validated retained configuration. Record the actual parent and delta, and measure useful branches after integration with the latest retained combination. Keep evidence using the [experiment records guide](../experiment-records.md), and organize the report with the [report template](../templates/report-template.md).
 
 ## Starting deployment
 

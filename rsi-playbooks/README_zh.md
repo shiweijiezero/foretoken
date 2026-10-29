@@ -34,7 +34,7 @@ cd foretoken
 
 下面以 NVIDIA 任务为例，使用自定义任务时替换路径。
 
-仓库包含用于[接续 RSI 工作](../.agents/skills/rsi/continuation_zh.md)的项目 hook，需要 Python 3.11+，只对主 Agent 明确启用的 RSI 会话生效。
+仓库包含用于[接续 RSI 工作](../.agents/skills/rsi/continuation_zh.md)的项目 hook，需要 Python 3.11+，只对明确启用的 RSI 任务生效。
 
 #### Claude Code
 
@@ -73,7 +73,7 @@ max_concurrent_threads_per_session = 16
 
 ## 查看进展
 
-实验报告 `report.md` 随进展更新，汇总方案对比、性能与质量结果、保留方案和待验证的问题。原始数据和详细分析可从报告中的链接查看，记录格式见[实验记录手册](experiment-records_zh.md)。
+各 Experimenter 记录自己的结果与判定，由现有绘图入口汇总比较和进展。报告将实测收益、采用方案与未解问题链接到原件，记录格式见[实验记录手册](experiment-records_zh.md)。
 
 需要调整目标、预算或改动范围时，在会话中说明即可，由主 Agent 更新任务记录与受影响的工作安排。
 
@@ -85,11 +85,11 @@ max_concurrent_threads_per_session = 16
 
 | 角色 | 主要职责 |
 | --- | --- |
-| 主 Agent | 选择研究方向、安排资源、处理决策并组织交付。 |
+| 主 Agent | 建立任务、查看记录、向负责人提出纠正，并向用户简要汇报；成员独立推进。 |
 | Explorer | 检索本地或在线资料，研究机制，提出方法和新问题。 |
-| Worker | 实现方案，分析实验结果并继续改进。 |
-| Experimenter | 准备环境、部署和运行实验、保存结果、释放资源。 |
-| Evaluator | 每轮独立评估进度、研究深度与资源使用，向主 Agent 提交发现及待决定的问题。 |
+| Worker | 负责实现与结果解释，在任务授权内持续改进或采用方案。 |
+| Experimenter | 领取就绪实验、复用环境、保存原始结果并释放资源。 |
+| Evaluator | 独立检查变化与开放问题，将可执行发现直接交给相关负责人。 |
 
 ## 执行规则与参考资料
 

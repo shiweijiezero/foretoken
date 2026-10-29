@@ -47,17 +47,19 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ```text
 results/decode/parallelism/
-├── report.md                  # Agent 维护的整体报告
+├── report.md                  # 链接生成结果的任务总览
 ├── figures/
-│   ├── progress-main.yaml          # 一个指标、一组对照条件的绘图数据
-│   ├── progress-main-milestones.png
-│   └── progress-main-search.png
+│   └── progress/
+│       ├── progress-summary.md     # 生成的比较与图表
+│       ├── progress-summary.csv
+│       └── progress-runs.csv
 ├── team/                      # Agent 维护的团队与巡查记录
 │   ├── README.md              # 任务、提醒与处理决定
 │   └── evaluations/          # 每轮 Evaluator 的独立评估笔记
 └── iterations/tp2/
     ├── notes/
-    │   ├── iteration.md       # 摘要、文档链接与决定
+    │   ├── iteration.md       # 作者分析、文档链接与决定
+    │   ├── progress.yaml      # 运行引用与限定范围的判断
     │   ├── plan.md            # 示例：完整方案与执行计划
     │   └── analysis.md        # 示例：详细结果分析
     └── runs/perf-000001/
@@ -77,7 +79,7 @@ results/decode/parallelism/
 
 每个方案的问题、假设、结果和决定保存在 `<output-dir>/iterations/<name>/notes/iteration.md`。简短实验只需这一份笔记及原始结果链接；补测时用 `--iteration` 沿用方案名。
 
-方案、分析较长或由其他成员独立撰写审查时，再单独成文并从 `iteration.md` 链接。笔记保留注明时间的发现与决定；`report.md` 汇总跨方案的目标、比较和结论，链接这些记录。
+方案、分析较长或由其他成员独立撰写审查时，再单独成文并从 `iteration.md` 链接。笔记保留注明时间的发现与决定；`report.md` 说明任务目标，链接生成的跨方案对比和各作者记录。
 
 主 Agent 提供全体成员可读取的实验目录，注明所在主机和绝对路径。共享文件系统上的不同 checkout 使用同一绝对 `--output-dir`，通过 `--iteration` 区分候选；跨主机没有共享存储时，在报告中链接实际记录位置及访问方式。
 
@@ -87,13 +89,21 @@ results/decode/parallelism/
 
 例如，说明吞吐提升时，给出参考方案和候选方案的 `metrics.json` 路径及对比字段；说明错误时，给出日志路径及相关行号或时间范围。代码结论注明版本、文件和函数，涉及 Agent 决策或工具调用的结论则指向会话记录及具体消息或时间范围。发送结论时附上这些原始证据位置，接收者先读取相关部分，需要更多上下文时再展开。
 
-研究资料、脚本、准备日志和清理记录也放在本轮 `notes/` 下，按需要组织；`plan.md`、`analysis.md` 只是文件名示例。评测命令会补建缺失的迭代笔记，保留已有内容，报告和其他文件由成员维护。原始运行产物仍保存在 `runs/`。删除被引用的工作区前，先保存所需代码并更新链接；清理时保留仍被引用的证据。
+研究资料、脚本、准备日志和清理记录也放在本轮 `notes/` 下，按需要组织；`plan.md`、`analysis.md` 只是文件名示例。评测命令会补建缺失的迭代笔记，保留已有内容，各作者维护自己的分析与进展记录。原始运行产物仍保存在 `runs/`。删除被引用的工作区前，先保存所需代码并更新链接；清理时保留仍被引用的证据。
 
 ## 保存团队与会话记录
 
-主 Agent 在 `<output-dir>/team/README.md` 维护巡查安排，链接 `team/evaluations/` 下的每轮笔记。行动的负责人、决定和预期结果保存在已有任务记录中；未解决的问题持续链接首次记录，并在原处更新进展，报告引用这份当前状态。评估笔记保留各次检查的依据和判断。
+巡查安排保存在 `<output-dir>/team/README.md`，Evaluator 将每轮独立发现写入 `team/evaluations/`。行动的负责人、决定和预期结果保存在已有任务记录中；未解决的问题持续链接首次记录，并在原处更新进展，报告引用这份当前状态。评估笔记保留各次检查的依据和判断。
 
 任务记录保存目标、分工和决定。成员实际活动从原生 harness 读取，hook 绑定从 continuation 查询，作业状态由执行负责人核实。报告需要快照时，注明观察时间和来源，避免在任务、成员和报告文件中各维护一份实时状态。结束跟进时，由负责人链接实际改动的结果，或说明停止行动的决定。
+
+需要自主接续时，由绑定单一 RSI root session 的 Agent Scheduler 负责原生唤醒；它不创建或替代 Evaluator 排期，使用 Codex app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 生命周期（见 [app-server 文档](https://learn.chatgpt.com/docs/app-server)）。`members.responsibility` 保存完整职责，`thread_id` 保存原生 app-server 身份，`dispatch_state` 及 lease、已接受的 turn ID 记录 `pending`、`dispatching`、`running` 状态。Scheduler 另外持久化 owner、状态、最后 heartbeat 和最后错误，使健康但暂时无工作与失效进程可区分。Hook 可以记录待派发，但不能把排队当作 thread 已唤醒。Lead 观察 Scheduler 健康、研究、资源和失败边界；只有 Scheduler 故障或明确依赖时才用原生 follow-up 恢复成员。显式暂停、完成、过期或截止时停止 Scheduler，并保留持久责任供恢复。
+
+每个可执行阶段只有一个主负责人。全新 Evaluator 的评估是读取负责人原件的独立工作项；其他成员应承担不同范围或问题，不应重复完整审计或测量。发现重复分工时，保留第一份完整证据，并在启动新运行前把另一名成员转向其他问题。
+
+Lead 的协调记录还应写明下一未解决定、负责人、所需证据和会改变判断的检查。没有测量窗口时，优先对齐主线和报告、核验资源或 Hook 假设、清理过期分工，不重复发送状态摘要。
+
+省略 `CODEX_APP_SERVER_SOCKET` 时，Scheduler 启动专用 stdio app-server；只有宿主明确管理已有 control socket 时才设置该变量。
 
 ### 读取会话证据
 
@@ -141,13 +151,15 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 | 记录 | 更新方式 |
 | --- | --- |
 | 已完成的运行产物 | 保留原始命令、指标、响应和日志，后续分析引用它们。运行中的文件仍由执行程序维护。 |
-| `iterations/<name>/notes/iteration.md` | 指定 Experimenter 维护摘要与文档索引，追加运行结论、独立审查、决策和更正，注明时间、来源及证据链接。 |
+| `iterations/<name>/notes/iteration.md` | 指定 Experimenter 维护摘要与文档索引，追加运行结论、决策和更正，注明时间、来源及证据链接，并链接全新 Evaluator 的评估。 |
 | `iterations/<name>/notes/` 下的其他文件 | 各作者维护完整方案、计划、分析或复核，由迭代笔记链接。 |
-| `report.md` | 指定作者更新整体对比、保留方案和未解问题，链接对应迭代条目和决定。 |
+| `iterations/<name>/notes/progress.yaml` | Experimenter 记录所选运行、实测父配置及各适用范围的判断，绘图命令据此生成共同对比。 |
+| `members.responsibility` / `members.thread_id` | Agent Scheduler 使用的完整持续职责与原生 app-server 身份；不能被某一个排队阶段替代。 |
+| `report.md` | 面向用户的简洁总览包含图表、总表和各方案简述。由一名指定总览负责人更新受影响的表格行和文字；完整命令和日志留在实验记录中。 |
 
 分析、审查和决定分别注明作者，每项决定写清行动和适用范围。更正结论或改变决定时，链接旧条目与新依据，保留认识变化的过程。
 
-每次运行后，Experimenter 在[迭代笔记](templates/iteration-template_zh.md)中补入原件位置与结果，再按[团队交付流程](../.agents/skills/rsi/roles/common_zh.md#随实验返回结果)直接交给 Worker、已安排的审查者和报告作者。例如，诊断命令退出码为 0，但保存的输出比较可能不一致；应同时记录两个事实并链接比较结果。分别说明实测速度、适用的验证证据与是否保留。
+每次运行后，Experimenter 在[迭代笔记](templates/iteration-template_zh.md)中补入原件位置与结果，再按[团队交付流程](../.agents/skills/rsi/roles/common_zh.md#随实验返回结果)直接交给 Worker 或研究负责人。全新 Evaluator 在下一次巡查读取这些记录。例如，诊断命令退出码为 0，但保存的输出比较可能不一致；应同时记录两个事实并链接比较结果。分别说明实测速度、适用的验证证据与是否保留。
 
 正式测量、诊断控制和工具验证均注明用途与样本数，没有 `metrics.json` 的辅助产物也要保留入口。远端运行由 Experimenter 将结果保存到约定位置，包括从临时存储转移原件；接收者直接读取原件，或使用交付的副本。恢复时先检查已登记的远端作业与结果位置。
 
@@ -155,14 +167,34 @@ python -I .agents/skills/rsi/scripts/session_records.py show "$RSI_SESSION" "$RS
 
 ## 持续维护用户报告
 
-实验开始时，由主 Agent 或指定作者按[报告模板](templates/report-template_zh.md)创建 `report.md`，并向用户提供文件路径。报告放在任务指定的交付位置；未指定时放在实验根目录。报告链接任务、实验目录和各轮迭代笔记，链接以报告的实际位置为起点。恢复实验时继续更新同一份文件。报告及其[进展图数据和图片](templates/progress-charts_zh.md)由同一作者维护，评测命令负责保存原始证据。
+任务开始时，按[报告模板](templates/report-template_zh.md)创建 `report.md`，链接任务和结果目录，并向用户提供路径。恢复时沿用同一份报告。指定一名持续成员作为总览负责人；他在任务级 `.foretoken-report.lock` 下更新简洁总表、图表、链接和方案简述。Experimenter 维护自己的迭代记录和进展导出；总览负责人不负责测量或派发，因此不会成为实验瓶颈。
 
-报告作者直接接收每次交付，负责将结果落实到表格、解释和图中。主 Agent 忙于执行时，由已有成员中能够持续承担这项工作的人负责。恢复会话或使用新的结果目录时，继续维护同一份连续报告，保留最初配置、早期方案和已采用节点。用户最初的初始配置始终是唯一 baseline。变化的条件及后续控制作为具名参照写进总览，不按执行轮次分段，也不重置 baseline。
+每个实测阶段结束或判断变化后，更新 `iterations/<name>/notes/progress.yaml`，然后执行：
 
-每轮测量结束后（包括失败尝试），以及分析改变结论或保留方案时，及时更新报告。按[模板](templates/report-template_zh.md)为每类任务提供一张总表，对应迭代图紧接在表格上方。每行概括一个方案，与该指标和条件下的图中点对应；重复运行采用注明统计方式的汇总值。保留、弃用和回退的方案都进入总览。图表使用一致、能说明改动的名称，链接方案详解。完整命令、日志、逐次测量和决策历史保存在迭代笔记中。
+```bash
+foretoken plot --progress results/decode/parallelism
+```
 
-面向未参与实验的读者，区分已有证据支持的结论、待验证假设和未完成验证。尚无测量结果时，说明目标、起始条件和未测项目。
+命令读取所有迭代所选的既有运行和判断，生成 `figures/progress/progress-summary.md`、对应 CSV 表及原生里程碑图、搜索图。使用这些生成数值更新 `report.md` 中的简洁总表，不把完整运行清单复制进去。各 scope 顶部列出已测采用分支末端及实际运行／配置／源码记录，便于后续选择适用的父配置；祖先历史仍保留。指标、重复次数、波动和已记录的源码／配置证据均来自原件。机制解释与输出差异保留在作者的 `iteration.md` 及分析中；Evaluator 结论保存在 `team/evaluations/`，由迭代笔记链接。
 
-先交付测量值与分析结论。阶段汇总或交付报告时，若图中数值或判断变化，再更新数据、重绘并检查图表；仅文字更新无需重绘。表格和图沿用同一份已保存结果与解释。
+例如，候选的进展记录可以选择一次完成的命令及其实测父方案：
 
-暂停、停止或完成时，更新同一份报告，写清原因、已取得的结果、保留改动和未完成验证，将过时安排改为实际状态，并再次提供报告路径。
+```yaml
+label: + QKV views
+measurements:
+  random-concurrency-1:
+    runs: [../runs/perf-000001]
+    parent: ../../baseline/runs/perf-000001
+    status: valid
+    retained: true
+```
+
+路径以本 YAML 所在目录为起点。scope 命名负载及比较条件，不同协议、条件分别记录，同一 scope 只选择可比的重复测量。在用户最初配置的迭代记录中设置 `baseline: true`，后续控制保持具名方案身份。实测速度已取得而适用的输出或质量问题未解决时使用 `reference`；拒绝方案和失败尝试也保留。[进展图指南](templates/progress-charts_zh.md)说明字段与自定义指标选择。
+
+后续实现和探索从相应适用范围内已验证的配置出发，记录候选真正运行的父配置及已有改动。A、B 都从 P 独立测量时，它们是两个分支，采用其中一个不等于证明 A+B。组合配置需要自己的运行与判断。围绕改动边界执行最小必要验证，复用仍适用的证据，不例行重复完整矩阵或成对控制。
+
+每份进展记录由该迭代唯一的 Experimenter 维护，并按[原子发布示例](templates/progress-charts_zh.md#刷新共同视图)完整替换后刷新共同视图。一个进展文件只有一个写者并原子替换；绘图命令沿用图片目录锁，将发现、读取和发布串行完成。若多个进展文件在重绘期间变化，待负责人完成后再运行一次，使摘要对应同一稳定快照。生成表保留实测父方案与原始运行／源码引用；里程碑只连接已记录的实测父节点，独立分支保持分开。采用是明确且限定适用范围的判断，不由最高吞吐自动决定。
+
+报告中的采用行和里程碑图只展示这条实测父链的累计推进。独立分支只能以明确的参照、弃用或待验证状态及原件链接出现，不能把孤立分支收益写成累计改进。每个测量点或判断完成后，Experimenter 立即更新 `progress.yaml` 和生成导出，总览负责人在报告锁内刷新受影响的图、表格行和方案简述，不等整套矩阵结束。
+
+交付到文档平台时，发布或链接同一生成摘要，不再维护另一份数值报告。修改总览时，用报告锁包住读取当前文件、生成完整替换和写回的命令；不能把旧副本直接覆盖新报告。暂停、停止或完成时，在任务总览记录原因与剩余工作，链接各执行者真实的资源退出证据。已有人工图表 YAML 仍可用 `foretoken plot --progress CHART.yaml` 绘制。

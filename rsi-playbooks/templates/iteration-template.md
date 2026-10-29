@@ -2,9 +2,9 @@
 
 English | [简体中文](iteration-template_zh.md)
 
-Use `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` for the approach's question, evidence and decisions. Name the developer, executor, writer and any assigned reviewer. Follow the [recording guide](../experiment-records.md#complete-the-experiment-notes) and link existing task records for ownership and scheduling.
+Use `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` for the approach's question, evidence and decisions. Name the research owner and executor; link the fresh Evaluator assessment when available. Follow the [recording guide](../experiment-records.md#complete-the-experiment-notes) and link existing task records for ownership and scheduling.
 
-Use the sections below as needed. Keep a short experiment in this note. Split out long proposals, analyses or separately authored reviews when needed, and link them here.
+Use the sections below as needed. Keep a short experiment in this note. Split out long proposals or analyses when needed, and link them here.
 
 ## Question and analysis
 
@@ -16,11 +16,11 @@ Explain the expected mechanism and the smallest comparison that can answer the q
 
 ## Implementation and deployment
 
-Record what changed and which code version, environment and configuration actually ran. Link the checkout or saved diff and note material departures from the plan.
+Record the actual parent configuration, the candidate delta and which code version, environment and configuration actually ran. Link the checkout or saved diff and note material departures from the plan.
 
 ## Measurements and interpretation
 
-Append dated findings as measurements finish. Link original results, including diagnostics outside `runs/` and accessible remote locations. Distinguish command outcome, measured behavior, applicable validation evidence and interpretation. State comparison conditions, sample counts and pending questions; name recipients for analysis and report updates.
+Append dated findings as measurements finish. Link original results, including diagnostics outside `runs/` and accessible remote locations. Distinguish command outcome, measured behavior, applicable validation evidence and interpretation. State comparison conditions, sample counts and pending questions; link the executor's progress record and name the consumers of the result.
 
 ## Time spent
 
@@ -28,8 +28,8 @@ Record investigation, build, measurement and analysis time as relevant, separati
 
 ## Behavior and attribution review
 
-When a review is assigned, record its author, findings and evidence. Retained approaches need an independent review under the [team guidance](../../.agents/skills/rsi/roles/common.md#review-claims-independently).
+When the fresh Evaluator assessment is available, link its author, findings and evidence. Retained approaches require that assessment under the [team guidance](../../.agents/skills/rsi/roles/common.md#review-claims-independently).
 
 ## Decision and completion
 
-Append the decision, author, evidence and next action, distinguishing a candidate result from the lead's retention decision. Link later corrections to the earlier judgment. Record resources still owned or handed off.
+Append the decision, author, evidence and next action, distinguishing a measured candidate result from the owner's adoption decision after the fresh Evaluator assessment and its workload scope. Link later corrections to the earlier judgment. Record resources still owned or handed off.

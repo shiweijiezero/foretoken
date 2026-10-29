@@ -10,7 +10,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from tempfile import mkdtemp
+from tempfile import NamedTemporaryFile, mkdtemp
 from typing import Any
 
 from benchmarks.results.types import ResultConfiguration
@@ -40,13 +40,34 @@ def result_directory_path(
 def write_json(directory: str, filename: str, data: Any, *, compact: bool = False) -> Path:
     """Atomically replace a JSON artifact so interrupted writes leave the previous record readable."""
     path = Path(directory) / filename
-    temporary = path.with_name(f".{path.name}.tmp")
-    with temporary.open("w", encoding="utf-8") as file:
-        if compact:
-            json.dump(data, file, ensure_ascii=False, separators=(",", ":"))
-        else:
-            json.dump(data, file, indent=4, ensure_ascii=False)
-    temporary.replace(path)
+    temporary = None
+    try:
+        with NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as file:
+            temporary = Path(file.name)
+            if compact:
+                json.dump(data, file, ensure_ascii=False, separators=(",", ":"))
+            else:
+                json.dump(data, file, indent=4, ensure_ascii=False)
+            file.write("\n")
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    return path
+
+
+def write_text(directory: str, filename: str, content: str) -> Path:
+    """Atomically replace a UTF-8 text artifact with a unique staging file."""
+    path = Path(directory) / filename
+    temporary = None
+    try:
+        with NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as file:
+            temporary = Path(file.name)
+            file.write(content)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     return path
 
 

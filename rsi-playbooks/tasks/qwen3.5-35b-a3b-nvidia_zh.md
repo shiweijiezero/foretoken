@@ -10,34 +10,37 @@
 部署形态：在最终单机 GPU 预算内自主选择并行方式和各阶段安排
 最终部署预算：单机最多 2 张 NVIDIA A100 80GB GPU；目标模型、辅助模型与 frontend 的工作负载合计不超过 32 核 CPU、250G 主机内存【不可修改】
 实验规模：服务候选遵守最终预算；算子、编译或正确性等局部实验按需使用更少资源，包括单卡
-可用资源：实验合计最多使用 6 张 NVIDIA A100 80GB GPU；按实际主机容量安排 CPU、内存和存储【不可修改】
+可用资源：面向可比目标实验合计最多使用 6 张 NVIDIA A100 80GB GPU；按实际主机容量安排 CPU、内存和存储【不可修改】
+实验拓扑：有价值时可使用其他空闲 GPU 或主机（包括非 NVIDIA 设备）进行实现、诊断或跨主机实验；有 RDMA 或 InfiniBand 时可以使用。记录运行主机、GPU 和连接方式；非 A100 与跨主机结果单独比较，不扩大六卡资源池，也不改变单机 A100 的采用预算、baseline 或性能比较。
 Explorer 数量：4【不可修改】
 Worker 数量：4【不可修改】
 Experimenter 数量：3【不可修改】
 Evaluator 数量：1【不可修改】
 Evaluator 巡查间隔：1h【不可修改】
-Codex 模型：Explorer 01-02 = gpt-6-astra/high；Explorer 03-04 = gpt-6.1-sol/high；Worker、Experimenter = gpt-6.1-terra/xhigh；Evaluator = gpt-6-astra/high【不可修改】
+Codex 模型：Explorer 01-02 = gpt-6.1-sol/high；Explorer 03-04 = gpt-6.1-terra/xhigh；Worker、Experimenter = gpt-6.1-terra/xhigh；Evaluator = gpt-6-astra/high【不可修改】
 Claude 模型：Explorer 01-02 = Fable/Opus/high；Explorer 03-04 = sonnet/high；Worker、Experimenter、Evaluator = sonnet/high【不可修改】
 最大并行实验数：最多 3 个双卡服务候选；更小规模的局部实验共享六卡预算
-并行安排：先为平台服务、构建和评测客户端预留资源，再按各组实际资源请求安排实验，并记录并行度
+并行安排：先为平台服务、构建和评测客户端预留资源，再按实际资源请求、跨主机位置和 RDMA 预留安排实验，并记录并行度与拓扑
 迭代负载：默认只测 random，并发 1 和 16；每个测量点完成后立即分析
 扩展验证：StudyChat 用于多轮相关假设和最终保留方案，复用已有同条件对照；质量评测按需安排
 精度评测：可能影响回答质量的改动需要补充质量证据时，执行 foretoken eval，优先评测准备保留的候选方案。
 可改动范围：在固定条件内，可改各层实现与配置，包括算法、辅助模型及其权重、组合方式与执行组织；可提出新机制或选用社区已有成果
 每轮测量时间预算：默认预留 10 分钟，按足以判断问题的样本安排测量，完成即分析；按实际负载调整预算与请求数，记录依据和耗时
-工作时间：从开始执行任务计时，总预算 24 小时【不可修改】
+工作时间：从原始开始执行任务计时，总预算 168 小时；恢复或换聊天不重置【不可修改】
 预期／结束条件：持续提高吞吐、降低 TPOT，不设固定指标阈值。
   持续研究、实现和验证，包括参数调整与源码改进。研究问题已有答案且进一步投入价值有限时，可以结束；时间用尽或用户要求停止时结束。
   结束时说明依据，分别列出已测但无收益、未能运行的实现、尚未实现或测试的方向。
 交付结果（<iteration> 为 --iteration 指定的方案名）：
   - 迭代记录：在 results/qwen3.5-35b-a3b-nvidia/iterations/<iteration>/notes/iteration.md 记录动机、代码与配置改动、完整命令、结果和下一步。
-  - 性能对照：在迭代记录中按负载列出并发 1／16 的输出吞吐（token/s）和平均 TPOT（ms/token），与初始方案和上一轮对照，说明变化百分比及原因。
+  - 性能对照：在迭代记录中按负载列出并发 1／16 的输出吞吐（token/s）和平均 TPOT（ms/token），与原始 baseline 和实际测量的父配置对照，说明变化百分比及原因。
   - 结果证据：命令产物保存在同一迭代目录的 runs/ 下；在笔记中链接原始结果、图表和 W&B。
-  - 执行效率：统计任务全程的活跃子 Agent 数时间加权均值及各节点 GPU 平均利用率，注明时段、资源范围、采样覆盖和低利用率原因，附原始记录。
-  - 用户报告：持续更新 rsi-playbooks/tasks/qwen3.5-35b-a3b-nvidia/<experiment>/report.md，汇总各负载对照、相对 baseline 的变化、保留方案及代码／配置、结论和执行效率，并链接迭代记录与 W&B。关键图表放在报告旁的 figures/ 中，用相对路径引用。
+  - 执行记录：活跃 Agent 数、GPU 观察和资源退出证据保存在团队及资源记录中，供内部诊断；简洁用户报告不重复这些统计。
+  - 用户报告：持续更新报告，每种负载先放图表与总表，再简述各方案的实际父配置、增量结果和决定。按需要链接迭代记录、源码／配置和 W&B；完整命令和日志保存在实验记录中。
 ```
 
-执行与资源安排遵循 [RSI skill](../../.agents/skills/rsi/SKILL_zh.md)。按[实验记录手册](../experiment-records_zh.md)保存过程与结果，按[报告模板](../templates/report-template_zh.md)组织报告。
+执行与资源安排遵循 [RSI skill](../../.agents/skills/rsi/SKILL_zh.md)。新工作从最新适用的已验证采用配置开始，记录实际父配置和本次变化，有用分支整合到最新采用组合后测量。按[实验记录手册](../experiment-records_zh.md)保存过程与结果，按[报告模板](../templates/report-template_zh.md)组织报告。
+
+每个负载 scope 由指定 Experimenter 在下一阶段开始前发布当前实测采用末端。Worker 和 Explorer 可以从该末端分支；只有组合实测并完成 fresh Evaluator 评估后才能推进累计主线。旧父版本保留为明确的复现或归因参照。
 
 ## 起始部署
 
