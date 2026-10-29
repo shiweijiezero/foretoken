@@ -99,6 +99,8 @@ Task records describe intent, ownership and decisions. Read actual agent activit
 
 For autonomous continuation, the Agent Scheduler is the owner of native wake-up. It is bound to one RSI root session and does not create or replace the Evaluator timetable. `members.responsibility` is the durable full role brief, `thread_id` is the native app-server identity, and `dispatch_state` records `pending`, `dispatching` or `running` with a lease and accepted turn ID. Hooks may record a pending transition, but they never claim that a queued item woke a thread. The scheduler stops on explicit pause, completion, expiry or deadline and leaves the durable assignment for recovery.
 
+Each executable stage has one primary owner. Independent review is a separate work item over the owner's saved evidence; assign another member a distinct scope or question instead of duplicating the complete audit or measurement. If duplicate work is discovered, retain the first complete evidence set and redirect the other member before starting another run.
+
 If `CODEX_APP_SERVER_SOCKET` is omitted, the scheduler starts a dedicated stdio app-server. Use an existing control socket only when the host explicitly owns that daemon.
 
 ### Read session evidence

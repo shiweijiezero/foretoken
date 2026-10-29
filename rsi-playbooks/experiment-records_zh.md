@@ -99,6 +99,8 @@ results/decode/parallelism/
 
 需要自主接续时，由绑定单一 RSI root session 的 Agent Scheduler 负责原生唤醒；它不创建或替代 Evaluator 排期，使用 Codex app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 生命周期（见 [app-server 文档](https://learn.chatgpt.com/docs/app-server)）。`members.responsibility` 保存完整职责，`thread_id` 保存原生 app-server 身份，`dispatch_state` 及 lease、已接受的 turn ID 记录 `pending`、`dispatching`、`running` 状态。Hook 可以记录待派发，但不能把排队当作 thread 已唤醒。显式暂停、完成、过期或截止时停止 Scheduler，并保留持久责任供恢复。
 
+每个可执行阶段只有一个主负责人。独立审查应成为读取负责人原件的独立工作项；其他成员应承担不同范围或问题，不应重复完整审计或测量。发现重复分工时，保留第一份完整证据，并在启动新运行前把另一名成员转向其他问题。
+
 省略 `CODEX_APP_SERVER_SOCKET` 时，Scheduler 启动专用 stdio app-server；只有宿主明确管理已有 control socket 时才设置该变量。
 
 ### 读取会话证据

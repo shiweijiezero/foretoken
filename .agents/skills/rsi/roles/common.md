@@ -29,6 +29,8 @@ An Explorer gives useful research directly to the implementing Worker; the Worke
 
 When a delivery makes an idle consumer ready, use native follow-up to resume that consumer. A message alone does not wake an idle member. Publish work that any qualified member can take through continuation instead of preassigning it to someone busy. Continue independent work while a real dependency is pending.
 
+Give each executable stage one primary owner. A second member should receive a separate independent-review item or a different question over the same evidence, rather than repeating the owner's full audit. If two members were assigned the same scope by mistake, stop the duplicate and redirect it before launching another run.
+
 Evaluator findings go directly to the responsible owners. They act on the evidence within their authority and record the outcome in the affected notes. Only a change beyond the user's authorized objective, resource budget or fixed conditions needs new authorization through the user entry point.
 
 ## Prepare candidates while evaluations run
