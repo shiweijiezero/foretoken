@@ -39,7 +39,7 @@ class AppServerClient:
             argv.extend(("proxy", "--sock", socket_path))
         self.process = subprocess.Popen(
             argv,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None,
             text=True, bufsize=1,
         )
         self._selector = selectors.DefaultSelector()
@@ -175,6 +175,10 @@ def main() -> None:
         state.create()
         WorkPool.create(connection)
         connection.commit()
+        try:
+            state.session(args.harness, args.session)
+        except ValueError as error:
+            parser.error(str(error))
         state.scheduler_heartbeat(args.harness, args.session, args.owner, "starting")
         connection.commit()
         client = None

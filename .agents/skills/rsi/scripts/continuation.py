@@ -245,10 +245,10 @@ class Continuation:
                 (args.state, args.reason, args.harness, args.session),
             )
             self.db.execute(
-                """UPDATE members SET state=?,reason=?,next_step=NULL,notice=NULL,dispatch_state='released',
+                """UPDATE members SET next_step=NULL,notice=NULL,dispatch_state='released',
                           lease_owner=NULL,lease_until=NULL,dispatch_id=NULL,turn_id=NULL
                    WHERE harness=? AND session=?""",
-                (args.state, args.reason, args.harness, args.session),
+                (args.harness, args.session),
             )
 
     def expire(self, harness: str, session: str, reason: str = "deadline") -> None:
@@ -315,8 +315,7 @@ class Continuation:
         if row is None or not row["thread_id"]:
             return None
         if row["deadline"] is not None and row["deadline"] <= now:
-            self.db.execute("""UPDATE sessions SET state='expired',reason='deadline',review_pending=0
-                           WHERE harness=? AND session=? AND state='active'""", (harness, session))
+            self.expire(harness, session, "deadline")
             return None
         status = thread_status or "unknown"
         if status == "active":
@@ -448,7 +447,7 @@ class Continuation:
         if kind not in {"SubagentStop", "TeammateIdle", "Stop"} or not agent:
             return {}
         member = self.db.execute("SELECT * FROM members WHERE harness=? AND session=? AND agent=?", (*identity, agent)).fetchone()
-        if member is None or member["state"] in {"waiting", "done"}:
+        if member is None or member["state"] != "working":
             return {}
         self.db.execute("""UPDATE members SET dispatch_state='pending',lease_owner=NULL,
                       lease_until=NULL,dispatch_id=NULL,turn_id=NULL,last_error=NULL

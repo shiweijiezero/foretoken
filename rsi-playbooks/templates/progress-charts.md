@@ -48,7 +48,7 @@ Paths are relative to the record. A run can name a command directory or a specif
 | `baseline` | Mark only the user's initial configuration, once per scope. Defaults to false. |
 | `measurements` | A mapping from comparison scope to selected runs and judgment. |
 | `runs` | Existing command/result directories for one approach and workload; pre-evaluation failures may omit runs and link build/diagnostic logs from `iteration.md`. |
-| `status` | `valid`, `reference`, `incorrect`, `compile_failed` or `runtime_failed`. |
+| `status` | `valid`, `reference`, `pending`, `rejected`, `incorrect`, `compile_failed` or `runtime_failed`. `pending` and `rejected` stay outside the retained curve. |
 | `retained` | Whether this measured version is adopted for this scope. Defaults to false; requires `valid`. |
 | `parent` | The actual measured parent command/result directory. Required for a retained candidate; not required for the original baseline. |
 

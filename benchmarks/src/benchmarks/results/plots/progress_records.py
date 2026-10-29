@@ -36,7 +36,7 @@ class _Measurement(_ProgressRecord):
     """One owner's selected repetitions and judgment for a comparison scope."""
 
     runs: list[str] = Field(default_factory=list)
-    status: Literal["valid", "reference", "incorrect", "compile_failed", "runtime_failed"]
+    status: Literal["valid", "reference", "pending", "rejected", "incorrect", "compile_failed", "runtime_failed"]
     retained: bool = False
     parent: str | None = None
 
@@ -145,7 +145,7 @@ def render_iteration_progress(root: Path, writer: FigureWriter, metrics: tuple[s
             raise ValueError(f"Invalid iteration progress file {path}: {error}") from error
         for scope, measurement in iteration.measurements.items():
             sources = tuple((path.parent / name).resolve() for name in measurement.runs)
-            summary, runs = _read_measurement(sources, metrics)
+            summary, runs = _read_measurement(sources, metrics) if sources else ({}, [])
             parent = (path.parent / measurement.parent).resolve() if measurement.parent else None
             parent_summary, parent_runs = _read_measurement((parent,), metrics) if parent else ({}, [])
             if measurement.retained and not iteration.baseline and parent is None:
@@ -219,7 +219,7 @@ def render_iteration_progress(root: Path, writer: FigureWriter, metrics: tuple[s
                                          and set(other["runs"]) == set(entry["parent_runs"])), None)
                     data["points"].append({**point, "status": "valid", "checkpoint": entry["retained"],
                                            "parent_x": float(parent_index) if parent_index is not None else None})
-                elif entry["status"] != "reference":
+                elif entry["status"] not in {"reference", "pending", "rejected"}:
                     data["points"].append({**point, "value": None, "status": entry["status"]})
                 if value is not None and entry["status"] != "valid":
                     data["references"].append({"label": f"{entry['label']} ({entry['status']})", "source": entry["source"],
