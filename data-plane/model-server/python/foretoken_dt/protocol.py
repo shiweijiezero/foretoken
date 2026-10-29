@@ -108,6 +108,23 @@ class ExecuteBatch(Message):
     sequence: int = Field(ge=0)
 
 
+class ExecuteConfirmation(Message):
+    """Carry one Draft-confirmed device turn back without a second Target readback."""
+
+    sequence: int = Field(ge=0)
+    confirmed_length: int = Field(ge=0)
+    context_length: int = Field(ge=0)
+    token_ids_delta: list[int]
+    anchor: int = Field(ge=0)
+
+
+class ExecuteResult(Message):
+    """Return authoritative confirmations in the same row order as ExecuteBatch."""
+
+    sequence: int = Field(ge=0)
+    confirmed: list[ExecuteConfirmation]
+
+
 class ProposalRequest(Message):
     """Supply one request's confirmed prefix and new feature interval."""
 

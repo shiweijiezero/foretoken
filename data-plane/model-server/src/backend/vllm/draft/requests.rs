@@ -103,7 +103,7 @@ struct ReservedTurn {
 }
 
 /// Scheduler-confirmed Target input returned with a non-terminal device proposal.
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct NativeTurnCompleted {
     sequence: u64,
@@ -125,6 +125,8 @@ pub(super) struct Proposal {
     sequence: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     token_ids: Option<Vec<Vec<u32>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confirmed: Option<Vec<NativeTurnCompleted>>,
 }
 
 #[derive(Deserialize)]
@@ -163,7 +165,7 @@ struct PreparedDeviceTurn {
 struct PeerRequests {
     sequence: u64,
     prepared: bool,
-    execution: Option<tokio::task::JoinHandle<Result<(), String>>>,
+    execution: Option<tokio::task::JoinHandle<Result<Vec<NativeTurnCompleted>, String>>>,
     sessions: HashMap<String, Session>,
     // Device turns retain cancellation and output ownership across proposal boundaries.
     streams: HashMap<String, EngineCoreOutputStream>,
@@ -476,7 +478,7 @@ impl Peer {
         let peer = self.clone();
         let client = client.clone();
         let execution = tokio::spawn(async move {
-            let result: Result<(), String> = async {
+            let result: Result<Vec<NativeTurnCompleted>, String> = async {
                 let mut pending: FuturesUnordered<_> = streams
                     .into_iter()
                     .map(|stream| collect_device_turn(stream, sequence, peer.spec.num_candidates))
@@ -518,13 +520,14 @@ impl Peer {
                 .take()
                 .ok_or("DT device execution was not reserved")?
         };
-        execution.await.map_err(|error| error.to_string())??;
+        let confirmed = execution.await.map_err(|error| error.to_string())??;
         let mut state = self.requests.lock().unwrap();
         state.sequence += 1;
         state.prepared = false;
         Ok(Proposal {
             sequence: batch.sequence,
             token_ids: None,
+            confirmed: Some(confirmed),
         })
     }
 
@@ -533,11 +536,12 @@ impl Peer {
         &self,
         previous: &[(String, usize)],
         confirmed: HashMap<String, NativeTurnCompleted>,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<NativeTurnCompleted>, String> {
         if confirmed.len() != previous.len() {
             return Err("Native Draft returned incomplete device confirmation state".into());
         }
         let mut state = self.requests.lock().unwrap();
+        let mut completed = Vec::with_capacity(previous.len());
         for (native_id, before) in previous {
             let confirmed = confirmed
                 .get(native_id)
@@ -559,8 +563,9 @@ impl Peer {
             session.context_length = confirmed.context_length;
             session.pending_tokens.clear();
             session.pending_tokens.push(confirmed.anchor);
+            completed.push(confirmed.clone());
         }
-        Ok(())
+        Ok(completed)
     }
 
     /// Delivers one received batch through native admission, scheduling, sampling and output dispatch.
@@ -802,6 +807,7 @@ impl Peer {
             sequence: batch.sequence,
             token_ids: (!gpu_output)
                 .then(|| results.into_iter().map(|(tokens, _)| tokens).collect()),
+            confirmed: None,
         })
     }
 

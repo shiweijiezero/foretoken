@@ -25,6 +25,7 @@ from .protocol import (
     PEER_PROTOCOL_VERSION,
     DeviceRequest,
     ExecuteBatch,
+    ExecuteResult,
     FinishRequests,
     InitialDeviceRequest,
     OpenPeer,
@@ -52,8 +53,10 @@ class StagedProposal:
 
     request_ids: list[str]
     indices: torch.Tensor
-    metadata: np.ndarray
+    metadata: np.ndarray | None
     token_ids: list[np.ndarray]
+    metadata_device: torch.Tensor | None
+    token_sources: list[torch.Tensor]
     token_offsets: list[int]
     feature_rows: int
     features_transferred: Future[None] | None
@@ -391,31 +394,42 @@ class RemoteProposer(BaseSpeculator):
                 token_rows.append(self.token_history_cpu[slot, start:end])
             else:
                 token_sources.append(states.all_token_ids.gpu[slot, start:end])
+        device_turn = bool(self.device_requests)
         copy_stream = self.runner.output_copy_stream
         copy_done = torch.cuda.Event(blocking=True)
-        try:
-            with (
-                record_function_or_nullcontext("DT Target staging"),
-                stream(copy_stream, self.runner.main_stream),
-            ):
-                copy_stream.wait_stream(self.runner.main_stream)
-                try:
-                    copied_metadata = async_copy_to_np(metadata)
-                    for source in token_sources:
-                        token_rows.append(async_copy_to_np(source))
-                finally:
-                    copy_done.record(copy_stream)
-        except BaseException:
-            # A partial batch still owns every source and destination until DMA ends.
-            self.failed = True
-            copy_done.synchronize()
-            raise
+        copied_metadata = None
+        if device_turn:
+            # Execute ACKs carry the Draft's authoritative confirmation. Keep
+            # the device snapshot available for the fallback path, but do not
+            # start a D2H copy that the fast path will never consume.
+            metadata.record_stream(self.runner.main_stream)
+            copy_done.record(self.runner.main_stream)
+        else:
+            try:
+                with (
+                    record_function_or_nullcontext("DT Target staging"),
+                    stream(copy_stream, self.runner.main_stream),
+                ):
+                    copy_stream.wait_stream(self.runner.main_stream)
+                    try:
+                        copied_metadata = async_copy_to_np(metadata)
+                        for source in token_sources:
+                            token_rows.append(async_copy_to_np(source))
+                    finally:
+                        copy_done.record(copy_stream)
+            except BaseException:
+                # A partial batch still owns every source and destination until DMA ends.
+                self.failed = True
+                copy_done.synchronize()
+                raise
         sampling = self.runner.sampler.sampling_states
         staged = StagedProposal(
             request_ids=list(input_batch.req_ids),
             indices=indices,
             metadata=copied_metadata,
             token_ids=token_rows,
+            metadata_device=metadata if device_turn else None,
+            token_sources=token_sources if device_turn else [],
             token_offsets=token_offsets,
             feature_rows=input_batch.num_tokens,
             features_transferred=None,
@@ -435,8 +449,33 @@ class RemoteProposer(BaseSpeculator):
         self.executor.submit(self._complete_proposal, staged, result)
         return result
 
+    def _stage_host_inputs(self, staged: StagedProposal) -> None:
+        """Materialize host confirmation only when native reservation falls back."""
+        if staged.metadata is not None:
+            return
+        if staged.metadata_device is None:
+            raise RuntimeError("device confirmation has no metadata snapshot")
+        copy_stream = self.runner.output_copy_stream
+        token_rows = list(staged.token_ids)
+        try:
+            with (
+                record_function_or_nullcontext("DT Target staging"),
+                stream(copy_stream, self.runner.main_stream),
+            ):
+                copy_stream.wait_stream(self.runner.main_stream)
+                staged.metadata = async_copy_to_np(staged.metadata_device)
+                for source in staged.token_sources:
+                    token_rows.append(async_copy_to_np(source))
+                staged.token_ids = token_rows
+                staged.copy_done.record(copy_stream)
+        except BaseException:
+            self.failed = True
+            staged.copy_done.synchronize()
+            raise
+
     def _confirmed_requests(self, staged: StagedProposal) -> list[ProposalRequest]:
         """Read verified inputs after DMA, retaining one source for session reconciliation."""
+        self._stage_host_inputs(staged)
         staged.copy_done.synchronize()
         staged.sources.clear()
         requests = []
@@ -482,6 +521,29 @@ class RemoteProposer(BaseSpeculator):
                 )
             )
         return requests
+
+    def _apply_execute_result(
+        self, staged: StagedProposal, payload, sequence: int
+    ) -> None:
+        """Advance Target sessions from Draft-owned confirmation without a host readback."""
+        result = ExecuteResult.model_validate(payload)
+        if result.sequence != sequence:
+            raise RuntimeError("Draft returned a different proposal sequence")
+        if len(result.confirmed) != len(staged.request_ids):
+            raise RuntimeError("Draft returned incomplete device confirmation state")
+        for request_id, confirmed in zip(
+            staged.request_ids, result.confirmed, strict=True
+        ):
+            session = self.sessions[request_id]
+            if confirmed.sequence != sequence:
+                raise RuntimeError("Draft returned a mismatched device confirmation")
+            if confirmed.confirmed_length < session.token_count:
+                raise RuntimeError("Draft confirmation moved a session backwards")
+            if confirmed.context_length < session.context_count:
+                raise RuntimeError("Draft confirmation moved feature history backwards")
+            session.token_count = confirmed.confirmed_length
+            session.context_count = confirmed.context_length
+            session.initial_prompt = None
 
     @torch.inference_mode()
     def _complete_proposal(
@@ -581,21 +643,22 @@ class RemoteProposer(BaseSpeculator):
                     self.draft_logits[staged.indices] = log_q * scale[:, None, None]
                 self.sequence += 1
                 output.set_result(tokens)
-            # Native consumers already own the device result. Host reconciliation
-            # completes before this ordered connection admits another batch.
-            if requests is None:
-                requests = self._confirmed_requests(staged)
-            for request in requests:
-                session = self.sessions[request.request_id]
-                session.token_count = request.generation
-                session.context_count = request.context_start + request.feature_count
-                session.initial_prompt = None
+            # Native consumers already own the device result. Execute ACKs carry
+            # Draft-owned confirmation; ordinary proposals retain host fallback.
+            if requests is not None:
+                for request in requests:
+                    session = self.sessions[request.request_id]
+                    session.token_count = request.generation
+                    session.context_count = request.context_start + request.feature_count
+                    session.initial_prompt = None
             if self.nccl is not None:
                 # Like native PP's side-stream result, GPU consumers can proceed
                 # before CPU bookkeeping finishes. This ordered connection still
                 # joins the engine acknowledgment before admitting another turn.
                 result = self._receive_control()
-                if result["sequence"] != sequence:
+                if execute:
+                    self._apply_execute_result(staged, result, sequence)
+                elif result["sequence"] != sequence:
                     raise RuntimeError("Draft returned a different proposal sequence")
         except BaseException as error:
             self.failed = True
