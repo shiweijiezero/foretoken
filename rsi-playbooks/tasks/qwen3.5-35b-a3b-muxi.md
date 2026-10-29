@@ -16,8 +16,8 @@ Worker count: 4 [Fixed]
 Experimenter count: 3 [Fixed]
 Evaluator count: 1 [Fixed]
 Evaluator check interval: 1h [Fixed]
-Codex models: Explorer and Evaluator = gpt-6-astra/high; Worker and Experimenter = gpt-6.1-sol/high [Fixed]
-Claude models: Explorer = Fable/Opus/high; Worker, Experimenter and Evaluator = sonnet/high [Fixed]
+Codex models: Explorer 01-02 = gpt-6-astra/high; Explorer 03-04 = gpt-6.1-sol/high; Worker and Experimenter = gpt-6.1-terra/high; Evaluator = gpt-6-astra/high [Fixed]
+Claude models: Explorer 01-02 = Fable/Opus/high; Explorer 03-04 = sonnet/high; Worker, Experimenter and Evaluator = sonnet/high [Fixed]
 Maximum parallel experiments: at most 3 two-GPU service candidates; smaller focused experiments share the six-GPU budget
 Parallel scheduling: reserve capacity for platform services, builds, and benchmark clients, then schedule experiments by their actual resource requests and record the achieved parallelism
 Iteration workloads: random only by default, at concurrency 1 and 16; analyze each point as it completes

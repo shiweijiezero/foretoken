@@ -16,8 +16,8 @@ Worker 数量：4【不可修改】
 Experimenter 数量：3【不可修改】
 Evaluator 数量：1【不可修改】
 Evaluator 巡查间隔：1h【不可修改】
-Codex 模型：Explorer、Evaluator = gpt-6-astra/high；Worker、Experimenter = gpt-6.1-sol/high【不可修改】
-Claude 模型：Explorer = Fable/Opus/high；Worker、Experimenter、Evaluator = sonnet/high【不可修改】
+Codex 模型：Explorer 01-02 = gpt-6-astra/high；Explorer 03-04 = gpt-6.1-sol/high；Worker、Experimenter = gpt-6.1-terra/high；Evaluator = gpt-6-astra/high【不可修改】
+Claude 模型：Explorer 01-02 = Fable/Opus/high；Explorer 03-04 = sonnet/high；Worker、Experimenter、Evaluator = sonnet/high【不可修改】
 最大并行实验数：最多 3 个双卡服务候选；更小规模的局部实验共享六卡预算
 并行安排：先为平台服务、构建和评测客户端预留资源，再按各组实际资源请求安排实验，并记录并行度
 迭代负载：默认只测 random，并发 1 和 16；每个测量点完成后立即分析
