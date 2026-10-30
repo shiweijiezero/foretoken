@@ -43,6 +43,9 @@ func SelectedCatalogIdentity(service *api.ModelService, pools []api.ModelPool, g
 					continue
 				}
 				found = true
+				if group.Spec.SpeculationRole == api.SpeculationRoleDraft {
+					continue
+				}
 				identity := RoutingGroupForService(service, pool, group)
 				if group.Spec.Role == api.ModelRolePrefill || group.Spec.Role == api.ModelRoleDecode {
 					features := group.Spec.Features

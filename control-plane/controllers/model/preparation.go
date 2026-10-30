@@ -340,7 +340,7 @@ func (reconciler *GroupReconciler) preparationFailure(ctx context.Context, job *
 func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference, distribution runtimeconfig.ModelDistributionProfile, files runtimeconfig.ApplicationFiles) (*batchv1.Job, error) {
 	inputEnv := runtimeconfig.ModelArtifactsEnv
 	var input any = runtimeconfig.ProjectModelArtifacts(group.Spec.Artifacts)
-	if group.Spec.Runtime.PreparationVersion == 1 {
+	if group.Spec.Runtime.PreparationVersion == 1 || group.Spec.SpeculationRole != "" {
 		plan, err := vllmconfig.BuildLaunchPlan(group.Spec)
 		if err != nil {
 			return nil, fmt.Errorf("build retained model preparation plan: %w", err)

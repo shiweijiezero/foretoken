@@ -1,0 +1,15 @@
+--- a/rust/src/engine-core-client/src/protocol/output.rs
++++ b/rust/src/engine-core-client/src/protocol/output.rs
+@@ -131,6 +131,12 @@
+     /// Native per-request speculative-decoding statistics, appended in vLLM 0.29.
+     #[serde(default)]
+     pub spec_decode_metrics: Option<OpaqueValue>,
++    /// Prompt token logprobs appended by the native engine output schema.
++    #[serde(default)]
++    pub prompt_token_id_logprobs: Option<OpaqueValue>,
++    /// Scheduler-defined output for a resumable turn whose request remains live.
++    #[serde(default)]
++    pub continuation_output: Option<OpaqueValue>,
+ }
+
+ impl EngineCoreOutput {

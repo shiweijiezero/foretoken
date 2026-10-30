@@ -35,6 +35,15 @@ const (
 	ModelRoleDecode    ModelRole = "decode"
 )
 
+// SpeculationRole is derived from same-service Target-to-Draft Pool references.
+// +kubebuilder:validation:Enum=draft;target
+type SpeculationRole string
+
+const (
+	SpeculationRoleDraft  SpeculationRole = "draft"
+	SpeculationRoleTarget SpeculationRole = "target"
+)
+
 // ManagedMooncakeStoreBinding pins a Ready Foretoken-owned KVService against ABA.
 type ManagedMooncakeStoreBinding struct {
 	Name            string `json:"name"`
@@ -206,6 +215,20 @@ type NormalizedPoolTemplate struct {
 	Backend string `json:"backend"`
 
 	Role ModelRole `json:"role"`
+
+	// SpeculationRole is assigned by the ModelService compiler.
+	// +optional
+	SpeculationRole SpeculationRole `json:"speculationRole,omitempty"`
+
+	// DTProtocol is the common transport selected for connected Draft and Target Pools.
+	// +optional
+	// +kubebuilder:validation:Enum=tcp;rdma;nccl
+	DTProtocol string `json:"dtProtocol,omitempty"`
+
+	// DraftPools retains this Target's same-service discovery scope.
+	// +optional
+	// +listType=set
+	DraftPools []string `json:"draftPools,omitempty"`
 
 	// +kubebuilder:validation:Minimum=1
 	NodeCount int32 `json:"nodeCount"`

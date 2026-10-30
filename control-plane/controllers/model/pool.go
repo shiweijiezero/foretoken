@@ -32,9 +32,10 @@ import (
 )
 
 const (
-	modelPoolFinalizer      = "inference.foretoken.io/modelpool-protection"
-	conditionResolved       = "Resolved"
-	conditionRolloutPending = "RolloutPending"
+	modelPoolFinalizer       = "inference.foretoken.io/modelpool-protection"
+	conditionResolved        = "Resolved"
+	conditionRolloutPending  = "RolloutPending"
+	draftPoolsNotReadyReason = "DraftPoolsNotReady"
 )
 
 // PoolReconciler resolves Pool templates and owns ModelGroup specs.
@@ -119,7 +120,7 @@ func (reconciler *PoolReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		})
 	}
 	// Preserve the active limit until this Pool reflects the owning service's current intent.
-	if !reflect.DeepEqual(pool.Spec.InstanceAdmission, service.Spec.InstanceAdmission) {
+	if pool.Spec.Template.SpeculationRole != inferencev1alpha1.SpeculationRoleDraft && !reflect.DeepEqual(pool.Spec.InstanceAdmission, service.Spec.InstanceAdmission) {
 		return ctrl.Result{}, nil
 	}
 	// The service owner must recover the executable selection before a legacy Pool can create a cohort.
@@ -147,6 +148,17 @@ func (reconciler *PoolReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		statusErr := reconciler.updateStatus(ctx, pool, metav1.ConditionFalse, "ResolutionFailed", err.Error(), state)
 		return ctrl.Result{}, errors.Join(stateErr, statusErr)
 	}
+	bound, err := reconciler.resolveDraftPools(ctx, pool, service, &template)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !bound {
+		state, stateErr := reconciler.currentActiveState(ctx, pool, servingconfig.ServingRevision(service, pool))
+		state.Target = metav1.Condition{Status: metav1.ConditionUnknown, Reason: draftPoolsNotReadyReason, Message: "Waiting for referenced Draft Pools to prepare a compatible cohort"}
+		state.Reason, state.Message = state.Target.Reason, state.Target.Message
+		statusErr := reconciler.updateStatus(ctx, pool, metav1.ConditionUnknown, state.Target.Reason, state.Target.Message, state)
+		return ctrl.Result{RequeueAfter: modelGroupDrainPollInterval}, errors.Join(stateErr, statusErr)
+	}
 	if err := reconciler.reconcileInstanceAdmission(ctx, pool, template); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -161,7 +173,11 @@ func (reconciler *PoolReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	// Establish the source reference before execution to cover publications racing with stop.
 	targetSpec := template.Spec(pool, 0)
 	if _, err := reconciler.reconcilePreparationSources(ctx, pool, service, &targetSpec); err != nil {
-		return ctrl.Result{}, err
+		active, stateErr := reconciler.currentActiveState(ctx, pool, servingRevision)
+		active.Reason, active.Message = "ModelPreparationFailed", err.Error()
+		active.Target = metav1.Condition{Status: metav1.ConditionFalse, Reason: active.Reason, Message: active.Message}
+		statusErr := reconciler.updateStatus(ctx, pool, metav1.ConditionTrue, "Resolved", "Pool execution config was resolved", active)
+		return ctrl.Result{}, errors.Join(err, stateErr, statusErr)
 	}
 	state, err := reconciler.reconcileGroups(ctx, pool, template, servingRevision, retiring)
 	if err != nil {
@@ -200,26 +216,26 @@ func (reconciler *PoolReconciler) retireExcessGroups(ctx context.Context, pool *
 			continue
 		}
 		pending = true
-		if err := reconciler.retireGroup(ctx, group); err != nil {
+		if err := retireModelGroup(ctx, reconciler.Client, group); err != nil {
 			return false, err
 		}
 	}
 	return pending, nil
 }
 
-// retireGroup protects workload cleanup before requesting Group deletion.
-func (reconciler *PoolReconciler) retireGroup(ctx context.Context, group *inferencev1alpha1.ModelGroup) error {
+// retireModelGroup protects execution cleanup before a Pool or dependency owner requests deletion.
+func retireModelGroup(ctx context.Context, kubeClient client.Client, group *inferencev1alpha1.ModelGroup) error {
 	if !group.DeletionTimestamp.IsZero() {
 		return nil
 	}
 	if !controllerutil.ContainsFinalizer(group, modelGroupDrainFinalizer) {
 		base := group.DeepCopy()
 		controllerutil.AddFinalizer(group, modelGroupDrainFinalizer)
-		if err := reconciler.Patch(ctx, group, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+		if err := kubeClient.Patch(ctx, group, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
 			return fmt.Errorf("protect ModelGroup retirement: %w", err)
 		}
 	}
-	return client.IgnoreNotFound(reconciler.Delete(ctx, group, client.Preconditions{UID: &group.UID}))
+	return client.IgnoreNotFound(kubeClient.Delete(ctx, group, client.Preconditions{UID: &group.UID}))
 }
 
 // validateModelServiceOwnership verifies that the referenced ModelService controls the ModelPool.
@@ -378,7 +394,7 @@ func (reconciler *PoolReconciler) reconcileGroups(ctx context.Context, pool *inf
 			continue
 		}
 		rolloutPending = true
-		if err := reconciler.retireGroup(ctx, group); err != nil {
+		if err := retireModelGroup(ctx, reconciler.Client, group); err != nil {
 			return groupState{}, fmt.Errorf("delete superseded ModelGroup %q: %w", group.Name, err)
 		}
 	}
@@ -581,6 +597,8 @@ func (reconciler *PoolReconciler) SetupWithManager(manager ctrl.Manager) error {
 		Owns(&inferencev1alpha1.ModelGroup{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ConfigMap{}).
+		Watches(&inferencev1alpha1.ModelPool{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForDraftPool)).
+		Watches(&inferencev1alpha1.ModelGroup{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForDraftGroup)).
 		Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForStorageClaim)).
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForInstancePod)).
 		Watches(&inferencev1alpha1.ModelService{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForService)).

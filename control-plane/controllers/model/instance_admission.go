@@ -57,6 +57,9 @@ type instanceAdmissionDiagnostics struct {
 // version before ConfigMap writes so recovery cannot lower a live runtime's target.
 // Workload membership changes refresh new ingress Pods without changing immutable Group contracts.
 func (reconciler *PoolReconciler) reconcileInstanceAdmission(ctx context.Context, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate) error {
+	if template.SpeculationRole == inferencev1alpha1.SpeculationRoleDraft {
+		return nil
+	}
 	groups, err := ownedModelGroups(ctx, reconciler.Client, pool)
 	if err != nil {
 		return err
@@ -184,7 +187,7 @@ func (reconciler *ServiceReconciler) instanceAdmissionApplied(ctx context.Contex
 		return false, "", "", err
 	}
 	for _, desired := range compiledPools {
-		if desired.DesiredGroups == 0 || desired.Template.Backend != "vllm" {
+		if desired.DesiredGroups == 0 || desired.Template.Backend != "vllm" || desired.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleDraft {
 			continue
 		}
 		var pool *inferencev1alpha1.ModelPool
@@ -279,7 +282,7 @@ func instanceAdmissionConfigMapName(poolUID string) string {
 }
 
 func groupUsesLiveInstanceAdmission(group *inferencev1alpha1.ModelGroup) bool {
-	return group.Spec.Runtime.Backend == "vllm" && group.Spec.Runtime.InstanceAdmissionProtocol == inferencev1alpha1.InstanceAdmissionFileProtocol
+	return group.Spec.Runtime.Backend == "vllm" && group.Spec.SpeculationRole != inferencev1alpha1.SpeculationRoleDraft && group.Spec.Runtime.InstanceAdmissionProtocol == inferencev1alpha1.InstanceAdmissionFileProtocol
 }
 
 func instanceAdmissionLimit(config *inferencev1alpha1.InstanceAdmissionConfig) *uint32 {

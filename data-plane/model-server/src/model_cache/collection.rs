@@ -16,7 +16,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
-use crate::engine::PYTHON_MODULE_PATH;
+use crate::engine::python_module_directory;
 use crate::model_cache::kubernetes::Kubernetes;
 use crate::model_cache::preparation::{
     CACHE_ROOT_KEY, ResolvedArtifacts, lock_model_cache, model_cache_identity, source_publication,
@@ -378,9 +378,7 @@ async fn run_provider(
     _lock: File,
     cancellation: CancellationToken,
 ) -> io::Result<Value> {
-    let directory = std::env::var_os(foretoken_artifacts::source::ACTIVE_DIRECTORY_ENV)
-        .map(|directory| PathBuf::from(directory).join("python"))
-        .unwrap_or_else(|| PathBuf::from(PYTHON_MODULE_PATH));
+    let directory = python_module_directory();
     let payload = serde_json::to_vec(&request).map_err(io::Error::other)?;
     let mut child = Command::new(crate::engine::python_executable())
         .arg(directory.join("foretoken_cache_gc.py"))
@@ -493,7 +491,7 @@ fn source_items(source: ResolvedArtifacts) -> Vec<CacheItem> {
     if source.artifacts.source == ModelSource::Local {
         return Vec::new();
     }
-    vec![
+    let mut items = vec![
         CacheItem {
             source: source.artifacts.source,
             repository: source.artifacts.model,
@@ -504,7 +502,17 @@ fn source_items(source: ResolvedArtifacts) -> Vec<CacheItem> {
             repository: source.artifacts.tokenizer,
             revision: source.tokenizer_revision,
         },
-    ]
+    ];
+    if let Some(draft) = source.draft_artifacts {
+        items.push(CacheItem {
+            source: draft.source,
+            repository: draft.model,
+            revision: source
+                .draft_revision
+                .expect("published draft has a fixed revision"),
+        });
+    }
+    items
 }
 
 fn group_source_name(group: &Value) -> io::Result<String> {

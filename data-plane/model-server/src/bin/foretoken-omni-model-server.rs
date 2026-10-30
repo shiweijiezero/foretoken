@@ -15,13 +15,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let python = python_executable();
     match std::env::args().nth(1).as_deref() {
         Some("prepare") => {
-            preparation::prepare_job(&foretoken_artifacts::ModelArtifacts::from_env()?, &python)
-                .await?;
+            preparation::prepare_job(
+                &foretoken_artifacts::ModelArtifacts::from_env()?,
+                None,
+                &python,
+            )
+            .await?;
             Ok(())
         }
         Some("resolve") => {
-            preparation::resolve(&foretoken_artifacts::ModelArtifacts::from_env()?, &python)
-                .await?;
+            preparation::resolve(
+                &foretoken_artifacts::ModelArtifacts::from_env()?,
+                None,
+                &python,
+            )
+            .await?;
             Ok(())
         }
         _ => vllmomni::run().await,

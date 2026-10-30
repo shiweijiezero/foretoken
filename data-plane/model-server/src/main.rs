@@ -15,20 +15,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     vllm_tracing::init_tracing("ForetokenModelServer");
 
     match std::env::args().nth(1).as_deref() {
-        Some("prepare") => {
-            preparation::prepare_job(
-                &foretoken_artifacts::ModelArtifacts::from_env()?,
-                &engine::python_executable(),
-            )
-            .await?;
-            Ok(())
-        }
-        Some("resolve") => {
-            preparation::resolve(
-                &foretoken_artifacts::ModelArtifacts::from_env()?,
-                &engine::python_executable(),
-            )
-            .await?;
+        Some(command @ ("prepare" | "resolve")) => {
+            let (artifacts, draft) = if std::env::var_os(foretoken_artifacts::MODEL_ARTIFACTS_ENV)
+                .is_some()
+            {
+                (foretoken_artifacts::ModelArtifacts::from_env()?, None)
+            } else {
+                let plan = foretoken_model_server::backend::vllm::launch::LaunchPlanV1::from_env()?;
+                (plan.artifacts, plan.dt.and_then(|dt| dt.draft_artifacts))
+            };
+            let python = engine::python_executable();
+            if command == "prepare" {
+                preparation::prepare_job(&artifacts, draft.as_ref(), &python).await?;
+            } else {
+                preparation::resolve(&artifacts, draft.as_ref(), &python).await?;
+            }
             Ok(())
         }
         Some("collect-cache") => {

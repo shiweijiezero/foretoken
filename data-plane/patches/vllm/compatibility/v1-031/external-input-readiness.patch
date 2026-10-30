@@ -1,0 +1,267 @@
+--- a/vllm/v1/core/sched/interface.py
++++ b/vllm/v1/core/sched/interface.py
+@@ -3,7 +3,7 @@
+ import enum
+ from abc import ABC, abstractmethod
+ from collections.abc import Iterable
+-from typing import TYPE_CHECKING
++from typing import TYPE_CHECKING, Any
+ 
+ from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
+ 
+@@ -50,6 +50,22 @@
+     ) -> None:
+         raise NotImplementedError
+ 
++    def update_external_inputs(
++        self, updates: list[tuple[str, int]]
++    ) -> None:
++        """Consume executor completion notices on the scheduler thread."""
++
++    def take_external_input_resolutions(self) -> list[tuple[str, int]]:
++        """Take completed inputs whose resource state now requires recomputation."""
++        return []
++
++    def update_external_input_metadata(self, metadata: dict[str, Any]) -> None:
++        """Apply materialized external input metadata on the scheduler thread."""
++
++    def has_pending_external_inputs(self) -> bool:
++        """Report accepted external receives that must remain owned during drain."""
++        return False
++
+     @abstractmethod
+     def schedule(self, throttle_prefills: bool = False) -> "SchedulerOutput":
+         """Schedule the requests to process in this scheduling step.
+--- a/vllm/v1/core/sched/scheduler.py
++++ b/vllm/v1/core/sched/scheduler.py
+@@ -577,6 +577,20 @@
+             - request.num_computed_tokens
+         )
+ 
++    def get_num_waiting_tokens(self, request: Request, num_computed_tokens: int) -> int:
++        """Return the pending input width of a request entering a native slot."""
++        return request.num_tokens - num_computed_tokens
++
++    def get_min_input_tokens(self, request: Request) -> int:
++        """Return an indivisible input width, or zero for ordinary chunkable input."""
++        return 0
++
++    def get_num_allocation_tokens(
++        self, request: Request, num_query_tokens: int, num_computed_tokens: int
++    ) -> int:
++        """Return input capacity to allocate independently of this step's query width."""
++        return num_query_tokens
++
+     def schedule(self, throttle_prefills: bool = False) -> SchedulerOutput:
+         self.current_step += 1
+         # NOTE(woosuk) on the scheduling algorithm:
+@@ -734,6 +748,9 @@
+             num_new_tokens = self._reserve_prefill_lookahead(
+                 request, request.num_computed_tokens, num_new_tokens
+             )
++
++            if num_new_tokens < self.get_min_input_tokens(request):
++                num_new_tokens = 0
+ 
+             if num_new_tokens == 0:
+                 # The request cannot be scheduled because one of the following
+@@ -760,7 +777,9 @@
+                 while True:
+                     new_blocks = self.kv_cache_manager.allocate_slots(
+                         request,
+-                        num_new_tokens,
++                        self.get_num_allocation_tokens(
++                            request, num_new_tokens, request.num_computed_tokens
++                        ),
+                         num_lookahead_tokens=self.num_lookahead_tokens,
+                     )
+ 
+@@ -1095,13 +1114,20 @@
+                     # We use `request.num_tokens` instead of
+                     # `request.num_prompt_tokens` to consider the resumed
+                     # requests, which have output tokens.
+-                    num_new_tokens = request.num_tokens - num_computed_tokens
++                    num_new_tokens = self.get_num_waiting_tokens(
++                        request, num_computed_tokens
++                    )
++                    minimum_input = self.get_min_input_tokens(request)
++                    if minimum_input > request_token_budget:
++                        skip_request(request_queue)
++                        continue
+ 
+                     # Pad new decode requests to uniform spec decoding size to
+                     # preserve full cudagraph for this step.
+                     # Not for diffusion where draft tokens can't be padded.
+                     if (
+-                        (self.num_spec_tokens > 0 and self.dynamic_sd_lookup is None)
++                        not minimum_input
++                        and (self.num_spec_tokens > 0 and self.dynamic_sd_lookup is None)
+                         and self.num_sampled_tokens_per_step > 0
+                         and num_new_tokens == 1
+                         and not prefill_scheduled
+@@ -1130,8 +1156,11 @@
+                         not self.scheduler_config.enable_chunked_prefill
+                         and num_new_tokens > request_token_budget
+                     ):
+-                        # If chunked_prefill is disabled,
+-                        # we can stop the scheduling here.
++                        # An indivisible input may fit a later step; allow other
++                        # ready requests to use the current budget.
++                        if minimum_input:
++                            skip_request(request_queue)
++                            continue
+                         break
+ 
+                     num_new_tokens = min(num_new_tokens, request_token_budget)
+@@ -1146,6 +1175,9 @@
+                             num_external_computed_tokens,
+                         )
+                         if num_new_tokens == 0:
++                            if minimum_input:
++                                skip_request(request_queue)
++                                continue
+                             break
+                         if (
+                             pad_spec_decode
+@@ -1181,6 +1213,9 @@
+                         request, num_computed_tokens, num_new_tokens
+                     )
+ 
++                    if num_new_tokens < minimum_input:
++                        skip_request(request_queue)
++                        continue
+                     if num_new_tokens == 0:
+                         # The request cannot be scheduled.
+                         break
+@@ -1222,7 +1257,9 @@
+                 num_tokens_past_hit = max(num_new_tokens - num_replay_tokens, 0)
+                 new_blocks = self.kv_cache_manager.allocate_slots(
+                     request,
+-                    num_tokens_past_hit,
++                    self.get_num_allocation_tokens(
++                        request, num_tokens_past_hit, num_computed_tokens
++                    ),
+                     num_new_computed_tokens=num_new_local_computed_tokens,
+                     new_computed_blocks=new_computed_blocks,
+                     num_lookahead_tokens=effective_lookahead_tokens,
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -1277,6 +1277,12 @@
+                 internal_dp_balancing,
+             )
+ 
++            # Completion callbacks only enqueue host wakeups. Scheduler state is
++            # updated on this Core thread when those notifications are drained.
++            self.model_executor.register_external_input_wakeup(
++                lambda: self.input_queue.put_nowait((EngineCoreRequestType.WAKEUP, None))
++            )
++
+             # Initialize fault tolerance settings.
+             self.enable_fault_tolerance = (
+                 vllm_config.parallel_config.enable_fault_tolerance
+@@ -1616,8 +1622,11 @@
+ 
+     def _process_input_queue(self):
+         """Exits when an engine step needs to be performed."""
++        self._drain_external_inputs()
+         waited = False
+-        while not self.has_work() and self.is_running():
++        while not self.has_work() and (
++            self.is_running() or self.scheduler.has_pending_external_inputs()
++        ):
+             # Notify callbacks waiting for engine to become idle.
+             self._notify_idle_state_callbacks()
+             if self.input_queue.empty():
+@@ -1647,8 +1656,19 @@
+             req = self.input_queue.get_nowait()
+             self._handle_client_request(*req)
+ 
++    def _drain_external_inputs(self) -> None:
++        """Activate completed external inputs on the Core's scheduler thread."""
++        updates = self.model_executor.take_ready_external_inputs()
++        if updates:
++            self.scheduler.update_external_inputs(updates)
++        materialize = self.scheduler.take_external_input_resolutions()
++        if materialize:
++            metadata = self.model_executor.resolve_external_inputs(materialize)
++            self.scheduler.update_external_input_metadata(metadata)
++
+     def _process_engine_step(self) -> bool:
+         """Process inference work and completed telemetry without extra GPU work."""
++        self._drain_external_inputs()
+         # Step the engine core.
+         outputs, model_executed = self.step_fn()
+         # Put EngineCoreOutputs into the output queue.
+@@ -1746,8 +1766,9 @@
+ 
+             self.shutdown_state = EngineShutdownState.SHUTTING_DOWN
+ 
+-        # Exit when no work remaining
+-        if not self.has_work():
++        # Accepted external receives remain owned while awaiting their wakeup.
++        # The native process manager still enforces the shutdown deadline.
++        if not self.has_work() and not self.scheduler.has_pending_external_inputs():
+             logger.info(
+                 "[shutdown] EngineCore: request processing complete; "
+                 "starting resource teardown"
+@@ -1761,6 +1782,7 @@
+     ) -> None:
+         """Dispatch request from client."""
+         if request_type == EngineCoreRequestType.WAKEUP:
++            self._drain_external_inputs()
+             return
+         elif request_type == EngineCoreRequestType.ADD:
+             req, request_wave = request
+--- a/vllm/v1/executor/abstract.py
++++ b/vllm/v1/executor/abstract.py
+@@ -5,7 +5,7 @@
+ from collections.abc import Callable
+ from concurrent.futures import Future
+ from functools import cached_property
+-from typing import TYPE_CHECKING, Literal, TypeVar, overload
++from typing import TYPE_CHECKING, Any, Literal, TypeVar, overload
+ 
+ import vllm.envs as envs
+ from vllm.config import VllmConfig
+@@ -270,6 +270,17 @@
+     ) -> Future[list[SpecDecodeTimingResult | None]]:
+         """Query worker timing queues without blocking inference output processing."""
+         return self.collective_rpc("collect_spec_decode_timings", non_block=True)
++
++    def register_external_input_wakeup(self, wake: Callable[[], None]) -> None:
++        """Register a host-only wakeup for executor-owned external input completion."""
++
++    def take_ready_external_inputs(self) -> list[tuple[str, int]]:
++        """Drain completed external request revisions without waiting on device work."""
++        return []
++
++    def resolve_external_inputs(self, inputs: list[tuple[str, int]]) -> dict[str, Any]:
++        """Materialize completed external input metadata for native recomputation."""
++        raise NotImplementedError("Executor does not support external input metadata")
+ 
+     def take_draft_token_ids(self) -> DraftTokenIds | None:
+         output: list[DraftTokenIds] = self.collective_rpc("take_draft_token_ids")
+--- a/vllm/v1/executor/uniproc_executor.py
++++ b/vllm/v1/executor/uniproc_executor.py
+@@ -141,6 +141,21 @@
+             single_value=True,
+         )
+ 
++    def register_external_input_wakeup(self, wake: Callable[[], None]) -> None:
++        """Connect the local Worker's completion owner to the Core input queue."""
++        register = getattr(self.driver_worker, "register_external_input_wakeup", None)
++        if register is not None:
++            register(wake)
++
++    def take_ready_external_inputs(self) -> list[tuple[str, int]]:
++        """Read local Worker completion notices without a utility RPC."""
++        take = getattr(self.driver_worker, "take_ready_external_inputs", None)
++        return take() if take is not None else []
++
++    def resolve_external_inputs(self, inputs: list[tuple[str, int]]) -> dict[str, Any]:
++        """Resolve metadata only for completed inputs selected for recomputation."""
++        return self.driver_worker.resolve_external_inputs(inputs)
++
+     def take_draft_token_ids(self) -> DraftTokenIds | None:
+         return self.collective_rpc("take_draft_token_ids", single_value=True)
+ 

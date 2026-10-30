@@ -42,6 +42,18 @@ func PDEnvironment(runtime *api.ModelGroupPDRuntimeConfig) []corev1.EnvVar {
 	}
 }
 
+// SpeculationEnv supplies Group workloads with native DT runner, discovery, and transport identity.
+// vLLM's address selection consumes the Pod IP; the stable Group Service identifies HTTP peers.
+func SpeculationEnv(group *api.ModelGroup) []corev1.EnvVar {
+	if group.Spec.SpeculationRole == "" {
+		return nil
+	}
+	return []corev1.EnvVar{
+		{Name: "VLLM_USE_V2_MODEL_RUNNER", Value: "1"},
+		{Name: "VLLM_HOST_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},
+	}
+}
+
 // KVStorage returns the native cache mounts and variables appended by the Group workload builder.
 // The controller retains volume allocation, placement, and resource lifecycle ownership.
 func KVStorage(runtime *api.ModelGroupKVRuntimeConfig) ([]corev1.Volume, []corev1.VolumeMount, []corev1.EnvVar) {
@@ -71,7 +83,9 @@ func ManagesEnvironment(spec api.ModelGroupSpec, name string) bool {
 	case "VLLM_USE_MODELSCOPE", "USE_PRECOMPILED_KERNEL":
 		return true
 	case "VLLM_HOST_IP":
-		return spec.NodeCount > 1
+		return spec.NodeCount > 1 || spec.SpeculationRole != ""
+	case "VLLM_USE_V2_MODEL_RUNNER":
+		return spec.SpeculationRole != ""
 	case "MC_FORCE_HCA", "MC_FORCE_TCP":
 		return spec.PDRuntime != nil && spec.PDRuntime.Connector == api.MooncakeConnector
 	case "UCX_TLS":

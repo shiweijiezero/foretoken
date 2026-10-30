@@ -180,6 +180,63 @@ spec:
                 - tokenizer
                 - tokenizerRevision
                 type: object
+              draftGroups:
+                description: |-
+                  DraftGroups contains every prepared peer in this immutable Target revision's shared Draft pool.
+                  Runtime assigns requests to these peers while lifecycle consumers keep the whole pool ready.
+                items:
+                  description: |-
+                    DraftGroupBinding pins one Target cohort to a prepared Draft Group in its shared pool.
+                    Native startup, request routing and retirement share this immutable dependency.
+                  properties:
+                    endpoint:
+                      type: string
+                    groupRef:
+                      description: LocalObjectReference identifies an object in the
+                        same namespace by stable UID.
+                      properties:
+                        name:
+                          minLength: 1
+                          type: string
+                        uid:
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - uid
+                      type: object
+                    poolRef:
+                      description: LocalObjectReference identifies an object in the
+                        same namespace by stable UID.
+                      properties:
+                        name:
+                          minLength: 1
+                          type: string
+                        uid:
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - uid
+                      type: object
+                    revision:
+                      type: string
+                  required:
+                  - endpoint
+                  - groupRef
+                  - poolRef
+                  - revision
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              dtProtocol:
+                description: DTProtocol is the common transport selected for connected
+                  Draft and Target Pools.
+                enum:
+                - tcp
+                - rdma
+                - nccl
+                type: string
               ecRuntime:
                 description: ECRuntime is the controller-owned resolved encoder/prefill
                   transfer configuration.
@@ -1025,11 +1082,19 @@ spec:
                 - internalGenerateRequestBodyLimitBytes
                 - port
                 type: object
+              speculationRole:
+                description: SpeculationRole is the controller-assigned speculative
+                  decoding responsibility.
+                enum:
+                - draft
+                - target
+                type: string
               timeouts:
                 description: ModelTimeouts defines ModelService lifecycle budgets.
                 properties:
                   drain:
-                    description: Duration is a positive Go-style duration.
+                    description: Drain bounds shutdown and the grace period for confirming
+                      cancelled native execution.
                     minLength: 2
                     pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string

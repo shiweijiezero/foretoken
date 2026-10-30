@@ -19,7 +19,11 @@ from foretoken_model_sources import (
 
 def main() -> None:
     """Emit one structured provider result while SDK output remains on stderr."""
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        stream=sys.stderr,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
     source = os.environ["FORETOKEN_PREPARE_SOURCE"]
     if source == "hf":
         provider = huggingface
@@ -27,36 +31,39 @@ def main() -> None:
         provider = modelscope
     else:
         raise ValueError(f"unsupported preparation source: {source}")
-    model = (
-        os.environ["FORETOKEN_PREPARE_MODEL"],
-        os.environ["FORETOKEN_PREPARE_MODEL_REVISION"],
-    )
-    tokenizer = (
-        os.environ["FORETOKEN_PREPARE_TOKENIZER"],
-        os.environ["FORETOKEN_PREPARE_TOKENIZER_REVISION"],
-    )
-    artifacts = [model] if tokenizer == model else [model, tokenizer]
+    inputs = {
+        "model": (
+            os.environ["FORETOKEN_PREPARE_MODEL"],
+            os.environ["FORETOKEN_PREPARE_MODEL_REVISION"],
+        ),
+        "tokenizer": (
+            os.environ["FORETOKEN_PREPARE_TOKENIZER"],
+            os.environ["FORETOKEN_PREPARE_TOKENIZER_REVISION"],
+        ),
+    }
+    if draft := os.environ.get("FORETOKEN_PREPARE_DRAFT_MODEL"):
+        inputs["draft"] = (draft, os.environ["FORETOKEN_PREPARE_DRAFT_REVISION"])
+    artifacts = list(dict.fromkeys(inputs.values()))
+    resolving = os.environ["FORETOKEN_PREPARE_ACTION"] == "resolve"
+    operation = provider.resolve if resolving else provider.snapshot
+    # Model, tokenizer, and a shared-checkpoint Draft acquire each source only once.
     with contextlib.redirect_stdout(sys.stderr):
-        if os.environ["FORETOKEN_PREPARE_ACTION"] == "resolve":
-            revisions = acquire_in_parallel(
-                lambda artifact: provider.resolve(*artifact), artifacts,
-                max_workers=len(artifacts),
+        outputs = dict(
+            zip(
+                artifacts,
+                acquire_in_parallel(
+                    lambda artifact: operation(*artifact),
+                    artifacts,
+                    max_workers=len(artifacts),
+                ),
             )
-            result = {
-                "model_revision": revisions[0],
-                "tokenizer_revision": revisions[-1],
-            }
+        )
+    result = {}
+    for name, artifact in inputs.items():
+        if resolving:
+            result[f"{name}_revision"] = outputs[artifact]
         else:
-            snapshots = acquire_in_parallel(
-                lambda artifact: provider.snapshot(*artifact), artifacts,
-                max_workers=len(artifacts),
-            )
-            result = {
-                "model": snapshots[0][0],
-                "tokenizer": snapshots[-1][0],
-                "model_files": snapshots[0][1],
-                "tokenizer_files": snapshots[-1][1],
-            }
+            result[name], result[f"{name}_files"] = outputs[artifact]
     print(json.dumps(result))
 
 

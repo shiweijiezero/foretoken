@@ -298,6 +298,15 @@ type ModelGroupRuntime struct {
 	InternalGenerateRequestBodyLimitBytes int64 `json:"internalGenerateRequestBodyLimitBytes"`
 }
 
+// DraftGroupBinding pins one Target cohort to a prepared Draft Group in its shared pool.
+// Native startup, request routing and retirement share this immutable dependency.
+type DraftGroupBinding struct {
+	PoolRef  LocalObjectReference `json:"poolRef"`
+	Revision string               `json:"revision"`
+	GroupRef LocalObjectReference `json:"groupRef"`
+	Endpoint string               `json:"endpoint"`
+}
+
 // ModelGroupSpec is an immutable execution specification compiled by the Pool controller.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ModelGroup spec is immutable"
 // +kubebuilder:validation:XValidation:rule="self.memberCount == self.nodeCount",message="memberCount must equal nodeCount in v1alpha1"
@@ -317,6 +326,21 @@ type ModelGroupSpec struct {
 	Ordinal int32 `json:"ordinal"`
 
 	Role ModelRole `json:"role"`
+
+	// SpeculationRole is the controller-assigned speculative decoding responsibility.
+	// +optional
+	SpeculationRole SpeculationRole `json:"speculationRole,omitempty"`
+
+	// DTProtocol is the common transport selected for connected Draft and Target Pools.
+	// +optional
+	// +kubebuilder:validation:Enum=tcp;rdma;nccl
+	DTProtocol string `json:"dtProtocol,omitempty"`
+
+	// DraftGroups contains every prepared peer in this immutable Target revision's shared Draft pool.
+	// Runtime assigns requests to these peers while lifecycle consumers keep the whole pool ready.
+	// +optional
+	// +listType=atomic
+	DraftGroups []DraftGroupBinding `json:"draftGroups,omitempty"`
 
 	Artifacts ModelGroupArtifacts `json:"artifacts"`
 	Runtime   ModelGroupRuntime   `json:"runtime"`
@@ -447,6 +471,15 @@ func (allocation *RDMAAllocation) Canonical() *RDMAAllocation {
 	result.RequiredNodeAffinity = allocation.RequiredNodeAffinity.DeepCopy()
 	result.Networks = slices.Clone(allocation.Networks)
 	return &result
+}
+
+// SelectedDraftGroup returns the deterministic first binding for legacy callers.
+// New launch and lifecycle paths consume DraftGroups as a shared pool.
+func (spec ModelGroupSpec) SelectedDraftGroup() *DraftGroupBinding {
+	if spec.SpeculationRole != SpeculationRoleTarget || len(spec.DraftGroups) == 0 {
+		return nil
+	}
+	return &spec.DraftGroups[int(spec.Ordinal)%len(spec.DraftGroups)]
 }
 
 func init() {

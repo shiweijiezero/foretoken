@@ -4,6 +4,7 @@
 //! Adapts vLLM's public Llm facade, completion ownership, and metrics to the model-server backend.
 
 pub mod config;
+pub mod draft;
 pub mod kv_events;
 pub mod launch;
 pub mod prefix_lookup;

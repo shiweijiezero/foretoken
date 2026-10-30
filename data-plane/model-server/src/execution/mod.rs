@@ -7,8 +7,10 @@ mod admission;
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use futures::StreamExt;
+use tokio_util::sync::CancellationToken;
 
 use crate::backend::{
     Backend, BackendError, ExecutionControl, GenerateInput, TokenEvent, TokenStream,
@@ -98,6 +100,7 @@ pub(crate) async fn start_execution(
     health: Arc<RuntimeHealth>,
     ledger: Option<ExecutionStore>,
     executions: ExecutionRegistry,
+    cancellation_grace: Duration,
     mut input: GenerateInput,
     permit: AdmissionPermit,
 ) -> Result<TokenStream, ExecutionError> {
@@ -152,13 +155,24 @@ pub(crate) async fn start_execution(
             finish_shared(&shared, &owner, ReservationEnd::NotSubmitted).await;
             return;
         }
+        // One watchdog spans submission and completion; only confirmed termination disarms it.
+        let cancellation_done = CancellationToken::new();
+        let cancellation_guard = cancellation_done.clone().drop_guard();
+        tokio::spawn(watch_cancelled_execution(
+            execution.clone(),
+            shared.clone(),
+            health.clone(),
+            request_id.clone(),
+            cancellation_grace,
+            cancellation_done,
+        ));
         // Cancellation can stop preparation, but a started submission retains its completion owner.
         let submission = {
             let generation = backend.generate(input, execution.clone());
             tokio::pin!(generation);
             let cancellation = async {
                 tokio::select! {
-                    () = execution_cancelled(&execution, &shared) => {},
+                    () = execution.cancelled() => {},
                     () = reply.closed() => {},
                 }
             };
@@ -188,6 +202,7 @@ pub(crate) async fn start_execution(
                     stop_uncertain_execution(&health).await;
                     ReservationEnd::RequestTerminated
                 };
+                drop(cancellation_guard);
                 drop(permit);
                 finish_shared(&shared, &owner, end).await;
                 return;
@@ -204,25 +219,30 @@ pub(crate) async fn start_execution(
             let result = tokio::select! {
                 result = &mut engine_completion => result,
                 () = health.wait_stopped() => Err(BackendError::Unavailable),
-                () = execution_cancelled(&cancellation, &shared) => {
+                () = cancellation.cancelled() => {
                     cancellation.cancel();
                     let ids = [request_id];
-                    let abort = tokio::select! {
-                        result = backend.abort(&ids) => result,
-                        () = health.wait_stopped() => Err(BackendError::Unavailable),
+                    let abort = async {
+                        if let Err(error) = backend.abort(&ids).await {
+                            tracing::error!(?error, "native request abort failed; retiring the engine");
+                            health.fail_execution();
+                        }
+                        health.wait_stopped().await;
+                        Err(BackendError::Unavailable)
                     };
-                    if abort.is_err() { health.fail_execution(); }
                     tokio::select! {
                         result = &mut engine_completion => result,
+                        result = abort => result,
                         () = health.wait_stopped() => Err(BackendError::Unavailable),
                     }
                 },
             };
-            // Register remote cleanup before releasing the permit so drain cannot miss the handoff.
-            drop(engine_completion);
             if result.is_err() {
                 stop_uncertain_execution(&health).await;
             }
+            // Register remote cleanup after native termination and before releasing the permit.
+            drop(engine_completion);
+            drop(cancellation_guard);
             drop(permit);
             // Final output can finish while persistence recovers. Intermediate output waits for
             // the ownership handoff, because the next engine must claim the same caller slot.
@@ -264,6 +284,34 @@ pub(crate) async fn start_execution(
     received
         .await
         .map_err(|_| ExecutionError::Backend(BackendError::RequestFailed))?
+}
+
+/// Retires a native runtime that cannot confirm cancellation within its configured drain budget.
+/// The execution task retains all submission/completion ownership until the supervisor confirms exit.
+async fn watch_cancelled_execution(
+    execution: Arc<ExecutionControl>,
+    shared: Option<(ExecutionStore, foretoken_request_ledger::ReservationRef)>,
+    health: Arc<RuntimeHealth>,
+    request_id: String,
+    grace: Duration,
+    done: CancellationToken,
+) {
+    tokio::select! {
+        biased;
+        () = done.cancelled() => return,
+        () = health.wait_stopped() => return,
+        () = execution_cancelled(&execution, &shared) => {},
+    }
+    execution.cancel();
+    tokio::select! {
+        biased;
+        () = done.cancelled() => {},
+        () = health.wait_stopped() => {},
+        () = tokio::time::sleep(grace) => {
+            tracing::error!(%request_id, ?grace, "native request cancellation exceeded the drain budget; retiring the engine");
+            health.fail_execution();
+        }
+    }
 }
 
 /// Observe local and shared-ledger cancellation throughout preparation and execution.

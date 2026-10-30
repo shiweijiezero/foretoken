@@ -30,7 +30,8 @@ type InstanceAdmissionConfig struct {
 type ModelTimeouts struct {
 	// Startup bounds preparation and serving initialization separately, from each stage's first model container start.
 	Startup Duration `json:"startup"`
-	Drain   Duration `json:"drain"`
+	// Drain bounds shutdown and the grace period for confirming cancelled native execution.
+	Drain Duration `json:"drain"`
 }
 
 // ExpertParallelism defines expert-parallel execution for one ModelGroup.
@@ -111,6 +112,17 @@ type ECProfileReference struct {
 // of ModelGroups sharing the same role, network, resources, and parallelism.
 // The controller instantiates it as a ModelPool owned by the ModelService.
 type ModelPoolTemplate struct {
+	// Model selects proposal weights for a referenced Draft Pool.
+	// The source and tokenizer remain those of the ModelService.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Model string `json:"model,omitempty"`
+
+	// Speculation selects same-service Draft Pools for this Target Pool.
+	// +optional
+	Speculation *ModelSpeculation `json:"speculation,omitempty"`
+
 	// Name is the stable identity of this Pool within one ModelService.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
@@ -225,8 +237,19 @@ type ProfilingConfig struct {
 	Engine string `json:"engine"`
 }
 
+// ModelSpeculation declares the Draft Pools available to one Target Pool.
+// Pool references remain local to the ModelService across deployment instance naming.
+type ModelSpeculation struct {
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=32
+	// +listType=set
+	DraftPools []string `json:"draftPools"`
+}
+
 // ModelServiceSpec defines the desired state of a model service.
 // +kubebuilder:validation:XValidation:rule="!has(self.kvTransfer) || (has(self.modelPools) && self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode'))",message="kvTransfer requires prefill and decode modelPools"
+// +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, !has(pool.speculation) || (!has(pool.model) && (!has(pool.role) || pool.role == 'aggregate') && pool.speculation.draftPools.all(name, self.modelPools.exists(draft, draft.name == name && has(draft.model) && !has(draft.speculation) && (!has(draft.role) || draft.role == 'aggregate')))))",message="Target speculation must reference aggregate Draft Pools with proposal model weights"
+// +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, !has(pool.model) || self.modelPools.exists(target, has(target.speculation) && pool.name in target.speculation.draftPools))",message="Pool model overrides require a referencing Target speculation.draftPools"
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !(has(self.replicas) || has(self.nodes) || has(self.resources) || has(self.maxInputTokens) || has(self.kvCache) || has(self.features))",message="spec.modelPools is mutually exclusive with top-level replicas, nodes, resources, maxInputTokens, kvCache, and features"
 // +kubebuilder:validation:XValidation:rule="has(self.modelPools) || has(self.resources)",message="top-level resources are required when spec.modelPools is omitted"
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, pool.name != 'default')",message="modelPools name default is reserved for the Quick Start shorthand"

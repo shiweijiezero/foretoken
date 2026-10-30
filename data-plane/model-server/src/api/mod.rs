@@ -7,7 +7,7 @@ mod kv;
 
 use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
@@ -50,6 +50,7 @@ pub struct AppState {
     profiling: Option<crate::profiling::Handle>,
     ledger: Option<ExecutionStore>,
     executions: ExecutionRegistry,
+    cancellation_grace: Duration,
 }
 
 /// Fixed, wire-safe errors for the internal API.
@@ -124,11 +125,12 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
 }
 
 impl AppState {
-    /// Builds state consumed by internal HTTP handlers; the server owns the supplied backend state.
+    /// Builds handler state with the service drain budget for already-cancelled native executions.
     pub fn new(
         backend: Arc<dyn Backend>,
         health: Arc<RuntimeHealth>,
         metadata: RuntimeMetadataResponse,
+        cancellation_grace: Duration,
     ) -> Self {
         Self {
             backend,
@@ -138,6 +140,7 @@ impl AppState {
             profiling: None,
             ledger: None,
             executions: ExecutionRegistry::default(),
+            cancellation_grace,
         }
     }
 
@@ -201,6 +204,7 @@ async fn generate(
         state.health,
         state.ledger,
         state.executions,
+        state.cancellation_grace,
         input,
         permit,
     )

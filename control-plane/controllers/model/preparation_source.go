@@ -12,12 +12,15 @@ import (
 	"reflect"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllm"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/servingconfig"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -29,6 +32,16 @@ const (
 	preparationHFEndpointKey     = "huggingface-endpoint"
 	preparationSourceReadyReason = "SourcePrepared"
 )
+
+// preparationSource is the fixed provider publication shared with acquisition and collection.
+type preparationSource struct {
+	Version           int                           `json:"version"`
+	Artifacts         runtimeconfig.ModelArtifacts  `json:"artifacts"`
+	ModelRevision     string                        `json:"model_revision"`
+	TokenizerRevision string                        `json:"tokenizer_revision"`
+	DraftArtifacts    *runtimeconfig.ModelArtifacts `json:"draft_artifacts"`
+	DraftRevision     string                        `json:"draft_revision"`
+}
 
 // Missing publication or authority does not establish that source inputs changed.
 type preparationSourceInputMatch uint8
@@ -128,6 +141,16 @@ func reconcilePreparationRecord(ctx context.Context, kubeClient client.Client, r
 		}
 		controllerutil.AddFinalizer(record, runtimeconfig.ModelCacheReferenceFinalizer)
 	}
+	if spec.SpeculationRole == inferencev1alpha1.SpeculationRoleTarget && record.Data[runtimeconfig.PreparationRecordKey] == "" {
+		source, err := inheritDraftPreparationSource(ctx, reader, pool.Namespace, spec)
+		if err != nil {
+			return nil, err
+		}
+		if record.Data == nil {
+			record.Data = make(map[string]string)
+		}
+		record.Data[runtimeconfig.PreparationRecordKey] = source
+	}
 	if creating {
 		if err := kubeClient.Create(ctx, record); err != nil {
 			return nil, fmt.Errorf("create model source ConfigMap: %w", err)
@@ -138,6 +161,68 @@ func reconcilePreparationRecord(ctx context.Context, kubeClient client.Client, r
 		}
 	}
 	return record, nil
+}
+
+// inheritDraftPreparationSource pins a new Target record to its Drafts' published provider versions.
+// Only source.json transfers; the Target's existing cache owner retains its own storage reference.
+func inheritDraftPreparationSource(ctx context.Context, reader client.Reader, namespace string, spec inferencev1alpha1.ModelGroupSpec) (string, error) {
+	artifacts := runtimeconfig.ProjectModelArtifacts(spec.Artifacts)
+	draft, err := vllmconfig.DraftArtifacts(artifacts, spec.Runtime.EngineArgs)
+	if err != nil {
+		return "", err
+	}
+	seen := make(map[string]bool)
+	var inherited *preparationSource
+	var publication string
+	for _, binding := range spec.DraftGroups {
+		group := new(inferencev1alpha1.ModelGroup)
+		if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: binding.GroupRef.Name}, group); err != nil {
+			return "", fmt.Errorf("read bound Draft Group for model preparation: %w", err)
+		}
+		if string(group.UID) != binding.GroupRef.UID || group.Spec.ModelPoolRef != binding.PoolRef || group.Spec.Revision != binding.Revision || group.Spec.SpeculationRole != inferencev1alpha1.SpeculationRoleDraft || !workload.ControllerOwnerMatches(group, inferencev1alpha1.GroupVersion.String(), "ModelPool", binding.PoolRef.Name, types.UID(binding.PoolRef.UID)) {
+			return "", fmt.Errorf("Draft Group %q no longer matches the Target preparation binding", binding.GroupRef.Name)
+		}
+		name := runtimeconfig.PreparationSourceName(group.Spec)
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		record := new(corev1.ConfigMap)
+		if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, record); err != nil {
+			return "", fmt.Errorf("read Draft source publication: %w", err)
+		}
+		if !workload.ControllerOwnerMatches(record, inferencev1alpha1.GroupVersion.String(), "ModelPool", binding.PoolRef.Name, types.UID(binding.PoolRef.UID)) {
+			return "", fmt.Errorf("Draft source publication %q belongs to another owner", name)
+		}
+		source, err := decodePreparationSource(record)
+		if err != nil {
+			return "", err
+		}
+		if source.Artifacts != artifacts || !reflect.DeepEqual(source.DraftArtifacts, draft) {
+			return "", fmt.Errorf("Draft source publication %q is incompatible with the Target model and proposal checkpoint", name)
+		}
+		if inherited != nil && (inherited.ModelRevision != source.ModelRevision || inherited.TokenizerRevision != source.TokenizerRevision || inherited.DraftRevision != source.DraftRevision) {
+			return "", fmt.Errorf("referenced Draft Pools resolved incompatible model, tokenizer, or proposal checkpoint versions")
+		}
+		inherited = &source
+		publication = record.Data[runtimeconfig.PreparationRecordKey]
+	}
+	if inherited == nil {
+		return "", fmt.Errorf("Target model preparation requires a published Draft source")
+	}
+	return publication, nil
+}
+
+// decodePreparationSource reads the acquisition publication without interpreting provider revision formats.
+func decodePreparationSource(record *corev1.ConfigMap) (preparationSource, error) {
+	var source preparationSource
+	if err := json.Unmarshal([]byte(record.Data[runtimeconfig.PreparationRecordKey]), &source); err != nil {
+		return source, fmt.Errorf("decode model source record %q: %w", record.Name, err)
+	}
+	if source.Version != 1 || source.ModelRevision == "" || source.TokenizerRevision == "" || source.DraftArtifacts != nil && source.DraftRevision == "" {
+		return source, fmt.Errorf("model source record %q requires version 1 and fixed checkpoint revisions", record.Name)
+	}
+	return source, nil
 }
 
 // reconcilePreparationSource grants preparation workers scoped source publication permissions.
@@ -393,6 +478,19 @@ func preparationGroupMatches(spec inferencev1alpha1.ModelGroupSpec, template inf
 	if spec.Runtime.PreparationVersion == 0 || artifacts.Source == inferencev1alpha1.ModelSourceLocal || inputs != runtimeconfig.ResolveModelArtifacts(template) {
 		return false
 	}
+	if spec.SpeculationRole != template.SpeculationRole {
+		return false
+	}
+	if template.SpeculationRole != "" {
+		draft, err := vllmconfig.DraftArtifacts(inputs, spec.Runtime.EngineArgs)
+		if err != nil {
+			return false
+		}
+		expectedDraft, err := vllmconfig.DraftArtifacts(runtimeconfig.ResolveModelArtifacts(template), template.EngineArgs)
+		if err != nil || !reflect.DeepEqual(draft, expectedDraft) {
+			return false
+		}
+	}
 	if artifacts.Source == inferencev1alpha1.ModelSourceHF && preparationHuggingFaceEndpoint(artifacts.HuggingFaceAccess) != preparationHuggingFaceEndpoint(template.HuggingFaceAccess) {
 		return false
 	}
@@ -406,19 +504,20 @@ func preparationGroupMatches(spec inferencev1alpha1.ModelGroupSpec, template inf
 func comparePreparationSourceInputs(record *corev1.ConfigMap, template inferencev1alpha1.NormalizedPoolTemplate) (preparationSourceInputMatch, error) {
 	match := preparationSourceInputsUnknown
 	if encoded := record.Data[runtimeconfig.PreparationRecordKey]; encoded != "" {
-		var source struct {
-			Version           int                          `json:"version"`
-			Artifacts         runtimeconfig.ModelArtifacts `json:"artifacts"`
-			ModelRevision     string                       `json:"model_revision"`
-			TokenizerRevision string                       `json:"tokenizer_revision"`
+		source, err := decodePreparationSource(record)
+		if err != nil {
+			return match, err
 		}
-		if err := json.Unmarshal([]byte(encoded), &source); err != nil {
-			return match, fmt.Errorf("decode model source record %q: %w", record.Name, err)
+		artifacts := runtimeconfig.ResolveModelArtifacts(template)
+		var draft *runtimeconfig.ModelArtifacts
+		if template.SpeculationRole != "" {
+			var err error
+			draft, err = vllmconfig.DraftArtifacts(artifacts, template.EngineArgs)
+			if err != nil {
+				return match, err
+			}
 		}
-		if source.Version != 1 || source.ModelRevision == "" || source.TokenizerRevision == "" {
-			return match, fmt.Errorf("model source record %q requires version 1 and fixed model and tokenizer revisions", record.Name)
-		}
-		if source.Artifacts != runtimeconfig.ResolveModelArtifacts(template) {
+		if source.Artifacts != artifacts || !reflect.DeepEqual(source.DraftArtifacts, draft) {
 			return preparationSourceInputsChanged, nil
 		}
 		match = preparationSourceInputsMatch

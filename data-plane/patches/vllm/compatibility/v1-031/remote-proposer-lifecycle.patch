@@ -1,0 +1,184 @@
+--- a/vllm/v1/worker/worker_base.py
++++ b/vllm/v1/worker/worker_base.py
+@@ -236,11 +236,19 @@
+
+         # Initialized after init_worker is called
+         self.worker: WorkerBase
+         self.vllm_config: VllmConfig
++        self._worker_extension_cls: type | None = None
+
+     def shutdown(self) -> None:
+         if self.worker is not None:
++            hook = getattr(self._worker_extension_cls, "destroy_worker_extension", None)
++            if callable(hook):
++                try:
++                    hook(self.worker)
++                except Exception:
++                    # Don't raise: callers still need to run their own teardown.
++                    logger.exception("Worker extension destroy hook failed.")
+             self.worker.shutdown()
+
+     def update_environment_variables(
+         self,
+@@ -285,8 +293,9 @@
+                 "Please pass keep the class in a separate module "
+                 "and pass the qualified name of the class as a string."
+             )
+
++        worker_extension_cls: type | None = None
+         if parallel_config.worker_extension_cls:
+             worker_extension_cls = resolve_obj_by_qualname(
+                 parallel_config.worker_extension_cls
+             )
+@@ -328,8 +337,9 @@
+
+         with set_current_vllm_config(self.vllm_config):
+             # To make vLLM config available during worker initialization
+             self.worker = worker_class(**kwargs)
++            self._worker_extension_cls = worker_extension_cls
+
+     def initialize_from_config(self, kv_cache_configs: list[Any]) -> None:
+         kv_cache_config = kv_cache_configs[self.global_rank]
+         assert self.vllm_config is not None
+@@ -340,8 +350,11 @@
+         assert self.vllm_config is not None
+         with set_current_vllm_config(self.vllm_config):
+             # To make vLLM config available during device initialization
+             self.worker.init_device()  # type: ignore
++            hook = getattr(self._worker_extension_cls, "init_worker_extension", None)
++            if callable(hook):
++                hook(self.worker)
+
+     def __getattr__(self, attr: str):
+         return getattr(self.worker, attr)
+
+--- a/vllm/v1/worker/gpu/spec_decode/speculator.py
++++ b/vllm/v1/worker/gpu/spec_decode/speculator.py
+@@ -14,8 +14,9 @@
+ from vllm.distributed.eplb.eplb_state import EplbState
+ from vllm.logger import init_logger
+ from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
+ from vllm.model_executor.models import supports_multimodal_embeddings
++from vllm.v1.core.sched.output import NewRequestData
+ from vllm.v1.kv_cache_interface import KVCacheConfig
+ from vllm.v1.watermarking import create_watermarker
+ from vllm.v1.watermarking.spec_decode import (
+     DraftWatermarker,
+@@ -59,8 +60,24 @@
+ class BaseSpeculator(ABC):
+     num_query_per_req: int = 1
+     # Extra query slots reserved per request outside the regular queries.
+     num_extra_query_per_req: int = 0
++
++    def add_request(self, request: NewRequestData) -> None:
++        """Bind request-scoped proposal state when a native slot is initialized."""
++        pass
++
++    def remove_requests(self, request_ids: set[str]) -> None:
++        """Release request-scoped state before finished or preempted slots are reused."""
++        pass
++
++    def bind_target_model(self, target_model: nn.Module) -> None:
++        """Bind target-model input producers before warmup and graph capture."""
++        pass
++
++    def prepare_target_forward(self, input_batch: InputBatch) -> None:
++        """Prepare proposal input ownership before a real target forward begins."""
++        pass
+
+     @abstractmethod
+     def init_cudagraph_manager(self, cudagraph_mode: CUDAGraphMode) -> None:
+         pass
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -400,8 +400,10 @@
+                     self.speculator.load_model(self.model)
+                     eplb_models_added = self.eplb.maybe_register_speculator(
+                         self.speculator, self.speculative_config, load_dummy_weights
+                     )
++            if self.speculator is not None:
++                self.speculator.bind_target_model(self.model)
+         time_after_load = time.perf_counter()
+
+         self.model_memory_usage = m.consumed_memory
+         logger.info(
+@@ -1116,8 +1118,10 @@
+             self.pooling_runner.on_requests_finished(finished_req_ids)
+         preempted_req_ids = scheduler_output.preempted_req_ids
+         if preempted_req_ids:
+             finished_req_ids = finished_req_ids.union(preempted_req_ids)
++        if self.speculator is not None and finished_req_ids:
++            self.speculator.remove_requests(finished_req_ids)
+         # Sorted so every TP rank frees request slots in the same order.
+         # Features like batch-sharded sampling derive rank request ownership
+         # from the slot index.
+         for req_id in sorted(finished_req_ids):
+@@ -1173,8 +1177,10 @@
+             if self.encoder_cache is not None:
+                 self.encoder_cache.add_request(req_id, new_req_data.mm_features)
+
+             self.model_state.add_request(req_index, new_req_data)
++            if self.speculator is not None:
++                self.speculator.add_request(new_req_data)
+             self.block_tables.append_block_ids(
+                 req_index, new_req_data.block_ids, overwrite=True
+             )
+             self.lora_state.add_request(req_id, req_index, new_req_data.lora_request)
+@@ -1943,8 +1949,11 @@
+         self.eplb.prepare_forward(
+             self.model_config, input_batch.num_tokens, ubatch_slices
+         )
+
++        if not dummy_run and self.speculator is not None:
++            self.speculator.prepare_target_forward(input_batch)
++
+         self.step_timing.record_batch(
+             input_batch, batch_desc.cg_mode == CUDAGraphMode.FULL
+         )
+         self.step_timing.forward_start()
+--- a/vllm/v1/core/sched/output.py
++++ b/vllm/v1/core/sched/output.py
+@@ -48,8 +48,9 @@
+     num_computed_tokens: int
+     lora_request: LoRARequest | None
+     prompt_embeds: "torch.Tensor | None" = None
+     prompt_is_token_ids: list[bool] | None = None
++    cache_salt: str | None = None
+
+     # Only used for v2 model runner.
+     prefill_token_ids: list[int] | None = None
+     # DeepSeek-V4.1 only: SWA bounded replay; see Request.replay_start.
+@@ -79,8 +80,9 @@
+             prompt_embeds=request.prompt_embeds,
+             prompt_is_token_ids=request.prompt_is_token_ids,
+             prefill_token_ids=prefill_token_ids,
+             replay_start=request.replay_start,
++            cache_salt=request.cache_salt,
+         )
+
+     @property
+     def prompt_len(self) -> int:
+--- a/vllm/model_executor/models/interfaces.py
++++ b/vllm/model_executor/models/interfaces.py
+@@ -1559,8 +1559,10 @@
+
+ class EagleModelMixin:
+     start_layer: int
+     aux_hidden_state_layers: tuple[int, ...] = ()
++    # A consumer may retain a capturable copy as each selected layer is produced.
++    aux_hidden_state_capture: Callable[[int, torch.Tensor], torch.Tensor] | None = None
+     supports_aux_hidden_states_over_pp: ClassVar[bool] = False
+     AUX_HIDDEN_STATE_KEY: ClassVar[str] = "aux_hidden_states_"
+     _aux_slot_base_cached: int = 0
+     _aux_upstream_total_cached: int = 0
+@@ -1597,8 +1599,10 @@
+         residual: torch.Tensor | None,
+     ) -> list[torch.Tensor]:
+         if layer_idx in self.aux_hidden_state_layers:
+             value = hidden_states + residual if residual is not None else hidden_states
++            if self.aux_hidden_state_capture is not None:
++                value = self.aux_hidden_state_capture(layer_idx, value)
+             aux_hidden_states.append(value)
+         return aux_hidden_states
+
+     def pack_local_aux_hidden_states(

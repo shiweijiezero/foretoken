@@ -1,0 +1,12 @@
+--- a/vllm/v1/engine/__init__.py
++++ b/vllm/v1/engine/__init__.py
+@@ -240,6 +240,9 @@
+     # [num_scored_rows, num_token_ids]; appended last for array_like compatibility.
+     prompt_token_id_logprobs: torch.Tensor | None = None
+
++    # Scheduler-defined output for a resumable turn whose request remains live.
++    continuation_output: Any | None = None
++
+     @property
+     def finished(self) -> bool:
+         return self.finish_reason is not None

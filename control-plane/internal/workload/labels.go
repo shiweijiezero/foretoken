@@ -15,6 +15,7 @@ const (
 	ModelGroupLabel                = "inference.foretoken.io/model-group"
 	ModelPreparationGroupLabel     = "inference.foretoken.io/model-preparation-group"
 	ModelGroupUIDLabel             = "inference.foretoken.io/model-group-uid"
+	ModelServiceUIDLabel           = "inference.foretoken.io/model-service-uid"
 	ModelGroupRoleLabel            = "inference.foretoken.io/model-role"
 	ModelGroupPDPipelineScopeLabel = "inference.foretoken.io/pd-pipeline-scope"
 	ControlPlanePodLabel           = "app.kubernetes.io/name"

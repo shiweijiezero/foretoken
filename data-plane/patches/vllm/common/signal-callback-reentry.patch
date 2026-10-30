@@ -1,0 +1,41 @@
+--- a/vllm/v1/engine/utils.py
++++ b/vllm/v1/engine/utils.py
+@@ -11,6 +11,7 @@
+ from multiprocessing import connection
+ from multiprocessing.process import BaseProcess
+ from multiprocessing.queues import Queue
++from queue import SimpleQueue
+ from typing import TYPE_CHECKING, cast
+
+ import msgspec
+@@ -325,7 +326,9 @@
+
+     def __init__(self, callback: Callable[[], None]):
+         self._callback = callback
+-        self._event = threading.Event()
++        # Event.set() takes a non-reentrant lock; a second signal can interrupt
++        # it while that lock is held. SimpleQueue.put() is reentrant in CPython.
++        self._queue: SimpleQueue[None] = SimpleQueue()
+         self._stopped = False
+         self._thread = threading.Thread(
+             target=self._run,
+@@ -335,16 +338,16 @@
+         self._thread.start()
+
+     def _run(self):
+-        self._event.wait()
++        self._queue.get()
+         if not self._stopped:
+             self._callback()
+
+     def trigger(self):
+-        self._event.set()
++        self._queue.put(None)
+
+     def stop(self):
+         self._stopped = True
+-        self._event.set()
++        self._queue.put(None)
+
+
+ def set_assigned_physical_gpu_ids_for_dp_rank(

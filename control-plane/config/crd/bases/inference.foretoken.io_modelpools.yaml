@@ -204,6 +204,21 @@ spec:
                     - vllm
                     - vllm-omni
                     type: string
+                  draftPools:
+                    description: DraftPools retains this Target's same-service discovery
+                      scope.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  dtProtocol:
+                    description: DTProtocol is the common transport selected for connected
+                      Draft and Target Pools.
+                    enum:
+                    - tcp
+                    - rdma
+                    - nccl
+                    type: string
                   ecProfile:
                     description: ECProfile is the controller-owned platform EC profile
                       selected for encoder and prefill Pools.
@@ -846,11 +861,18 @@ spec:
                     description: SourceRevision pins the CLI-published source bundle
                       used by this Pool's Groups.
                     type: string
+                  speculationRole:
+                    description: SpeculationRole is assigned by the ModelService compiler.
+                    enum:
+                    - draft
+                    - target
+                    type: string
                   timeouts:
                     description: ModelTimeouts defines ModelService lifecycle budgets.
                     properties:
                       drain:
-                        description: Duration is a positive Go-style duration.
+                        description: Drain bounds shutdown and the grace period for
+                          confirming cancelled native execution.
                         minLength: 2
                         pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                         type: string

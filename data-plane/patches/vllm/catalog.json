@@ -110,6 +110,31 @@
       "python": {}
     },
     {
+      "path": "common/signal-callback-reentry.patch",
+      "rust": true,
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-031/remote-proposer-lifecycle.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-031/mooncake-transfer-shutdown.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
       "path": "common/prefix-cache-lookup.patch",
       "rust": true,
       "python": {
@@ -471,6 +496,52 @@
       "rust": true
     },
     {
+      "path": "compatibility/v1-031/dynamic-autoregressive-drafting.patch",
+      "python": {
+        "versions": "==0.31.0"
+      }
+    },
+    {
+      "path": "compatibility/v1-031/deferred-proposals.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
+      "path": "rust/engine-batch-admission.patch",
+      "rust": true
+    },
+    {
+      "path": "rust/continuation-output.patch",
+      "rust": true
+    },
+    {
+      "path": "compatibility/v1-031/continuation-output.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-031/batch-admission.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-031/external-inputs.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
       "path": "compatibility/v1-legacy/dynamic-autoregressive-drafting.patch",
       "python": {
         "versions": ">=0.25.0,<0.27.0.dev0"
@@ -503,9 +574,11 @@
       }
     },
     {
-      "path": "compatibility/v1-031/dynamic-autoregressive-drafting.patch",
+      "path": "compatibility/v1-031/external-input-readiness.patch",
       "python": {
-        "versions": "==0.31.0"
+        "profiles": [
+          "v1-031"
+        ]
       }
     },
     {

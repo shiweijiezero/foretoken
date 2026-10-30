@@ -222,6 +222,8 @@ spec:
 
 方法和子字段沿用 vLLM。需要草稿权重时，`model` 可填写 Hub 模型 ID 或容器内可见的绝对目录，由 vLLM 下载、加载和缓存。`spec.source: modelscope` 同时适用于主模型和草稿模型的 Hub ID。
 
+将 Draft 与 Target 分别部署到不同 GPU 时，通过 `modelPools[].model` 选择草稿权重，并在 Target 的 `speculation.draftPools` 中引用 Draft Pool 的名称。Foretoken 准备两端模型文件，算法参数仍统一放在 Draft Pool 的 `engineArgs.speculative-config` 中。[Draft/Target 示例](../../examples/feature/draft-target/README_zh.md)给出了部署和共享 Draft 的副本配置。
+
 ## 平台管理的选项
 
 模型、tokenizer、节点数量、缓存存储与传输通过 `spec.model`、`spec.tokenizer`、`nodes`、`kvCache`、`kvTransfer` 和 `ecProfile` 配置，Foretoken 据此设置启动参数。启用运行时缓存时，原生 profiler 配置由性能剖析功能管理；mcTracer 还会选择对应的 worker。多节点副本使用 `mp` executor。

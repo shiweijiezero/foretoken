@@ -127,6 +127,9 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 		pools = append(pools, pool)
 	}
 
+	if err := compileSpeculation(spec, pools); err != nil {
+		return nil, err
+	}
 	sort.Slice(pools, func(i, j int) bool { return pools[i].Name < pools[j].Name })
 	return pools, nil
 }

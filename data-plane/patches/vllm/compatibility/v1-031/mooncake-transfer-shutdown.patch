@@ -1,0 +1,49 @@
+--- a/vllm/distributed/ec_transfer/ec_connector/mooncake/transfer.py
++++ b/vllm/distributed/ec_transfer/ec_connector/mooncake/transfer.py
+@@ -55,9 +55,13 @@
+         self._closed = False
+
+     def _ensure_engine(self) -> TransferEngine:
++        if self._closed:
++            raise RuntimeError("Mooncake transfer engine is closed")
+         if self._engine is not None:
+             return self._engine
+         with self._engine_lock:
++            if self._closed:
++                raise RuntimeError("Mooncake transfer engine is closed")
+             if self._engine is not None:
+                 return self._engine
+             engine = TransferEngine()
+@@ -190,20 +194,18 @@
+             )
+
+     def close(self) -> None:
+-        if self._closed:
+-            return
+-        self._closed = True
+-        engine = self._engine
+-        if engine is None:
+-            return
+-        with self._registration_lock:
+-            addresses = list(self._source_registrations)
+-            addresses.extend(self._pending_unregister)
+-            if not addresses:
++        """Stop native transport after callers have joined local transfer jobs."""
++        with self._engine_lock:
++            if self._closed:
+                 return
+-            ret = engine.batch_unregister_memory(list(dict.fromkeys(addresses)))
+-            if ret != 0:
+-                logger.error("Mooncake EC batch memory unregistration failed: %d", ret)
+-                return
++            self._closed = True
++            engine = self._engine
++            self._engine = None
++            # A failed synchronous write can leave native work outstanding.
++            # Destroy the engine before releasing tensors: TCP joins its event
++            # loop, and RDMA destroys queue pairs before deregistering memory.
++            # Detach it even when an exception traceback retains this wrapper.
++            del engine
++        with self._registration_lock:
+             self._source_registrations.clear()
+             self._pending_unregister.clear()

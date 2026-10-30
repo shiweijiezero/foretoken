@@ -217,6 +217,8 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 | `timeouts.drain` | Shutdown wait for accepted requests, default `10m`; changing it replaces frontend Pods |
 | `logLevel` | `trace`, `debug`, `info` (default), `warn`, `error`, or `off` |
 
+The model's own `ModelService.spec.timeouts.drain` also bounds the wait for cancelled native execution to finish; exceeding it retires the engine.
+
 To limit prompt length, set `ModelService.spec.maxInputTokens`, or `spec.modelPools[].maxInputTokens` for individual Pools. This updates online and is separate from the engine's combined input/output context limit.
 
 Models whose strict tool calls require structural tags must declare that capability in the model YAML:
