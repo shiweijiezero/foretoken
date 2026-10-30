@@ -217,7 +217,7 @@ class RemoteProposer(BaseSpeculator):
     def capture(self):
         """Remote work is outside the Target's CUDA graph capture."""
 
-    def bind_target_model(self, target_model):
+    def bind_target_model(self, target_model, *, connect_native=True):
         """Bind stable feature buffers and peer ownership before native graph capture."""
         if self.feature_capture is None and not self.spec.uses_draft_model():
             self.feature_capture = FeatureCapture(
@@ -228,7 +228,7 @@ class RemoteProposer(BaseSpeculator):
                 self.runner.use_aux_hidden_state_outputs,
             )
             self.owns_feature_capture = True
-        self._open()
+        self._open(connect_native=connect_native)
 
     def prepare_target_forward(self, input_batch, *, prepare_features=True):
         """Retire feature-buffer reads before the native forward reuses their storage."""
@@ -326,7 +326,16 @@ class RemoteProposer(BaseSpeculator):
                     session.initial_prompt = None
         return accepted
 
-    def _open(self) -> None:
+    def _connect_native(self) -> None:
+        """Join the native NCCL peer after its control stream has been accepted."""
+        if self.nccl is None:
+            return
+        # Let the Draft enter the matching collective before this Target joins it.
+        connect_ack = self._send_control({"operation": "connect"})
+        self.nccl.connect()
+        connect_ack.result()
+
+    def _open(self, *, connect_native=True) -> None:
         """Retain the control stream that owns every native Draft session for this worker."""
         features = self.feature_capture
         num_features = 0 if features is None else features.destination.shape[0]
@@ -390,12 +399,8 @@ class RemoteProposer(BaseSpeculator):
                 if opened["input"] is not None
                 else None
             )
-            if self.nccl is not None:
-                # Both workers enter the native collective after accepting the
-                # control binding; neither waits for a connect ACK first.
-                connect_ack = self._send_control({"operation": "connect"})
-                self.nccl.connect()
-                connect_ack.result()
+            if connect_native:
+                self._connect_native()
         except BaseException:
             if self.nccl is not None:
                 self.nccl.close(abort=True)
@@ -983,13 +988,15 @@ class RemoteProposerPool(BaseSpeculator):
     def bind_target_model(self, target_model):
         """Open every Draft peer while sharing one captured Target feature buffer."""
         first, *rest = self.children
-        first.bind_target_model(target_model)
+        first.bind_target_model(target_model, connect_native=False)
         self.feature_capture = first.feature_capture
         first.owns_feature_capture = False
         for child in rest:
             child.feature_capture = self.feature_capture
             child.owns_feature_capture = False
-            child._open()
+            child._open(connect_native=False)
+        for child in self.children:
+            child._connect_native()
 
     def prepare_target_forward(self, input_batch):
         """Prepare the selected peer after retiring the shared feature buffer once."""
