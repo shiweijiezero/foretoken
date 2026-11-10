@@ -1,0 +1,429 @@
+<!doctype html>
+<!--
+  SPDX-License-Identifier: Apache-2.0
+  SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+  Proposal 树模板：单文件、零依赖。数据由 .agents/skills/rsi/scripts/research_tree.py 注入，字段见 research-tree_zh.md。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal 树</title>
+<style>
+:root{--bg:#f5f7fa;--ink:#1f2937;--muted:#6b7280;--faint:#9aa3af;--line:#e3e8ef;--soft:#eef2f6;
+  --green:#1a7f4b;--blue:#2f6fdb;--purple:#7c3aed;--amber:#b7791f;--gray:#8b939e;--red:#c0392b;--slate:#334155}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);display:flex;flex-direction:column;overflow:hidden;
+  font:13px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif}
+select,input,button{font:inherit;color:inherit}
+select{border:1px solid var(--line);border-radius:7px;padding:3px 8px;background:#fff}
+button{border:1px solid var(--line);border-radius:7px;padding:3px 10px;background:#fff;cursor:pointer}
+label.ctl{display:inline-flex;align-items:center;gap:6px;color:var(--muted);white-space:nowrap}
+main{flex:1;display:flex;min-height:0}
+.wrap{flex:1;min-width:0;display:flex;flex-direction:column}
+.bar{display:flex;align-items:center;gap:14px;padding:8px 16px;border-bottom:1px solid var(--line);background:#fff;flex-wrap:wrap}
+.bar b{font-size:14px;margin-right:6px}
+.canvas{flex:1;overflow:auto}
+svg text{font-family:inherit}
+.card{fill:#fff;stroke:var(--line);stroke-width:1.4}
+.node{cursor:pointer}
+.node:hover .card{stroke:#9fb2c9}
+.node.sel .card{stroke:var(--slate);stroke-width:2.4}
+.node.base .card{fill:#f8fafc;stroke:var(--slate);stroke-width:2}
+.node.merge .card{fill:#f3faf6;stroke:var(--green);stroke-width:2}
+.node.exp .card{fill:#fcfdff}
+.node.pending .card{stroke-dasharray:5 3}
+.node.pruned text,.node.pruned circle,.node.pruned line{opacity:.55}
+.toggle{cursor:pointer}
+.toggle circle{fill:#fff;stroke:#9fb2c9;stroke-width:1.2}
+.toggle:hover circle{stroke:var(--slate)}
+.toggle text{font-size:12px;font-weight:700;fill:var(--slate);pointer-events:none}
+.lbl{font-size:12.5px;font-weight:650}
+.sub{font-size:10.5px;fill:var(--muted)}
+.chip{font-size:10.5px;font-weight:600}
+.val{font-size:11px;font-weight:700;fill:var(--slate)}
+.tag{font-size:10.5px;fill:var(--muted)}
+.edge{fill:none;stroke:#cbd5e1;stroke-width:1.5}
+.edge.pruned{stroke-dasharray:2 4}
+.edge.trunk{stroke:var(--green);stroke-width:3.2;opacity:.9}
+.edge.refines{stroke:var(--slate);stroke-width:1.2;stroke-dasharray:5 4;opacity:.6}
+aside{width:460px;flex:none;background:#fff;border-left:1px solid var(--line);overflow:auto;padding:14px 16px 28px}
+h2{font-size:16px;margin:0;line-height:1.35}
+.tagbox{display:inline-block;font-size:10.5px;padding:1px 8px;border-radius:11px;font-weight:600;margin-top:4px}
+.meta{color:var(--muted);font-size:11.5px;margin-top:4px}
+section{margin-top:14px}
+section h3{font-size:11px;color:var(--muted);margin:0 0 6px;font-weight:700;letter-spacing:.04em}
+section h3 i{font-style:normal;font-weight:500;color:var(--faint);margin-left:6px}
+.kv{border:1px solid var(--soft);border-radius:8px;overflow:hidden}
+.kv div{display:flex;gap:10px;padding:5px 9px;border-bottom:1px solid var(--soft);font-size:12px}
+.kv div:last-child{border-bottom:0}
+.kv span:first-child{color:var(--muted);width:64px;flex:none}
+table{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-numeric:tabular-nums}
+th{color:var(--muted);font-weight:600;text-align:right;padding:4px;border-bottom:1px solid var(--line)}
+td{text-align:right;padding:4px;border-bottom:1px solid var(--soft)}
+th:first-child,td:first-child{text-align:left}
+.up{color:var(--green);font-weight:600}.down{color:var(--red);font-weight:600}
+ul{margin:0;padding-left:17px;font-size:12px}
+li{margin-bottom:5px}
+.note{font-size:11px;color:var(--faint);margin-top:6px}
+.links a{font-size:11.5px;color:var(--blue);margin-right:10px;cursor:pointer}
+footer{padding:5px 16px;background:#fff;border-top:1px solid var(--line);color:var(--muted);font-size:11px;display:flex;gap:14px;flex-wrap:wrap}
+footer i{display:inline-block;width:10px;height:10px;border-radius:3px;vertical-align:-1px;margin-right:4px}
+@media (max-width:980px){main{flex-direction:column}aside{width:100%;height:42%;border-left:0;border-top:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<main>
+  <div class="wrap">
+    <div class="bar">
+      <b>Proposal 树</b>
+      <label class="ctl">比较条件 <select id="scope"></select></label>
+      <label class="ctl">指标 <select id="metric"></select></label>
+      <button id="expand">全部展开</button>
+      <button id="collapse">全部收起</button>
+    </div>
+    <div class="canvas"><svg id="tree" role="img" aria-label="Proposal 树"></svg></div>
+  </div>
+  <aside id="detail"></aside>
+</main>
+<footer>
+  <span>Proposal：</span>
+  <span><i style="background:var(--amber)"></i>待实现</span>
+  <span><i style="background:#0e7490"></i>实现中</span>
+  <span><i style="background:var(--blue)"></i>已完成</span>
+  <span><i style="background:var(--gray)"></i>已放弃</span>
+  <span>实验：</span>
+  <span><i style="background:var(--amber)"></i>等待执行</span>
+  <span><i style="background:var(--purple)"></i>执行中</span>
+  <span><i style="background:var(--blue)"></i>已完成</span>
+  <span><i style="background:var(--red)"></i>失败</span>
+  <span><i style="background:var(--green)"></i>★ 候选池 / 合版</span>
+  <span style="color:var(--green)">━ 合入下一轮 baseline</span>
+  <span style="color:var(--slate)">┄ 跨轮细化</span>
+</footer>
+<script id="data" type="application/json">__FORETOKEN_TREE_DATA__</script>
+<script>
+"use strict";
+const D = JSON.parse(document.getElementById('data').textContent);
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const trunc = (s, n) => { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+
+// 输入是方案池和实验池的当前视图（字段见 research-tree_zh.md），这里转换成树节点。
+// 每一轮：baseline（原始 baseline 或上一轮合版）→ 方案池中的 Proposal → 实验（叶子）；
+// 合版是 mergeOf 非空的 Proposal，它成为下一轮的 baseline，树随轮次向右扩张。
+const pid = name => 'p:' + name, eid = name => 'e:' + name;
+const ROOT = {id: 'root', kind: 'root', label: D.baseline.name, code: D.baseline.code, m: D.baseline.m, links: D.baseline.links};
+// 树上只放进入方案池的 Proposal：draft 尚未通过检查，rejected 不实施，两者不上树。
+const IN_POOL = new Set(['ready', 'implementing', 'completed', 'abandoned']);
+const byId = {root: ROOT};
+D.proposals.filter(p => IN_POOL.has(p.state)).forEach(p => {
+  byId[pid(p.name)] = {...p, id: pid(p.name), kind: p.mergeOf && p.mergeOf.length ? 'merge' : 'proposal', label: p.name};
+});
+const baseIdOf = p => p.baseName && byId[pid(p.baseName)] ? pid(p.baseName) : 'root';
+Object.values(byId).forEach(n => {
+  if (n.kind === 'merge') n.base = baseIdOf(n);
+  if (n.kind !== 'proposal') return;
+  // 细化关系：同一轮内挂在被细化的 Proposal 下；跨轮的细化挂在本轮 baseline 下，另画虚线指向原 Proposal。
+  const ref = n.parentName && byId[pid(n.parentName)], base = baseIdOf(n);
+  if (ref && baseIdOf(ref) === base && ref.kind === 'proposal') n.parent = ref.id;
+  else { n.parent = base; if (ref && ref.id !== base) n.refines = ref.id; }
+});
+D.experiments.filter(e => byId[pid(e.proposalName)]).forEach(e => {
+  byId[eid(e.name)] = {...e, id: eid(e.name), kind: 'exp', parent: pid(e.proposalName)};
+});
+const NODES = Object.values(byId);
+const PROPS = NODES.filter(n => n.kind === 'proposal' || n.kind === 'merge');
+const kids = {};
+NODES.forEach(n => { if (n.parent) (kids[n.parent] ||= []).push(n); });
+Object.values(kids).forEach(l => l.sort((a, b) => (a.kind !== 'exp') - (b.kind !== 'exp')));
+const exps = p => (kids[p.id] || []).filter(c => c.kind === 'exp');
+// 实验显示名由 Proposal 名称和实验次数生成：实验-<Proposal>-<第几次>。
+PROPS.forEach(p => exps(p).forEach((e, i) => { e.label = `实验-${p.label}-${i + 1}`; }));
+// 合版的测量取其最近一次完成的实验；它合入的实验和下一轮的 Proposal 以它为 baseline。
+NODES.filter(n => n.kind === 'merge').forEach(m => {
+  const done = exps(m).filter(e => e.state === 'completed');
+  m.m = done.length ? done[done.length - 1].m : {};
+  m.includes = m.mergeOf.map(eid);
+  m.measured = m.base;
+});
+const nextMerge = Object.fromEntries(NODES.filter(n => n.kind === 'merge').map(m => [m.base, m]));
+const LANES = [];
+for (let b = ROOT; b; b = nextMerge[b.id]) LANES.push(b);
+const isBase = n => n.kind === 'root' || n.kind === 'merge';
+const baseOf = n => { let x = byId[n.parent]; while (!isBase(x)) x = byId[x.parent]; return x; };
+// 实验未写实测 parent 时，以所在一轮的 baseline 为参照；合版自己的实验以上一轮 baseline 为参照。
+NODES.filter(n => n.kind === 'exp').forEach(e => {
+  const p = byId[e.parent];
+  e.measured = e.measured ? eid(e.measured) : p.kind === 'merge' ? p.base : baseOf(e).id;
+});
+const descendants = n => (kids[n.id] || []).flatMap(c => [c, ...descendants(c)]);
+// 状态直接取自方案池和实验池的记录。Proposal 与实验各有一套状态，键加前缀区分。
+// 只有 Proposal 已放弃才剪枝；实验失败表示执行出错或撤销，不代表 idea 不成立。
+const STATUS = {
+  'p:ready': {nm: '待实现', c: '#b7791f', bg: '#fff8e8'},
+  'p:implementing': {nm: '实现中', c: '#0e7490', bg: '#e9f7fa'},
+  'p:completed': {nm: '已完成', c: '#2f6fdb', bg: '#eef4ff'},
+  'p:abandoned': {nm: '已放弃', c: '#8b939e', bg: '#f3f5f7'},
+  'e:pending': {nm: '等待执行', c: '#b7791f', bg: '#fff8e8'},
+  'e:running': {nm: '执行中', c: '#7c3aed', bg: '#f5f0ff'},
+  'e:completed': {nm: '已完成', c: '#2f6fdb', bg: '#eef4ff'},
+  'e:failed': {nm: '失败', c: '#c0392b', bg: '#fdf2f0'}
+};
+NODES.forEach(n => { if (n.kind !== 'root') n.view = `${n.kind === 'exp' ? 'e' : 'p'}:${n.state}`; });
+const isPruned = n => (n.kind === 'exp' ? byId[n.parent] : n).view === 'p:abandoned';
+const PENDING = new Set(['p:ready', 'p:implementing', 'e:pending', 'e:running']);
+// 候选池（帕雷托前沿）由实验者记录；★ 只标在尚未合版的一轮里。
+const inPool = n => n.view === 'e:completed' && n.retained === true;
+const showStar = n => inPool(n) && !nextMerge[baseOf(n).id];
+const round = b => LANES.indexOf(b);
+const GREEN = {c: '#1a7f4b', bg: '#eaf6ef'}, SLATE = {c: '#334155', bg: '#f8fafc'};
+// 合版完成后作为下一轮 baseline；之前显示它自己作为 Proposal 的状态。
+const style = n => n.kind === 'root' ? SLATE : n.kind === 'merge' && n.state === 'completed' ? GREEN : showStar(n) ? GREEN : STATUS[n.view];
+const statusText = n => n.kind === 'root' ? '第 1 轮 baseline' : n.kind === 'merge' && n.state === 'completed' ? `第 ${round(n) + 1} 轮 baseline` : STATUS[n.view].nm;
+const title = n => n.kind === 'proposal' ? `Proposal-${n.label}` : n.label;
+
+const OBJ = D.scopes.flatMap(s => D.metrics.map(m => ({s: s.id, m: m.key, label: `${s.label} ${m.label}`, dir: m.dir})));
+const val = (n, s, m) => n && n.m && n.m[s] ? n.m[s][m] ?? null : null;
+const fmt = v => v == null ? '—' : v.toLocaleString('zh-CN', {maximumFractionDigits: 1});
+const pct = (v, b) => v == null || !b ? null : (v / b - 1) * 100;
+const pctTxt = (v, b) => { const d = pct(v, b); return d == null ? '—' : (d >= 0 ? '+' : '') + d.toFixed(1) + '%'; };
+const cls = (v, b, dir) => { const d = pct(v, b); if (d == null || Math.abs(d) < 0.05) return ''; return (dir === 'up') === (d > 0) ? 'up' : 'down'; };
+const state = {scope: D.scopes[0].id, metric: D.metrics[0].key, sel: ROOT.id, collapsed: new Set()};
+
+// 合入下一轮 baseline 的路径：每个合版所包含实验到本轮 baseline 的祖先链。
+function trunk() {
+  const ids = new Set();
+  NODES.filter(n => n.kind === 'merge').forEach(m => (m.includes || []).forEach(i => { for (let x = byId[i]; x && !isBase(x); x = byId[x.parent]) ids.add(x.id); }));
+  return ids;
+}
+// 每一轮占一段列：baseline → Proposal → 实验；下一轮 baseline 放在本轮最深一列之后，纵向居中于本轮。
+function layout() {
+  const pos = {};
+  let x0 = 0;
+  LANES.forEach(b => {
+    let row = 0, maxX = x0;
+    (function place(n, x) {
+      maxX = Math.max(maxX, x);
+      const cs = state.collapsed.has(n.id) ? [] : (kids[n.id] || []);
+      if (!cs.length) { pos[n.id] = {x, y: row++}; return; }
+      cs.forEach(c => place(c, x + 1));
+      const ys = cs.map(c => pos[c.id].y);
+      pos[n.id] = {x, y: (Math.min(...ys) + Math.max(...ys)) / 2};
+    })(b, x0);
+    const lane = [b, ...descendants(b)].filter(n => pos[n.id]);
+    const mid = (Math.min(...lane.map(n => pos[n.id].y)) + Math.max(...lane.map(n => pos[n.id].y))) / 2;
+    lane.forEach(n => { pos[n.id].y -= mid; });
+    x0 = maxX + 1;
+  });
+  const minY = Math.min(...Object.values(pos).map(p => p.y));
+  Object.values(pos).forEach(p => { p.y -= minY; });
+  return pos;
+}
+const NS = 'http://www.w3.org/2000/svg';
+const CW = 172, CH = 62, DX = 214, DY = 80, PAD = 30;
+function E(tag, attrs, parent, text) {
+  const e = document.createElementNS(NS, tag);
+  Object.entries(attrs || {}).forEach(([k, v]) => e.setAttribute(k, v));
+  if (text != null) e.textContent = text;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const xy = p => [PAD + CW / 2 + p.x * DX, PAD + CH / 2 + 10 + p.y * DY];
+function curve(a, b) {
+  const [x1, y1] = xy(a), [x2, y2] = xy(b), sx = x1 + CW / 2 + 10, ex = x2 - CW / 2;
+  const mx = ex > sx + 10 ? (sx + ex) / 2 : Math.max(sx, ex) + 40;
+  return `M${sx},${y1} C${mx},${y1} ${mx},${y2} ${ex},${y2}`;
+}
+function caption(n) {
+  if (n.kind === 'proposal') return '';
+  const v = val(n, state.scope, state.metric);
+  // 合版卡片的状态文字较长，只显示相对原始 baseline 的变化；绝对值在详情面板。
+  if (v != null) return n.kind === 'root' ? fmt(v) : n.kind === 'merge' ? pctTxt(v, val(ROOT, state.scope, state.metric)) : fmt(v) + ' · ' + pctTxt(v, val(ROOT, state.scope, state.metric));
+  return '';
+}
+function renderTree() {
+  const svg = $('tree'), pos = layout(), main = trunk(), list = NODES.filter(n => pos[n.id]);
+  svg.replaceChildren();
+  svg.setAttribute('width', PAD * 2 + CW + 20 + Math.max(...list.map(n => pos[n.id].x)) * DX);
+  svg.setAttribute('height', PAD * 2 + CH + 10 + Math.max(...list.map(n => pos[n.id].y)) * DY);
+  const gE = E('g', {}, svg), gN = E('g', {}, svg);
+  list.forEach(n => {
+    if (n.parent && pos[n.parent]) E('path', {d: curve(pos[n.parent], pos[n.id]), class: 'edge' + (main.has(n.id) ? ' trunk' : '') + (isPruned(n) ? ' pruned' : '')}, gE);
+    if (n.refines && pos[n.refines]) E('path', {d: curve(pos[n.refines], pos[n.id]), class: 'edge refines'}, gE);
+    if (n.kind === 'merge') {
+      const from = (n.includes || []).filter(i => pos[i]);
+      (from.length ? from : [n.base]).forEach(i => E('path', {d: curve(pos[i], pos[n.id]), class: 'edge trunk'}, gE));
+    }
+  });
+  list.forEach(n => {
+    const [x, y] = xy(pos[n.id]), st = style(n), LX = -CW / 2 + 12, RX = CW / 2 - 10;
+    const g = E('g', {class: `node ${isBase(n) ? 'base ' + n.kind : n.kind}` + (isPruned(n) ? ' pruned' : '') +
+      (PENDING.has(n.view) ? ' pending' : '') + (state.sel === n.id ? ' sel' : ''), transform: `translate(${x},${y})`}, gN);
+    g.addEventListener('click', () => { state.sel = n.id; render(); });
+    E('rect', {class: 'card', x: -CW / 2, y: -CH / 2, width: CW, height: CH, rx: n.kind === 'exp' ? 4 : 9}, g);
+    E('line', {x1: -CW / 2 + 1, y1: -CH / 2 + 10, x2: -CW / 2 + 1, y2: CH / 2 - 10, stroke: st.c, 'stroke-width': 3.2, 'stroke-linecap': 'round'}, g);
+    // 实验名过长时截断 Proposal 名称，保留末尾的实验次数。
+    const name = n.kind === 'exp' && n.label.length > 15 ? n.label.replace(/^(.*)(-\d+)$/, (_, a, b) => trunc(a, 15 - b.length) + b) : trunc(title(n), 15);
+    E('text', {x: LX, y: -CH / 2 + 20, class: 'lbl'}, g, name);
+    E('circle', {cx: LX + 4, cy: -CH / 2 + 34.5, r: 3.4, fill: st.c}, g);
+    E('text', {x: LX + 12, y: -CH / 2 + 38, class: 'chip', fill: st.c}, g, statusText(n));
+    E('text', {x: RX, y: -CH / 2 + 38, 'text-anchor': 'end', class: 'val'}, g, trunc(caption(n), 15));
+    const sub = n.kind === 'root' ? n.code : n.kind === 'exp' ? n.description : n.kind === 'merge' ? n.mergeOf.map(e => byId[eid(e)] ? byId[eid(e)].label : e).join(' + ') : n.directionName;
+    if (sub) E('text', {x: LX, y: -CH / 2 + 54, class: 'sub'}, g, trunc(sub, 22));
+    if (showStar(n)) E('text', {x: RX, y: -CH / 2 - 6, 'text-anchor': 'end', class: 'tag', fill: '#1a7f4b'}, g, '★ 候选池');
+    // 展开 / 收起该节点的分支
+    if ((kids[n.id] || []).length) {
+      const closed = state.collapsed.has(n.id), t = E('g', {class: 'toggle', transform: `translate(${CW / 2 + 9},0)`}, g);
+      E('circle', {r: 8}, t);
+      E('text', {'text-anchor': 'middle', y: 4}, t, closed ? '+' : '−');
+      t.addEventListener('click', ev => { ev.stopPropagation(); closed ? state.collapsed.delete(n.id) : state.collapsed.add(n.id); renderTree(); });
+      if (closed) E('text', {x: CW / 2 + 20, y: 4, class: 'tag'}, g, `${descendants(n).length}`);
+    }
+  });
+}
+const sec = (title, who, body) => body ? `<section><h3>${esc(title)}${who ? `<i>${esc(who)}</i>` : ''}</h3>${body}</section>` : '';
+const kv = o => o ? '<div class="kv">' + Object.entries(o).map(([k, v]) => `<div><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join('') + '</div>' : '';
+const goLinks = list => '<div class="links">' + list.map(e => `<a data-go="${esc(e.id)}">${esc(e.label)} · ${esc(statusText(e))}</a>`).join('') + '</div>';
+function measure(n) {
+  const parent = n.kind === 'root' ? null : byId[n.measured] || ROOT;
+  const rows = OBJ.filter(o => val(n, o.s, o.m) != null).map(o => {
+    const v = val(n, o.s, o.m), pv = val(parent, o.s, o.m), bv = val(ROOT, o.s, o.m);
+    return `<tr><td>${esc(o.label)} ${o.dir === 'up' ? '↑' : '↓'}</td><td>${fmt(v)}</td><td>${n.m[o.s].n ?? '—'}</td>` +
+      (parent ? `<td class="${cls(v, pv, o.dir)}">${pctTxt(v, pv)}</td><td class="${cls(v, bv, o.dir)}">${pctTxt(v, bv)}</td>` : '') + '</tr>';
+  });
+  if (!rows.length) return `<div class="note">尚无 profiling 结果${n.view ? '：' + esc(STATUS[n.view].nm) : ''}</div>`;
+  return `<table><tr><th>条件 · 指标</th><th>均值</th><th>n</th>${parent ? '<th>相对 parent</th><th>相对原始</th>' : ''}</tr>${rows.join('')}</table>` +
+    (parent ? `<div class="note">实测 parent：${esc(parent.label)}</div>` : '') +
+    (Object.values(n.m).some(x => x.n < 2) ? '<div class="note">单次测量，没有波动估计。</div>' : '');
+}
+// 一轮的实验进展图（仿 kimi.png）：横轴为本轮实验顺序，纵轴为当前指标；
+// 黑色阶梯线是最优前沿，新纪录用绿色并加注释框，失败的实验画在底部；虚线为本轮 baseline 和合版。
+function progressChart(base, merge) {
+  const s = state.scope, k = state.metric, metric = D.metrics.find(x => x.key === k), up = metric.dir === 'up';
+  const list = descendants(base).filter(n => n.kind === 'exp' && (n.view === 'e:completed' || n.view === 'e:failed'));
+  const b = val(base, s, k), mv = val(merge, s, k);
+  const vals = [b, mv, ...list.map(n => val(n, s, k))].filter(v => v != null);
+  if (b == null || !list.length) return '<div class="note">本轮尚无可画的实验。</div>';
+  const lo = Math.min(...vals), hi = Math.max(...vals), pad = (hi - lo || hi * 0.1) * 0.15;
+  const y0 = lo - pad * 2, y1 = hi + pad;
+  const W = 428, H = 320, L = 46, R = 58, T = 62, B = 34;
+  const X = i => L + i / (list.length + 1) * (W - L - R), Y = v => T + (y1 - v) / (y1 - y0) * (H - T - B);
+  const C = {rec: '#3fbf6f', normal: '#a3a3a3', bad: '#f0ad3c', fail: '#e5534b'};
+  let out = `<svg width="${W}" height="${H}" style="display:block;font-size:10px;font-family:inherit">`;
+  // 图例
+  [['rec', '新纪录'], ['normal', '已完成'], ['bad', '方案已放弃'], ['fail', '实验失败']].forEach(([c, t], i) =>
+    { out += `<circle cx="${L + i * 78}" cy="12" r="4.5" fill="${C[c]}"/><text x="${L + i * 78 + 8}" y="15.5" fill="#374151">${t}</text>`; });
+  out += `<line x1="${L}" y1="28" x2="${L + 16}" y2="28" stroke="#111" stroke-width="2"/><text x="${L + 22}" y="31.5" fill="#374151">最优前沿</text>`;
+  out += `<line x1="${L + 78}" y1="28" x2="${L + 94}" y2="28" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="4 3"/><text x="${L + 100}" y="31.5" fill="#374151">本轮 baseline</text>`;
+  // 网格与刻度
+  for (let i = 0; i <= 4; i++) {
+    const v = y0 + (y1 - y0) * i / 4, y = Y(v);
+    out += `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="#eef0f3"/><text x="${L - 6}" y="${y + 3}" text-anchor="end" fill="#6b7280">${fmt(v)}</text>`;
+  }
+  out += `<line x1="${L}" y1="${H - B}" x2="${W - R}" y2="${H - B}" stroke="#9ca3af"/>`;
+  list.forEach((n, i) => { out += `<text x="${X(i + 1)}" y="${H - B + 13}" text-anchor="middle" fill="#9ca3af">${i + 1}</text>`; });
+  out += `<text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle" fill="#9ca3af">本轮实验顺序</text>`;
+  out += `<text x="${L - 34}" y="${T - 10}" fill="#9ca3af">${esc(metric.label)} ${esc(metric.unit)} ${up ? '↑' : '↓'}</text>`;
+  // baseline 与合版参考线
+  const ref = (v, color, text) => { const y = Y(v); out += `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="${color}" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${W - R + 4}" y="${y - 2}" fill="${color}">${text}</text><text x="${W - R + 4}" y="${y + 9}" fill="${color}">${fmt(v)}</text>`; };
+  ref(b, '#8b5cf6', 'baseline');
+  if (mv != null) ref(mv, '#1a7f4b', '合版');
+  // 最优前沿：只由未放弃的 Proposal 的实验构成；先算出新纪录，画阶梯线，再画点，使点压在线上
+  let best = b, path = `M${L},${Y(b)}`;
+  const notes = [], record = new Set();
+  list.forEach((n, i) => {
+    const v = val(n, s, k);
+    if (n.view !== 'e:failed' && v != null && !isPruned(n) && (up ? v > best : v < best)) {
+      path += ` H${X(i + 1)} V${Y(v)}`; best = v; record.add(n); notes.push([n, X(i + 1), Y(v), v]);
+    }
+  });
+  out += `<path d="${path} H${W - R}" fill="none" stroke="#111" stroke-width="2"/>`;
+  list.forEach((n, i) => {
+    const v = val(n, s, k), x = X(i + 1);
+    if (n.view === 'e:failed' || v == null) { out += `<circle cx="${x}" cy="${H - B - 6}" r="4" fill="${C.fail}"><title>${esc(n.label)} · 失败</title></circle>`; return; }
+    const c = record.has(n) ? C.rec : isPruned(n) ? C.bad : C.normal;
+    out += `<circle cx="${x}" cy="${Y(v)}" r="${record.has(n) ? 5 : 4}" fill="${c}"><title>${esc(n.label)} · ${fmt(v)}</title></circle>`;
+  });
+  // 新纪录注释框：依次尝试点的左上、右上、左下、右下，选第一个不与已放置的框或任何数据点重叠的位置
+  const placed = [], hit = (a, c) => a.x < c.x + c.w && c.x < a.x + a.w && a.y < c.y + c.h && c.y < a.y + a.h;
+  const dots = list.map((n, i) => ({x: X(i + 1) - 6, y: (val(n, s, k) == null ? H - B - 6 : Y(val(n, s, k))) - 6, w: 12, h: 12}));
+  notes.forEach(([n, x, y, v], i) => {
+    const lines = [byId[n.parent].label, `${fmt(v)} ${metric.unit}（${pctTxt(v, b)}）`];
+    const w = Math.max(...lines.map(t => [...t].reduce((a, ch) => a + (ch.charCodeAt(0) > 255 ? 10.5 : 6), 0))) + 14, h = 32;
+    const clampX = bx => Math.min(Math.max(bx, L + 2), W - R - w);
+    const tries = [[x - w - 8, y - h - 8], [x + 8, y - h - 8], [x - w - 8, y + 8], [x + 8, y + 8]]
+      .map(([bx, by]) => ({x: clampX(bx), y: Math.min(Math.max(by, T), H - B - h - 2), w, h}));
+    const box = tries.find(t => ![...placed, ...dots].some(p => hit(t, p))) || tries.find(t => !placed.some(p => hit(t, p))) || tries[0];
+    placed.push(box);
+    const fill = i % 2 ? '#fdf6e3' : '#eaf2fd', stroke = i % 2 ? '#ecd9a5' : '#bcd3f5';
+    out += `<line x1="${x}" y1="${y}" x2="${box.x + w / 2}" y2="${box.y + (box.y < y ? h : 0)}" stroke="#9ca3af"/>`;
+    out += `<rect x="${box.x}" y="${box.y}" width="${w}" height="${h}" rx="6" fill="${fill}" stroke="${stroke}"/>`;
+    lines.forEach((t, j) => { out += `<text x="${box.x + 7}" y="${box.y + 13 + j * 13}" fill="#1f2937">${esc(t)}</text>`; });
+  });
+  return out + '</svg>';
+}
+// 合版节点：本轮的实验进展、候选池、合版结果和负约束；它同时是下一轮的 baseline。
+function mergePanel(m) {
+  const base = byId[m.base];
+  const pool = descendants(base).filter(inPool);
+  const table = `<table><tr><th>相对本轮 baseline</th>${OBJ.map(o => `<th>${esc(o.label)}</th>`).join('')}</tr>` +
+    [...pool, m].map(n => `<tr><td>${esc(n === m ? '合版' : n.label)}</td>${OBJ.map(o => { const v = val(n, o.s, o.m), b = val(base, o.s, o.m); return `<td class="${cls(v, b, o.dir)}">${pctTxt(v, b)}</td>`; }).join('')}</tr>`).join('') + '</table>';
+  const neg = descendants(base).filter(n => n.view === 'p:abandoned');
+  return sec('合版包含', '', goLinks((m.includes || []).map(i => byId[i]).filter(Boolean))) +
+    sec('profiling 结果', '', measure(m)) +
+    sec('本轮实验进展', '实验者', progressChart(base, m)) +
+    sec('本轮候选池', '实验者', table) +
+    sec('本轮负约束', 'Explorer', neg.length ? '<ul>' + neg.map(p => `<li><b>${esc(p.label)}</b>：${esc(p.conclusion)}</li>`).join('') + '</ul>' : '');
+}
+const link = (label, path) => `<a href="${esc((D.taskRoot || '') + path)}">${esc(label)}</a>`;
+// 方案池中 Proposal 的全部字段。
+function proposalInfo(n) {
+  const rows = [
+    ['名称', esc(n.name)],
+    ['方向', esc(n.directionName ?? '—')],
+    ['Explorer', esc(n.explorerName)],
+    ['Worker', esc(n.workerName ?? '尚未分派')],
+    ['版本', `第 ${esc(n.revision)} 版`],
+    ['文件', link(n.filePath, n.filePath)],
+    ['状态', `${esc(STATUS[n.view].nm)}（${esc(n.state)}）`],
+    ['结论', esc(n.conclusion ?? '尚未结束')]
+  ];
+  return '<div class="kv">' + rows.map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join('') + '</div>';
+}
+function renderDetail() {
+  const n = byId[state.sel] || ROOT, st = style(n);
+  let h = `<h2>${esc(title(n))}</h2><span class="tagbox" style="background:${st.bg};color:${st.c};border:1px solid ${st.c}">${esc(showStar(n) ? '★ 候选池' : statusText(n))}</span>`;
+  if (n.kind === 'root') {
+    h += sec('任务', '', kv({...D.task, '更新时间': D.updated_at})) + sec('代码', '', kv({'git': n.code})) + sec('profiling 结果', '', measure(n));
+    if (n.links) h += sec('证据', '', '<div class="links">' + Object.entries(n.links).map(([k, v]) => link(k, v)).join('') + '</div>');
+  } else if (n.kind === 'exp') {
+    h += sec('实验', '', kv({'名称': n.name, '目的': n.description}));
+    h += sec('实验项', '', kv(Object.fromEntries(n.commands.map(c => [c.name, c.command]))));
+    h += sec('profiling 结果', '', measure(n));
+    h += sec('记录', '', `<div class="links">${link('report.md', n.recordDirectory + '/report.md')}${link('记录目录', n.recordDirectory)}</div>`);
+  } else {
+    if (n.kind === 'proposal' && n.refines) h += `<div class="meta">细化自 ${esc(title(byId[n.refines]))}</div>`;
+    h += sec('方案', '方案池', proposalInfo(n));
+    if (n.kind === 'merge') h += mergePanel(n);
+    else {
+      const l = exps(n);
+      h += sec('实验', '', l.length ? goLinks(l) : '<div class="note">尚无实验。</div>');
+    }
+  }
+  $('detail').innerHTML = h;
+  $('detail').querySelectorAll('a[data-go]').forEach(a => a.onclick = () => { state.sel = a.dataset.go; render(); });
+}
+
+function render() { renderTree(); renderDetail(); }
+D.scopes.forEach(s => $('scope').add(new Option(s.label, s.id)));
+D.metrics.forEach(m => $('metric').add(new Option(`${m.label} ${m.unit} ${m.dir === 'up' ? '↑' : '↓'}`, m.key)));
+$('scope').onchange = e => { state.scope = e.target.value; render(); };
+$('metric').onchange = e => { state.metric = e.target.value; render(); };
+$('expand').onclick = () => { state.collapsed.clear(); renderTree(); };
+$('collapse').onclick = () => { state.collapsed = new Set(PROPS.filter(p => p.kind === 'proposal' && isBase(byId[p.parent])).map(p => p.id)); renderTree(); };
+render();
+</script>
+</body>
+</html>
