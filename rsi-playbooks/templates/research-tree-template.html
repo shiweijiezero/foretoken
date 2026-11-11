@@ -10,97 +10,169 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Proposal 树</title>
 <style>
-:root{--bg:#f5f7fa;--ink:#1f2937;--muted:#6b7280;--faint:#9aa3af;--line:#e3e8ef;--soft:#eef2f6;
-  --green:#1a7f4b;--blue:#2f6fdb;--purple:#7c3aed;--amber:#b7791f;--gray:#8b939e;--red:#c0392b;--slate:#334155}
+:root{
+  --bg:#f3f6fb;--surface:#fff;--surface-2:#f8fafc;
+  --ink:#0f172a;--ink-2:#334155;--muted:#64748b;--faint:#94a3b8;
+  --line:#e5eaf2;--soft:#f0f4f9;
+  --accent:#3b6fd4;--accent-soft:#eaf1fd;
+  --green:#15803d;--green-bg:#e9f6ee;
+  --blue:#2f6fdb;--purple:#7c3aed;--amber:#b7791f;--gray:#8b939e;--red:#c0392b;--slate:#334155;
+  --shadow:0 1px 2px rgba(15,23,42,.04),0 6px 18px rgba(15,23,42,.05)
+}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--ink);display:flex;flex-direction:column;overflow:hidden;
-  font:13px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif}
+  font:13px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased}
 select,input,button{font:inherit;color:inherit}
-select{border:1px solid var(--line);border-radius:7px;padding:3px 8px;background:#fff}
-button{border:1px solid var(--line);border-radius:7px;padding:3px 10px;background:#fff;cursor:pointer}
-label.ctl{display:inline-flex;align-items:center;gap:6px;color:var(--muted);white-space:nowrap}
+select{border:1px solid var(--line);border-radius:8px;padding:5px 9px;background:var(--surface-2);cursor:pointer;transition:border-color .15s,background .15s}
+select:hover{border-color:#c3d2e8;background:#fff}
+button{border:1px solid var(--line);border-radius:8px;padding:5px 12px;background:#fff;cursor:pointer;transition:.15s}
+button:hover{background:var(--surface-2);border-color:#c3d2e8}
+:focus-visible{outline:2px solid #bcd2f5;outline-offset:1px}
+label.ctl{display:inline-flex;align-items:center;gap:7px;color:var(--muted);white-space:nowrap;font-size:12px}
 main{flex:1;display:flex;min-height:0}
 .wrap{flex:1;min-width:0;display:flex;flex-direction:column}
-.bar{display:flex;align-items:center;gap:14px;padding:8px 16px;border-bottom:1px solid var(--line);background:#fff;flex-wrap:wrap}
-.bar b{font-size:14px;margin-right:6px}
-.canvas{flex:1;overflow:auto}
+.bar{height:58px;flex:none;display:flex;align-items:center;gap:14px;padding:0 18px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.95)}
+.brand{display:flex;align-items:center;gap:10px;padding-right:16px;border-right:1px solid var(--line)}
+.brand .mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(145deg,#4b7ee0,#2f5cc0);color:#fff;display:grid;place-items:center;font-weight:800;font-size:13px;box-shadow:0 3px 9px rgba(59,111,212,.28);letter-spacing:-.02em}
+.brand b{font-size:14px;line-height:1.2;display:block}
+.brand small{display:block;font-size:10.5px;color:var(--faint);line-height:1.35}
+.bar .grow{flex:1}
+.bar .tip{font-size:11.5px;color:var(--faint);white-space:nowrap;border-left:1px solid var(--line);padding-left:14px}
+.canvas{flex:1;overflow:auto;background-color:var(--bg);background-image:radial-gradient(#d9e2f0 1px,transparent 1px);background-size:20px 20px}
 svg text{font-family:inherit}
-.card{fill:#fff;stroke:var(--line);stroke-width:1.4}
+.card{fill:#fff;stroke:var(--line);stroke-width:1.2;filter:drop-shadow(0 2px 3px rgba(15,23,42,.06))}
+.halo{fill:rgba(59,111,212,.06);stroke:rgba(59,111,212,.28);stroke-width:1}
 .node{cursor:pointer}
-.node:hover .card{stroke:#9fb2c9}
-.node.sel .card{stroke:var(--slate);stroke-width:2.4}
-.node.base .card{fill:#f8fafc;stroke:var(--slate);stroke-width:2}
-.node.merge .card{fill:#f3faf6;stroke:var(--green);stroke-width:2}
-.node.exp .card{fill:#fcfdff}
+.node:hover .card{stroke:#a9bdd8;filter:drop-shadow(0 4px 10px rgba(15,23,42,.10))}
+.node.sel .card{stroke:var(--accent);stroke-width:2;filter:drop-shadow(0 4px 12px rgba(59,111,212,.18))}
+.node.base .card{fill:#fbfcfe;stroke:var(--slate);stroke-width:1.8}
+.node.merge .card{fill:#f4fbf7;stroke:var(--green);stroke-width:1.8}
+.node.exp .card{fill:#fff}
 .node.pending .card{stroke-dasharray:5 3}
-.node.pruned text,.node.pruned circle,.node.pruned line{opacity:.55}
-.toggle{cursor:pointer}
-.toggle circle{fill:#fff;stroke:#9fb2c9;stroke-width:1.2}
-.toggle:hover circle{stroke:var(--slate)}
-.toggle text{font-size:12px;font-weight:700;fill:var(--slate);pointer-events:none}
-.lbl{font-size:12.5px;font-weight:650}
+.node.pruned text,.node.pruned circle,.node.pruned line,.node.pruned .pill,.node.pruned .halo{opacity:.5}
+.lbl{font-size:12.5px;font-weight:650;fill:var(--ink)}
+.kind{font-size:9.5px;font-weight:700;fill:var(--faint);letter-spacing:.04em}
 .sub{font-size:10.5px;fill:var(--muted)}
-.chip{font-size:10.5px;font-weight:600}
+.chip{font-size:10.5px;font-weight:700}
 .val{font-size:11px;font-weight:700;fill:var(--slate)}
 .tag{font-size:10.5px;fill:var(--muted)}
-.edge{fill:none;stroke:#cbd5e1;stroke-width:1.5}
+.edge{fill:none;stroke:#c7d3e4;stroke-width:1.5}
 .edge.pruned{stroke-dasharray:2 4}
-.edge.trunk{stroke:var(--green);stroke-width:3.2;opacity:.9}
-.edge.refines{stroke:var(--slate);stroke-width:1.2;stroke-dasharray:5 4;opacity:.6}
-aside{width:460px;flex:none;background:#fff;border-left:1px solid var(--line);overflow:auto;padding:14px 16px 28px}
-h2{font-size:16px;margin:0;line-height:1.35}
-.tagbox{display:inline-block;font-size:10.5px;padding:1px 8px;border-radius:11px;font-weight:600;margin-top:4px}
-.meta{color:var(--muted);font-size:11.5px;margin-top:4px}
-section{margin-top:14px}
-section h3{font-size:11px;color:var(--muted);margin:0 0 6px;font-weight:700;letter-spacing:.04em}
-section h3 i{font-style:normal;font-weight:500;color:var(--faint);margin-left:6px}
-.kv{border:1px solid var(--soft);border-radius:8px;overflow:hidden}
-.kv div{display:flex;gap:10px;padding:5px 9px;border-bottom:1px solid var(--soft);font-size:12px}
-.kv div:last-child{border-bottom:0}
-.kv span:first-child{color:var(--muted);width:64px;flex:none}
-table{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-numeric:tabular-nums}
-th{color:var(--muted);font-weight:600;text-align:right;padding:4px;border-bottom:1px solid var(--line)}
-td{text-align:right;padding:4px;border-bottom:1px solid var(--soft)}
+.edge.trunk{stroke:#34a06a;stroke-width:3;opacity:.9}
+.edge.refines{stroke:var(--slate);stroke-width:1.2;stroke-dasharray:5 4;opacity:.5}
+.toggle{cursor:pointer}
+.toggle circle{fill:#fff;stroke:#b6c5da;stroke-width:1.2;filter:drop-shadow(0 1px 2px rgba(15,23,42,.08))}
+.toggle:hover circle{stroke:var(--accent)}
+.toggle text{font-size:12px;font-weight:700;fill:var(--slate);pointer-events:none}
+
+/* 详情面板：粘性标题头 + 分区卡片，保证每个节点打开后信息自解释 */
+aside{width:506px;flex:none;background:var(--bg);border-left:1px solid var(--line);overflow:auto;overscroll-behavior:contain}
+.d-head{position:sticky;top:0;z-index:3;background:rgba(255,255,255,.97);backdrop-filter:blur(8px);padding:18px 20px 14px;border-bottom:1px solid var(--line)}
+.d-head::before{content:'';position:absolute;left:0;top:0;right:0;height:3px;background:var(--head-c,var(--accent))}
+.d-crumb{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--faint);margin-bottom:8px;flex-wrap:wrap}
+.d-crumb b{color:var(--muted);font-weight:700}
+.d-crumb s{text-decoration:none;color:#cbd5e1}
+.d-head h2{font-size:19px;margin:0 0 9px;line-height:1.3;letter-spacing:-.01em;word-break:break-word}
+.d-badges{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.tagbox{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:3px 10px;border-radius:20px;font-weight:700}
+.badge-ghost{font-size:11px;padding:3px 9px;border-radius:20px;background:var(--soft);color:var(--muted);font-weight:600}
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%;flex:none}
+.d-sub{font-size:11.5px;color:var(--muted);margin-top:9px;line-height:1.55}
+.d-body{padding:14px 16px 32px}
+section{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px 16px;margin:0 0 12px;box-shadow:var(--shadow)}
+section h3{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);margin:0 0 12px;font-weight:700;letter-spacing:.01em}
+section h3::before{content:'';width:3px;height:13px;border-radius:2px;background:var(--accent);flex:none}
+section h3 i{font-style:normal;font-weight:500;color:var(--faint);margin-left:auto;font-size:10.5px;letter-spacing:0;background:var(--surface-2);padding:2px 8px;border-radius:20px}
+.kv{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.kv>div{display:grid;grid-template-columns:82px minmax(0,1fr);gap:12px;padding:9px 12px;border-bottom:1px solid var(--soft);font-size:12.5px;align-items:start;background:#fff}
+.kv>div:last-child{border-bottom:0}
+.kv>div:nth-child(even){background:#fcfdff}
+.kv>div>span:first-child{color:var(--muted);font-size:11.5px;padding-top:1px}
+.kv>div>span:last-child{color:var(--ink);font-weight:500;word-break:break-word;line-height:1.55}
+.kv a{color:var(--accent);text-decoration:none;border-bottom:1px dashed #a9c2ee}
+.kv a:hover{border-bottom-style:solid}
+.gap{height:12px}
+.mcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-bottom:14px}
+.mcard{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:9px 11px 8px}
+.mcard-top{display:flex;align-items:baseline;justify-content:space-between;gap:6px}
+.mcard-metric{font-size:18px;font-weight:750;letter-spacing:-.01em;color:var(--ink);line-height:1.15}
+.mcard-scope{font-size:10.5px;color:var(--muted);flex:none;font-weight:600}
+.mcard-v{font-size:27px;font-weight:800;margin-top:6px;font-variant-numeric:tabular-nums;color:var(--ink);letter-spacing:-.02em;line-height:1.08}
+.mcard-v small{font-size:10px;font-weight:600;color:var(--faint);margin-left:3px}
+.mcard-d{font-size:11px;margin-top:3px;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}
+.mcard-d em{font-style:normal;font-weight:400;color:var(--faint);margin-left:3px}
+.mcard-n{font-size:10px;color:var(--faint);margin-top:4px}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;font-variant-numeric:tabular-nums;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+th{background:var(--surface-2);color:var(--muted);font-weight:600;text-align:right;padding:8px 10px;border-bottom:1px solid var(--line);font-size:11px;white-space:nowrap}
+td{text-align:right;padding:8px 10px;border-bottom:1px solid var(--soft);color:var(--ink-2);white-space:nowrap}
+tbody tr:hover td{background:#fbfdff}
 th:first-child,td:first-child{text-align:left}
-.up{color:var(--green);font-weight:600}.down{color:var(--red);font-weight:600}
-ul{margin:0;padding-left:17px;font-size:12px}
-li{margin-bottom:5px}
-.note{font-size:11px;color:var(--faint);margin-top:6px}
-.links a{font-size:11.5px;color:var(--blue);margin-right:10px;cursor:pointer}
-footer{padding:5px 16px;background:#fff;border-top:1px solid var(--line);color:var(--muted);font-size:11px;display:flex;gap:14px;flex-wrap:wrap}
-footer i{display:inline-block;width:10px;height:10px;border-radius:3px;vertical-align:-1px;margin-right:4px}
-@media (max-width:980px){main{flex-direction:column}aside{width:100%;height:42%;border-left:0;border-top:1px solid var(--line)}}
+td:first-child{font-weight:600;color:var(--ink);white-space:normal}
+tr:last-child td{border-bottom:0}
+.unit{color:var(--faint);font-size:10px}
+.up{color:var(--green)}.down{color:var(--red)}
+.delta{display:inline-block;padding:1px 6px;border-radius:6px;font-size:11px;font-weight:700;background:var(--surface-2);color:var(--muted)}
+.delta.up{background:var(--green-bg);color:var(--green)}
+.delta.down{background:#fdeceb;color:var(--red)}
+.empty{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);background:var(--surface-2);border:1px dashed var(--line);border-radius:10px;padding:12px 14px}
+.empty::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--faint);flex:none}
+.refline{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);background:var(--surface-2);border-radius:20px;padding:3px 10px;margin-top:10px}
+.refline b{color:var(--ink-2);font-weight:600}
+.warn{display:flex;gap:8px;align-items:center;font-size:11.5px;color:#92610e;background:#fff8e8;border:1px solid #f3e2ba;border-radius:8px;padding:7px 10px;margin-top:9px}
+.warn::before{content:'!';width:15px;height:15px;border-radius:50%;background:#f0d191;color:#7a5208;font-size:10px;font-weight:800;display:grid;place-items:center;flex:none}
+.links{display:flex;flex-wrap:wrap;gap:8px}
+.links a,.goChip{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink-2);text-decoration:none;background:#fff;border:1px solid var(--line);border-radius:9px;padding:7px 10px;cursor:pointer;transition:.15s;max-width:100%}
+.links a:hover,.goChip:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.goChip .dot{width:7px;height:7px}
+.goChip small{color:var(--faint);font-size:10.5px;white-space:nowrap}
+.callout{border-radius:10px;padding:11px 13px;background:var(--accent-soft);border:1px solid #d5e3fa;font-size:12.5px;line-height:1.6;color:var(--ink-2)}
+.callout b{display:block;font-size:10.5px;color:var(--accent);letter-spacing:.06em;margin-bottom:4px}
+.neg-list{list-style:none;padding:0;margin:0;display:grid;gap:8px}
+.neg-list li{background:#fdf6f4;border:1px solid #f6e2dd;border-left:3px solid var(--red);border-radius:8px;padding:9px 11px;margin:0;font-size:12px;line-height:1.55}
+.neg-list b{color:var(--ink)}
+footer{min-height:34px;padding:6px 18px;background:#fff;border-top:1px solid var(--line);color:var(--muted);font-size:10.5px;display:flex;align-items:center;gap:0;flex-wrap:wrap}
+footer .grp{display:flex;align-items:center;gap:12px;padding-right:14px;margin-right:14px;border-right:1px solid var(--line)}
+footer .grp:last-child{border-right:0}
+footer .grp>span:first-child{color:var(--faint);font-weight:700;letter-spacing:.04em}
+footer i{display:inline-block;width:9px;height:9px;border-radius:3px;vertical-align:-1px;margin-right:4px}
+footer .ln{font-weight:700}
+@media (max-width:1080px){aside{width:420px}}
+@media (max-width:900px){main{flex-direction:column}aside{width:100%;height:48%;border-left:0;border-top:1px solid var(--line)}.bar{height:auto;min-height:56px;flex-wrap:wrap;padding:8px 14px;gap:10px}.brand{border-right:0}.bar .tip{display:none}}
 </style>
 </head>
 <body>
 <main>
   <div class="wrap">
     <div class="bar">
-      <b>Proposal 树</b>
+      <div class="brand"><span class="mark">P</span><span><b>Proposal 树</b><small>研究方案与实验追踪</small></span></div>
       <label class="ctl">比较条件 <select id="scope"></select></label>
       <label class="ctl">指标 <select id="metric"></select></label>
       <button id="expand">全部展开</button>
       <button id="collapse">全部收起</button>
+      <span class="grow"></span>
+      <span class="tip">点击任意节点查看完整信息</span>
     </div>
     <div class="canvas"><svg id="tree" role="img" aria-label="Proposal 树"></svg></div>
   </div>
   <aside id="detail"></aside>
 </main>
 <footer>
-  <span>Proposal：</span>
-  <span><i style="background:var(--amber)"></i>待实现</span>
-  <span><i style="background:#0e7490"></i>实现中</span>
-  <span><i style="background:var(--blue)"></i>已完成</span>
-  <span><i style="background:var(--gray)"></i>已放弃</span>
-  <span>实验：</span>
-  <span><i style="background:var(--amber)"></i>等待执行</span>
-  <span><i style="background:var(--purple)"></i>执行中</span>
-  <span><i style="background:var(--blue)"></i>已完成</span>
-  <span><i style="background:var(--red)"></i>失败</span>
-  <span><i style="background:var(--green)"></i>★ 候选池 / 合版</span>
-  <span style="color:var(--green)">━ 合入下一轮 baseline</span>
-  <span style="color:var(--slate)">┄ 跨轮细化</span>
+  <span class="grp"><span>探索方向</span>
+    <span><i style="background:var(--amber)"></i>待实现</span>
+    <span><i style="background:#0e7490"></i>实现中</span>
+    <span><i style="background:var(--blue)"></i>已完成</span>
+    <span><i style="background:var(--gray)"></i>已放弃</span></span>
+  <span class="grp"><span>实验</span>
+    <span><i style="background:var(--amber)"></i>等待执行</span>
+    <span><i style="background:var(--purple)"></i>执行中</span>
+    <span><i style="background:var(--blue)"></i>已完成</span>
+    <span><i style="background:var(--red)"></i>失败</span>
+    <span><i style="background:var(--green)"></i>★ 候选池</span></span>
+  <span class="grp"><span>连线</span>
+    <span class="ln" style="color:var(--green)">━ 合入下一轮 baseline</span>
+    <span class="ln" style="color:var(--slate)">┄ 跨轮细化</span></span>
 </footer>
 <script id="data" type="application/json">__FORETOKEN_TREE_DATA__</script>
 <script>
@@ -108,13 +180,14 @@ footer i{display:inline-block;width:10px;height:10px;border-radius:3px;vertical-
 const D = JSON.parse(document.getElementById('data').textContent);
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
-const trunc = (s, n) => { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+// 按视觉宽度截断：中日韩字符约占 1.6 个单位，拉丁字符约 0.9 个，避免中文标题溢出卡片。
+const trunc = (s, n) => { s = String(s || ''); let w = 0, out = ''; for (const ch of s) { const u = ch.charCodeAt(0) > 255 ? 1.6 : 0.9; if (w + u > n) return out + '…'; out += ch; w += u; } return out; };
 
 // 输入是方案池和实验池的当前视图（字段见 research-tree_zh.md），这里转换成树节点。
 // 每一轮：baseline（原始 baseline 或上一轮合版）→ 方案池中的 Proposal → 实验（叶子）；
 // 合版是 mergeOf 非空的 Proposal，它成为下一轮的 baseline，树随轮次向右扩张。
 const pid = name => 'p:' + name, eid = name => 'e:' + name;
-const ROOT = {id: 'root', kind: 'root', label: D.baseline.name, code: D.baseline.code, m: D.baseline.m, links: D.baseline.links};
+const ROOT = {id: 'root', kind: 'root', label: D.baseline.name, code: D.baseline.code, m: D.baseline.m};
 // 树上只放进入方案池的 Proposal：draft 尚未通过检查，rejected 不实施，两者不上树。
 const IN_POOL = new Set(['ready', 'implementing', 'completed', 'abandoned']);
 const byId = {root: ROOT};
@@ -139,7 +212,7 @@ const kids = {};
 NODES.forEach(n => { if (n.parent) (kids[n.parent] ||= []).push(n); });
 Object.values(kids).forEach(l => l.sort((a, b) => (a.kind !== 'exp') - (b.kind !== 'exp')));
 const exps = p => (kids[p.id] || []).filter(c => c.kind === 'exp');
-// 实验显示名由 Proposal 名称和实验次数生成：实验-<Proposal>-<第几次>。
+// 实验显示名由探索方向名称和实验次数生成：实验-<名称>-<第几次>。
 PROPS.forEach(p => exps(p).forEach((e, i) => { e.label = `实验-${p.label}-${i + 1}`; }));
 // 合版的测量取其最近一次完成的实验；它合入的实验和下一轮的 Proposal 以它为 baseline。
 NODES.filter(n => n.kind === 'merge').forEach(m => {
@@ -182,9 +255,11 @@ const GREEN = {c: '#1a7f4b', bg: '#eaf6ef'}, SLATE = {c: '#334155', bg: '#f8fafc
 // 合版完成后作为下一轮 baseline；之前显示它自己作为 Proposal 的状态。
 const style = n => n.kind === 'root' ? SLATE : n.kind === 'merge' && n.state === 'completed' ? GREEN : showStar(n) ? GREEN : STATUS[n.view];
 const statusText = n => n.kind === 'root' ? '第 1 轮 baseline' : n.kind === 'merge' && n.state === 'completed' ? `第 ${round(n) + 1} 轮 baseline` : STATUS[n.view].nm;
-const title = n => n.kind === 'proposal' ? `Proposal-${n.label}` : n.label;
+// 探索方向 = 方案池里的 Proposal；命名与「实验-<名称>-<次数>」保持一致。
+const title = n => n.kind === 'proposal' ? `探索方向-${n.label}` : n.label;
+const CONFIG_KEYS = ['模型', '推理框架', '硬件信息'];
 
-const OBJ = D.scopes.flatMap(s => D.metrics.map(m => ({s: s.id, m: m.key, label: `${s.label} ${m.label}`, dir: m.dir})));
+const OBJ = D.scopes.flatMap(s => D.metrics.map(m => ({s: s.id, m: m.key, slabel: s.label, mlabel: m.label, label: `${s.label} ${m.label}`, dir: m.dir})));
 const val = (n, s, m) => n && n.m && n.m[s] ? n.m[s][m] ?? null : null;
 const fmt = v => v == null ? '—' : v.toLocaleString('zh-CN', {maximumFractionDigits: 1});
 const pct = (v, b) => v == null || !b ? null : (v / b - 1) * 100;
@@ -222,7 +297,7 @@ function layout() {
   return pos;
 }
 const NS = 'http://www.w3.org/2000/svg';
-const CW = 172, CH = 62, DX = 214, DY = 80, PAD = 30;
+const CW = 186, CH = 82, DX = 232, DY = 96, PAD = 34;
 function E(tag, attrs, parent, text) {
   const e = document.createElementNS(NS, tag);
   Object.entries(attrs || {}).forEach(([k, v]) => e.setAttribute(k, v));
@@ -236,12 +311,20 @@ function curve(a, b) {
   const mx = ex > sx + 10 ? (sx + ex) / 2 : Math.max(sx, ex) + 40;
   return `M${sx},${y1} C${mx},${y1} ${mx},${y2} ${ex},${y2}`;
 }
+const unitOf = k => (D.metrics.find(m => m.key === k) || {}).unit || '';
+const KIND = {root: '原始基线', merge: '合版 / 下轮基线', proposal: '方案', exp: '实验'};
+const KINDTAG = {root: 'BASE', merge: 'MERGE', proposal: 'IDEA', exp: 'EXP'};
+// 卡片上直接给出绝对值 + 相对原始 baseline 的变化，颜色表示方向好坏。
 function caption(n) {
-  if (n.kind === 'proposal') return '';
+  if (n.kind === 'proposal') return {text: '', color: '#334155'};
   const v = val(n, state.scope, state.metric);
-  // 合版卡片的状态文字较长，只显示相对原始 baseline 的变化；绝对值在详情面板。
-  if (v != null) return n.kind === 'root' ? fmt(v) : n.kind === 'merge' ? pctTxt(v, val(ROOT, state.scope, state.metric)) : fmt(v) + ' · ' + pctTxt(v, val(ROOT, state.scope, state.metric));
-  return '';
+  if (v == null) return {text: '', color: '#334155'};
+  const bv = val(ROOT, state.scope, state.metric), dir = (D.metrics.find(m => m.key === state.metric) || {}).dir;
+  const c = n.kind === 'root' ? '' : cls(v, bv, dir);
+  const color = c === 'up' ? '#15803d' : c === 'down' ? '#c0392b' : '#334155';
+  const text = n.kind === 'root' ? `${fmt(v)} ${unitOf(state.metric)} · 原始基准`
+    : `${fmt(v)} ${unitOf(state.metric)}   ${pctTxt(v, bv)}`;
+  return {text, color};
 }
 function renderTree() {
   const svg = $('tree'), pos = layout(), main = trunk(), list = NODES.filter(n => pos[n.id]);
@@ -258,45 +341,73 @@ function renderTree() {
     }
   });
   list.forEach(n => {
-    const [x, y] = xy(pos[n.id]), st = style(n), LX = -CW / 2 + 12, RX = CW / 2 - 10;
+    const [x, y] = xy(pos[n.id]), st = style(n), LX = -CW / 2 + 13, RX = CW / 2 - 12;
     const g = E('g', {class: `node ${isBase(n) ? 'base ' + n.kind : n.kind}` + (isPruned(n) ? ' pruned' : '') +
       (PENDING.has(n.view) ? ' pending' : '') + (state.sel === n.id ? ' sel' : ''), transform: `translate(${x},${y})`}, gN);
     g.addEventListener('click', () => { state.sel = n.id; render(); });
-    E('rect', {class: 'card', x: -CW / 2, y: -CH / 2, width: CW, height: CH, rx: n.kind === 'exp' ? 4 : 9}, g);
-    E('line', {x1: -CW / 2 + 1, y1: -CH / 2 + 10, x2: -CW / 2 + 1, y2: CH / 2 - 10, stroke: st.c, 'stroke-width': 3.2, 'stroke-linecap': 'round'}, g);
+    if (state.sel === n.id) E('rect', {class: 'halo', x: -CW / 2 - 4, y: -CH / 2 - 4, width: CW + 8, height: CH + 8, rx: 14}, g);
+    E('rect', {class: 'card', x: -CW / 2, y: -CH / 2, width: CW, height: CH, rx: n.kind === 'exp' ? 7 : 11}, g);
+    E('line', {x1: -CW / 2 + 1, y1: -CH / 2 + 12, x2: -CW / 2 + 1, y2: CH / 2 - 12, stroke: st.c, 'stroke-width': 3.4, 'stroke-linecap': 'round'}, g);
     // 实验名过长时截断 Proposal 名称，保留末尾的实验次数。
-    const name = n.kind === 'exp' && n.label.length > 15 ? n.label.replace(/^(.*)(-\d+)$/, (_, a, b) => trunc(a, 15 - b.length) + b) : trunc(title(n), 15);
-    E('text', {x: LX, y: -CH / 2 + 20, class: 'lbl'}, g, name);
-    E('circle', {cx: LX + 4, cy: -CH / 2 + 34.5, r: 3.4, fill: st.c}, g);
-    E('text', {x: LX + 12, y: -CH / 2 + 38, class: 'chip', fill: st.c}, g, statusText(n));
-    E('text', {x: RX, y: -CH / 2 + 38, 'text-anchor': 'end', class: 'val'}, g, trunc(caption(n), 15));
+    const name = n.kind === 'exp' && n.label.length > 15
+      ? n.label.replace(/^(.*)(-\d+)$/, (_, a, b) => trunc(a, 21 - b.length) + b) : trunc(title(n), 21);
+    E('text', {x: LX, y: -CH / 2 + 21, class: 'lbl'}, g, name);
+    E('text', {x: RX, y: -CH / 2 + 21, 'text-anchor': 'end', class: 'kind'}, g, KINDTAG[n.kind]);
+    // 状态改成带底色的药丸，与树上的连线颜色区分开。
+    const sTxt = statusText(n), pillW = [...sTxt].reduce((a, ch) => a + (ch.charCodeAt(0) > 255 ? 10.5 : 6), 0) + 22;
+    E('rect', {class: 'pill', x: LX - 4, y: -CH / 2 + 28, width: pillW, height: 18, rx: 9, fill: st.bg}, g);
+    E('circle', {cx: LX + 5, cy: -CH / 2 + 37, r: 3.2, fill: st.c}, g);
+    E('text', {x: LX + 13, y: -CH / 2 + 40, class: 'chip', fill: st.c}, g, sTxt);
+    const cap = caption(n);
+    if (cap.text) E('text', {x: LX, y: -CH / 2 + 61, class: 'val', fill: cap.color}, g, trunc(cap.text, 30));
     const sub = n.kind === 'root' ? n.code : n.kind === 'exp' ? n.description : n.kind === 'merge' ? n.mergeOf.map(e => byId[eid(e)] ? byId[eid(e)].label : e).join(' + ') : n.directionName;
-    if (sub) E('text', {x: LX, y: -CH / 2 + 54, class: 'sub'}, g, trunc(sub, 22));
-    if (showStar(n)) E('text', {x: RX, y: -CH / 2 - 6, 'text-anchor': 'end', class: 'tag', fill: '#1a7f4b'}, g, '★ 候选池');
+    if (sub) E('text', {x: LX, y: -CH / 2 + 77, class: 'sub'}, g, trunc(sub, 28));
+    if (showStar(n)) E('text', {x: RX, y: -CH / 2 - 7, 'text-anchor': 'end', class: 'tag', fill: '#15803d'}, g, '★ 候选池');
     // 展开 / 收起该节点的分支
     if ((kids[n.id] || []).length) {
-      const closed = state.collapsed.has(n.id), t = E('g', {class: 'toggle', transform: `translate(${CW / 2 + 9},0)`}, g);
-      E('circle', {r: 8}, t);
+      const closed = state.collapsed.has(n.id), t = E('g', {class: 'toggle', transform: `translate(${CW / 2 + 10},0)`}, g);
+      E('circle', {r: 9}, t);
       E('text', {'text-anchor': 'middle', y: 4}, t, closed ? '+' : '−');
       t.addEventListener('click', ev => { ev.stopPropagation(); closed ? state.collapsed.delete(n.id) : state.collapsed.add(n.id); renderTree(); });
-      if (closed) E('text', {x: CW / 2 + 20, y: 4, class: 'tag'}, g, `${descendants(n).length}`);
+      if (closed) E('text', {x: CW / 2 + 22, y: 4, class: 'tag'}, g, `${descendants(n).length}`);
     }
   });
 }
+// 详情面板的构件：分区卡片、键值列表、可点击的节点胶囊。
 const sec = (title, who, body) => body ? `<section><h3>${esc(title)}${who ? `<i>${esc(who)}</i>` : ''}</h3>${body}</section>` : '';
-const kv = o => o ? '<div class="kv">' + Object.entries(o).map(([k, v]) => `<div><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join('') + '</div>' : '';
-const goLinks = list => '<div class="links">' + list.map(e => `<a data-go="${esc(e.id)}">${esc(e.label)} · ${esc(statusText(e))}</a>`).join('') + '</div>';
+const kvRows = (rows, clsName = '') => rows.length ? `<div class="kv ${clsName}">` +
+  rows.map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join('') + '</div>' : '';
+const kv = (o, clsName = '') => o ? kvRows(Object.entries(o).map(([k, v]) => [esc(k), esc(v)]), clsName) : '';
+const dot = c => `<span class="dot" style="background:${esc(c)}"></span>`;
+const goLinks = list => list.length ? '<div class="links">' + list.map(e =>
+  `<a class="goChip" data-go="${esc(e.id)}">${dot(style(e).c)}<span>${esc(e.label)}</span><small>${esc(statusText(e))}</small></a>`
+).join('') + '</div>' : '';
+// 一眼能读完的指标概览：每个「比较条件 × 指标」一张卡，含单位、方向、相对原始 baseline 的变化与重复次数。
+function metricCards(n) {
+  const items = OBJ.filter(o => val(n, o.s, o.m) != null);
+  if (!items.length) return '';
+  return '<div class="mcards">' + items.map(o => {
+    const v = val(n, o.s, o.m), bv = val(ROOT, o.s, o.m), c = cls(v, bv, o.dir);
+    return `<div class="mcard"><div class="mcard-top"><span class="mcard-metric">${esc(o.mlabel)}</span><span class="mcard-scope">${esc(o.slabel)}</span></div>` +
+      `<div class="mcard-v">${fmt(v)}<small>${esc(unitOf(o.m))}</small></div>` +
+      (n.kind === 'root' ? '' : `<div class="mcard-d ${c}">${o.dir === 'up' ? '↑' : '↓'} ${pctTxt(v, bv)}<em>vs 原始</em></div>` +
+        `<div class="mcard-n">重复 n = ${n.m[o.s].n ?? '—'}</div>`) + `</div>`;
+  }).join('') + '</div>';
+}
 function measure(n) {
   const parent = n.kind === 'root' ? null : byId[n.measured] || ROOT;
   const rows = OBJ.filter(o => val(n, o.s, o.m) != null).map(o => {
     const v = val(n, o.s, o.m), pv = val(parent, o.s, o.m), bv = val(ROOT, o.s, o.m);
-    return `<tr><td>${esc(o.label)} ${o.dir === 'up' ? '↑' : '↓'}</td><td>${fmt(v)}</td><td>${n.m[o.s].n ?? '—'}</td>` +
-      (parent ? `<td class="${cls(v, pv, o.dir)}">${pctTxt(v, pv)}</td><td class="${cls(v, bv, o.dir)}">${pctTxt(v, bv)}</td>` : '') + '</tr>';
+    const dd = (x, b) => `<span class="delta ${cls(x, b, o.dir)}">${pctTxt(x, b)}</span>`;
+    return `<tr><td>${esc(o.label)} ${o.dir === 'up' ? '↑' : '↓'}</td>` +
+      `<td><b>${fmt(v)}</b> <span class="unit">${esc(unitOf(o.m))}</span></td><td>${n.m[o.s].n ?? '—'}</td>` +
+      (parent ? `<td>${dd(v, pv)}</td><td>${dd(v, bv)}</td>` : '') + '</tr>';
   });
-  if (!rows.length) return `<div class="note">尚无 profiling 结果${n.view ? '：' + esc(STATUS[n.view].nm) : ''}</div>`;
-  return `<table><tr><th>条件 · 指标</th><th>均值</th><th>n</th>${parent ? '<th>相对 parent</th><th>相对原始</th>' : ''}</tr>${rows.join('')}</table>` +
-    (parent ? `<div class="note">实测 parent：${esc(parent.label)}</div>` : '') +
-    (Object.values(n.m).some(x => x.n < 2) ? '<div class="note">单次测量，没有波动估计。</div>' : '');
+  if (!rows.length) return `<div class="empty">尚无 profiling 结果${n.view ? '（' + esc(STATUS[n.view].nm) + '）' : ''}</div>`;
+  return metricCards(n) +
+    `<table><thead><tr><th>条件 · 指标</th><th>均值</th><th>n</th>${parent ? '<th>相对 parent</th><th>相对原始</th>' : ''}</tr></thead><tbody>${rows.join('')}</tbody></table>` +
+    (parent ? `<div class="refline">实测参照 · <b>${esc(parent.label)}</b></div>` : '') +
+    (Object.values(n.m).some(x => x.n < 2) ? '<div class="warn">单次测量，暂无波动估计。</div>' : '');
 }
 // 一轮的实验进展图（仿 kimi.png）：横轴为本轮实验顺序，纵轴为当前指标；
 // 黑色阶梯线是最优前沿，新纪录用绿色并加注释框，失败的实验画在底部；虚线为本轮 baseline 和合版。
@@ -308,15 +419,16 @@ function progressChart(base, merge) {
   if (b == null || !list.length) return '<div class="note">本轮尚无可画的实验。</div>';
   const lo = Math.min(...vals), hi = Math.max(...vals), pad = (hi - lo || hi * 0.1) * 0.15;
   const y0 = lo - pad * 2, y1 = hi + pad;
-  const W = 428, H = 320, L = 46, R = 58, T = 62, B = 34;
+  const W = 440, H = 306, L = 48, R = 62, T = 66, B = 34;
   const X = i => L + i / (list.length + 1) * (W - L - R), Y = v => T + (y1 - v) / (y1 - y0) * (H - T - B);
-  const C = {rec: '#3fbf6f', normal: '#a3a3a3', bad: '#f0ad3c', fail: '#e5534b'};
-  let out = `<svg width="${W}" height="${H}" style="display:block;font-size:10px;font-family:inherit">`;
+  const C = {rec: '#2fa968', normal: '#94a3b8', bad: '#e9a23b', fail: '#e5534b'};
+  let out = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:auto;font-size:10.5px;font-family:inherit">`;
   // 图例
   [['rec', '新纪录'], ['normal', '已完成'], ['bad', '方案已放弃'], ['fail', '实验失败']].forEach(([c, t], i) =>
-    { out += `<circle cx="${L + i * 78}" cy="12" r="4.5" fill="${C[c]}"/><text x="${L + i * 78 + 8}" y="15.5" fill="#374151">${t}</text>`; });
-  out += `<line x1="${L}" y1="28" x2="${L + 16}" y2="28" stroke="#111" stroke-width="2"/><text x="${L + 22}" y="31.5" fill="#374151">最优前沿</text>`;
-  out += `<line x1="${L + 78}" y1="28" x2="${L + 94}" y2="28" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="4 3"/><text x="${L + 100}" y="31.5" fill="#374151">本轮 baseline</text>`;
+    { out += `<circle cx="${L + i * 94}" cy="12" r="4.5" fill="${C[c]}"/><text x="${L + i * 94 + 8}" y="15.5" fill="#475569">${t}</text>`; });
+  out += `<line x1="${L}" y1="30" x2="${L + 16}" y2="30" stroke="#111" stroke-width="2"/><text x="${L + 22}" y="33.5" fill="#475569">最优前沿</text>`;
+  out += `<line x1="${L + 100}" y1="30" x2="${L + 116}" y2="30" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="4 3"/><text x="${L + 122}" y="33.5" fill="#475569">本轮 baseline</text>`;
+  out += `<rect x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" fill="#fbfdff" stroke="#eef2f7"/>`;
   // 网格与刻度
   for (let i = 0; i <= 4; i++) {
     const v = y0 + (y1 - y0) * i / 4, y = Y(v);
@@ -350,7 +462,7 @@ function progressChart(base, merge) {
   const placed = [], hit = (a, c) => a.x < c.x + c.w && c.x < a.x + a.w && a.y < c.y + c.h && c.y < a.y + a.h;
   const dots = list.map((n, i) => ({x: X(i + 1) - 6, y: (val(n, s, k) == null ? H - B - 6 : Y(val(n, s, k))) - 6, w: 12, h: 12}));
   notes.forEach(([n, x, y, v], i) => {
-    const lines = [byId[n.parent].label, `${fmt(v)} ${metric.unit}（${pctTxt(v, b)}）`];
+    const lines = [esc(byId[n.parent].label), esc(`${fmt(v)} ${metric.unit}（${pctTxt(v, b)}）`)];
     const w = Math.max(...lines.map(t => [...t].reduce((a, ch) => a + (ch.charCodeAt(0) > 255 ? 10.5 : 6), 0))) + 14, h = 32;
     const clampX = bx => Math.min(Math.max(bx, L + 2), W - R - w);
     const tries = [[x - w - 8, y - h - 8], [x + 8, y - h - 8], [x - w - 8, y + 8], [x + 8, y + 8]]
@@ -368,51 +480,99 @@ function progressChart(base, merge) {
 function mergePanel(m) {
   const base = byId[m.base];
   const pool = descendants(base).filter(inPool);
-  const table = `<table><tr><th>相对本轮 baseline</th>${OBJ.map(o => `<th>${esc(o.label)}</th>`).join('')}</tr>` +
-    [...pool, m].map(n => `<tr><td>${esc(n === m ? '合版' : n.label)}</td>${OBJ.map(o => { const v = val(n, o.s, o.m), b = val(base, o.s, o.m); return `<td class="${cls(v, b, o.dir)}">${pctTxt(v, b)}</td>`; }).join('')}</tr>`).join('') + '</table>';
+  const included = (m.includes || []).map(i => byId[i]).filter(Boolean);
   const neg = descendants(base).filter(n => n.view === 'p:abandoned');
-  return sec('合版包含', '', goLinks((m.includes || []).map(i => byId[i]).filter(Boolean))) +
-    sec('profiling 结果', '', measure(m)) +
+  const totalExps = descendants(base).filter(n => n.kind === 'exp').length;
+  const table = `<table><thead><tr><th>相对本轮 baseline</th>${OBJ.map(o => `<th>${esc(o.label)}</th>`).join('')}</tr></thead><tbody>` +
+    [...pool, m].map(n => `<tr><td>${esc(n === m ? '合版（当前）' : n.label)}</td>${OBJ.map(o => {
+      const v = val(n, o.s, o.m), b = val(base, o.s, o.m);
+      return `<td><span class="delta ${cls(v, b, o.dir)}">${pctTxt(v, b)}</span></td>`;
+    }).join('')}</tr>`).join('') + '</tbody></table>';
+  const negBody = neg.length
+    ? '<ul class="neg-list">' + neg.map(p => `<li><b>${esc(p.label)}</b>：${esc(p.conclusion || '—')}</li>`).join('') + '</ul>'
+    : '<div class="empty">本轮没有记录负约束。</div>';
+  return sec('合版包含', `${included.length} 个实验`,
+      `<div class="d-sub" style="margin:0 0 11px">本轮共 ${totalExps} 次实验 · 候选池 ${pool.length} 个 · 负约束 ${neg.length} 条</div>` +
+      (included.length ? goLinks(included) : '<div class="empty">尚未记录合入的实验。</div>')) +
+    sec('profiling 结果', '测量结果', measure(m)) +
     sec('本轮实验进展', '实验者', progressChart(base, m)) +
     sec('本轮候选池', '实验者', table) +
-    sec('本轮负约束', 'Explorer', neg.length ? '<ul>' + neg.map(p => `<li><b>${esc(p.label)}</b>：${esc(p.conclusion)}</li>`).join('') + '</ul>' : '');
+    sec('本轮负约束', 'Explorer', negBody);
 }
 const link = (label, path) => `<a href="${esc((D.taskRoot || '') + path)}">${esc(label)}</a>`;
-// 方案池中 Proposal 的全部字段。
+// 方案池中 Proposal 的全部字段；结论单独高亮，避免淹没在键值表里。
+// 提案：Explorer 写的摘要在上，提案 markdown 的链接在下；没有摘要时只显示链接。
+const proposalDoc = n => (n.summary ? `<div>${esc(n.summary)}</div>` : '') +
+  `<div>${link(n.filePath.split('/').pop(), n.filePath)}</div>`;
+// 合版不显示名称、方向、版本、提案和状态，改为显示合并原因（取自 summary）。
 function proposalInfo(n) {
-  const rows = [
+  const rows = n.kind === 'merge' ? [['合并原因', n.summary ? esc(n.summary) : '<span class="unit">未填写</span>']] : [
     ['名称', esc(n.name)],
     ['方向', esc(n.directionName ?? '—')],
-    ['Explorer', esc(n.explorerName)],
-    ['Worker', esc(n.workerName ?? '尚未分派')],
     ['版本', `第 ${esc(n.revision)} 版`],
-    ['文件', link(n.filePath, n.filePath)],
-    ['状态', `${esc(STATUS[n.view].nm)}（${esc(n.state)}）`],
-    ['结论', esc(n.conclusion ?? '尚未结束')]
+    ['提案', proposalDoc(n)],
+    ['状态', `${esc(STATUS[n.view].nm)} <span class="unit">（${esc(n.state)}）</span>`]
   ];
-  return '<div class="kv">' + rows.map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join('') + '</div>';
+  // 普通探索方向总是显示「基于」和「细化自」，保证所有探索方向的栏目一致。
+  if (n.kind === 'proposal') {
+    rows.push(['基于', esc(n.baseName ?? D.baseline.name)]);
+    rows.push(['细化自', esc(n.parentName ?? '—')]);
+  }
+  if (n.mergeOf && n.mergeOf.length) rows.push(['合入实验数', String(n.mergeOf.length)]);
+  const concl = n.conclusion ? `<div class="callout"><b>结论</b>${esc(n.conclusion)}</div>`
+    : '<div class="empty">该方案尚未形成结论。</div>';
+  return kvRows(rows) + '<div class="gap"></div>' + concl;
 }
+let lastSel = null;
 function renderDetail() {
   const n = byId[state.sel] || ROOT, st = style(n);
-  let h = `<h2>${esc(title(n))}</h2><span class="tagbox" style="background:${st.bg};color:${st.c};border:1px solid ${st.c}">${esc(showStar(n) ? '★ 候选池' : statusText(n))}</span>`;
+  const lane = `第 ${Math.max(0, isBase(n) ? round(n) : round(baseOf(n))) + 1} 轮`;
+  const crumb = [`<b>${esc(KIND[n.kind])}</b>`, esc(lane)];
+  if (!isBase(n) && byId[n.parent]) crumb.push(esc(byId[n.parent].label));
+  // 节点类型与轮次已在面包屑里，这里只放状态和有增量信息的标记，避免重复。
+  const badges = [`<span class="tagbox" style="background:${st.bg};color:${st.c};border:1px solid ${st.c}">${dot(st.c)}${esc(showStar(n) ? '★ 候选池' : statusText(n))}</span>`];
+  if (n.kind === 'exp' && n.retained) badges.push('<span class="badge-ghost">帕雷托前沿</span>');
+  if (n.kind === 'merge') badges.push(`<span class="badge-ghost">合入 ${(n.mergeOf || []).length} 个实验</span>`);
+  if (isPruned(n)) badges.push('<span class="badge-ghost">已剪枝</span>');
+  let sub = '';
+  if (n.kind === 'root') sub = `全树测量的原始参照`;
+  else if (n.kind === 'merge') sub = esc(n.conclusion || `合入 ${(n.mergeOf || []).length} 个实验，作为下一轮 baseline`);
+  else if (n.kind === 'proposal') sub = '';
+  else sub = esc(n.description || '');
+  let h = `<header class="d-head" style="--head-c:${st.c}">` +
+    `<div class="d-crumb">${crumb.join('<s>›</s>')}</div><h2>${esc(title(n))}</h2>` +
+    `<div class="d-badges">${badges.join('')}</div>` +
+    (sub ? `<div class="d-sub">${sub}</div>` : '') + `</header><div class="d-body">`;
   if (n.kind === 'root') {
-    h += sec('任务', '', kv({...D.task, '更新时间': D.updated_at})) + sec('代码', '', kv({'git': n.code})) + sec('profiling 结果', '', measure(n));
-    if (n.links) h += sec('证据', '', '<div class="links">' + Object.entries(n.links).map(([k, v]) => link(k, v)).join('') + '</div>');
+    // 配置表：固定三行「模型 / 推理框架 / 硬件信息」，数据优先来自 config，兼容写在 task 里的同名键，额外键追加在后。
+    const src = {...(D.task || {}), ...(D.config || {})};
+    const extra = Object.keys(D.config || {}).filter(k => !CONFIG_KEYS.includes(k));
+    const keys = [...CONFIG_KEYS, ...extra];
+    h += sec('配置', '运行环境', kvRows(keys.map(k =>
+      [esc(k), src[k] != null && src[k] !== '' ? esc(src[k]) : '<span class="unit">未填写</span>'])));
+    h += sec('profiling 结果', '原始基准', measure(n));
+    h += sec('代码', '', kv({'git': n.code}));
   } else if (n.kind === 'exp') {
     h += sec('实验', '', kv({'名称': n.name, '目的': n.description}));
-    h += sec('实验项', '', kv(Object.fromEntries(n.commands.map(c => [c.name, c.command]))));
-    h += sec('profiling 结果', '', measure(n));
-    h += sec('记录', '', `<div class="links">${link('report.md', n.recordDirectory + '/report.md')}${link('记录目录', n.recordDirectory)}</div>`);
+    h += sec('所属方案', '', goLinks([byId[n.parent]].filter(Boolean)));
+    h += sec('profiling 结果', '测量结果', measure(n));
+    h += sec('记录', '', kvRows([['实验记录', link('report.md', n.recordDirectory + '/report.md')]]));
   } else {
-    if (n.kind === 'proposal' && n.refines) h += `<div class="meta">细化自 ${esc(title(byId[n.refines]))}</div>`;
+    if (n.kind === 'proposal' && n.refines) h += sec('细化自', '', goLinks([byId[n.refines]].filter(Boolean)));
     h += sec('方案', '方案池', proposalInfo(n));
-    if (n.kind === 'merge') h += mergePanel(n);
+    // 合版的代码是合并后的 git 版本，下一轮的探索方向都基于它。
+    if (n.kind === 'merge') h += mergePanel(n) + sec('代码', '', kvRows([['git', n.code ? esc(n.code) : '<span class="unit">未填写</span>']]));
     else {
       const l = exps(n);
-      h += sec('实验', '', l.length ? goLinks(l) : '<div class="note">尚无实验。</div>');
+      h += sec('关联实验', `${l.length} 次`, l.length ? goLinks(l) : '<div class="empty">该方案尚无实验记录。</div>');
+      const done = l.filter(e => e.state === 'completed');
+      if (done.length) h += sec('最近一次实验', '测量结果', measure(done[done.length - 1]));
     }
   }
+  h += '</div>';
   $('detail').innerHTML = h;
+  // 切换节点时回到顶部，避免沿用上一个节点的滚动位置。
+  if (lastSel !== n.id) { $('detail').scrollTop = 0; lastSel = n.id; }
   $('detail').querySelectorAll('a[data-go]').forEach(a => a.onclick = () => { state.sel = a.dataset.go; render(); });
 }
 
