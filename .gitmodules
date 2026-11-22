@@ -1,0 +1,3 @@
+[submodule "fore-rsi"]
+	path = fore-rsi
+	url = https://github.com/shiweijiezero/fore-rsi.git
